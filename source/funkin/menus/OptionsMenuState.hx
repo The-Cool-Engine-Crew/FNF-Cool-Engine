@@ -239,7 +239,6 @@ class OptionsMenuState extends MusicBeatSubstate
 
 		// Cargar categorías custom desde scripts
 		loadCustomCategoriesFromScripts();
-
 		StateScriptHandler.callOnScripts('onCreate', []);
 		#end
 
@@ -475,6 +474,11 @@ class OptionsMenuState extends MusicBeatSubstate
 		}
 
 		super.create();
+
+		#if HSCRIPT_ALLOWED
+		StateScriptHandler.refreshStateFields(this);
+		StateScriptHandler.callOnScripts('postCreate', []);
+		#end
 	}
 
 	#if HSCRIPT_ALLOWED

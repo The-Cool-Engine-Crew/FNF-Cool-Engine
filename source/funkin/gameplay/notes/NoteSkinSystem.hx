@@ -1632,6 +1632,14 @@ class NoteSkinSystem
 
 	// ==================== GETTERS DE SKIN ====================
 
+	/** Set to true by loadAtlas() when the requested asset didn't exist and the
+	 *  Default skin texture was used as fallback. Checked by Note.loadSkin() to
+	 *  avoid applying the custom skin's scale on top of the wrong (Default) texture
+	 *  — which caused giant Default-looking notes when a custom skin had a missing
+	 *  asset (e.g. scale:3.0 but texture file not found → 3x Default notes).
+	 *  Reset to false at the start of every loadAtlas() call. */
+	public static var lastLoadFellBack:Bool = false;
+
 	/**
 	 * Devuelve el NoteSkinData completo de la skin actual.
 	 * Úsalo en Note.hx / StrumNote.hx — contiene textura, escala, anims, flags, todo.
@@ -2351,9 +2359,13 @@ class NoteSkinSystem
 
 	private static function loadAtlas(tex:Dynamic, ?folderName:String):FlxAtlasFrames
 	{
+		// BUG C FIX: reset flag at start of every call so callers get accurate info.
+		lastLoadFellBack = false;
+
 		if (tex == null || tex.path == null)
 		{
 			trace('[NoteSkinSystem] loadAtlas: textura inválida, usando Default');
+			lastLoadFellBack = true;
 			var fallback = Paths.skinSprite('Default/NOTE_assets');
 			if (fallback != null) return fallback;
 			return _makeFallbackFrames();
@@ -2366,6 +2378,7 @@ class NoteSkinSystem
 		if (!assetExists(path, folder))
 		{
 			trace('[NoteSkinSystem] loadAtlas: "$folder/$path" not found, usando Default');
+			lastLoadFellBack = true;
 			var fallback = Paths.skinSprite('Default/NOTE_assets');
 			if (fallback != null) return fallback;
 			return _makeFallbackFrames();

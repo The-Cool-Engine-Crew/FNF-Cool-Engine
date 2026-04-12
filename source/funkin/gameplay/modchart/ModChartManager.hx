@@ -4,6 +4,7 @@ import flixel.FlxG;
 import flixel.FlxSprite;
 import flixel.group.FlxGroup.FlxTypedGroup;
 import funkin.gameplay.objects.StrumsGroup;
+import funkin.gameplay.notes.StrumNote;
 import funkin.gameplay.modchart.ModChartEvent;
 import haxe.Json;
 import lime.app.Application;
@@ -106,6 +107,18 @@ typedef NotePositionContext =
 	var alpha:Float;
 	/** Escala Y del sustain (solo sustains) — MODIFICAR para cambiar longitud */
 	var scaleY:Float;
+	/**
+	 * Flip horizontal — MODIFICAR para cambiar el espejo X de la nota.
+	 * ⚠️  Sustains: ignorado en body pieces; solo afecta al tail cap.
+	 *     El flipX del body siempre es false (la dirección visual la gestiona el ángulo).
+	 */
+	var flipX:Bool;
+	/**
+	 * Flip vertical — MODIFICAR para cambiar el espejo Y de la nota.
+	 * ⚠️  Sustains: solo el tail cap usa flipY (para apuntar hacia el strum en downscroll/invert).
+	 *     El body piece nunca necesita flipY (textura repetitiva simétrica).
+	 */
+	var flipY:Bool;
 }
 
 // ─── Estado de cámara ─────────────────────────────────────────────────────────
@@ -282,6 +295,8 @@ class ModChartManager
 	public var currentBeat:Float = 0;
 	private var songPosition:Float = 0;
 
+	private var _winWasModifiedByModchart:Bool = false;
+
 	public var enabled:Bool = true;
 
 	// ── Hook de posición de notas ─────────────────────────────────────────────
@@ -293,7 +308,8 @@ class ModChartManager
 	public var noteCtx:NotePositionContext = {
 		noteData: 0, strumTime: 0.0, songPosition: 0.0, beat: 0.0,
 		isPlayer: true, isSustain: false, groupId: '',
-		scrollMult: 1.0, x: 0.0, y: 0.0, angle: 0.0, alpha: 1.0, scaleY: 1.0
+		scrollMult: 1.0, x: 0.0, y: 0.0, angle: 0.0, alpha: 1.0, scaleY: 1.0,
+		flipX: false, flipY: false
 	};
 
 	/**
@@ -377,7 +393,7 @@ class ModChartManager
 	private function _restoreWindow():Void
 	{
 		#if (!html5 && !mobile)
-		if (!_winInitialized)
+		if (!_winInitialized || !_winWasModifiedByModchart)
 			return;
 		try
 		{
@@ -454,7 +470,7 @@ class ModChartManager
 		return;
 		#end
 
-		if (!_winInitialized)
+		if (!_winInitialized || !_winWasModifiedByModchart)
 			return;
 
 		final ws = winState;
@@ -741,6 +757,7 @@ class ModChartManager
 	private function setWindowValue(type:ModEventType, value:Float):Void
 	{
 		final ws = winState;
+		_winWasModifiedByModchart = true;
 		switch (type)
 		{
 			case WIN_X:
@@ -1746,14 +1763,78 @@ class ModChartManager
 				if (spr == null || i >= arr.length)
 					continue;
 				var st = arr[i];
-				spr.x = (st.absX != null) ? st.absX : st.baseX + st.offsetX;
-				spr.y = (st.absY != null) ? st.absY : st.baseY + st.offsetY;
-				// FIX: cuando INVERT está activo el receptor debe rotar 180° igual que
-				// las notas, para que el receptor indique visualmente la dirección real.
-				spr.angle = st.angle + (st.invert > 0.5 ? 180.0 : 0.0);
+
+				// ── Posición / ángulo / escala base ───────────────────────────
+				final logX:Float = (st.absX != null) ? st.absX : st.baseX + st.offsetX;
+				final logY:Float = (st.absY != null) ? st.absY : st.baseY + st.offsetY;
+
+				// Guardar posición lógica en StrumNote para que NoteManager
+				// la use como referencia de posicionamiento de notas, sin que
+				// los modificadores visuales de abajo contaminen el cálculo.
+				var sn:StrumNote = Std.downcast(spr, StrumNote);
+				if (sn != null)
+				{
+					sn.logicalX = logX;
+					sn.logicalY = logY;
+				}
+
+				spr.x = logX;
+				spr.y = logY;
+				// BUG A FIX: los receptores (strums) NO rotan con INVERT.
+				// Solo las NOTAS se rotan 180° (en NoteManager.updateNotePosition).
+				// Los strums son indicadores estáticos de qué tecla pulsar;
+				// rotar 180° los hacía aparecer con flipX visual (LEFT→RIGHT, etc.),
+				// confundiendo al jugador. El comportamiento correcto es mantener
+				// el ángulo del strum independiente del estado de invert.
+				spr.angle = st.angle;
 				spr.alpha = Math.max(0, Math.min(1, st.alpha));
 				spr.scale.set(st.scaleX, st.scaleY);
 				spr.visible = st.visible;
+
+				// ── Modificadores visuales del carril ─────────────────────────
+				// Se aplican DESPUÉS de guardar logicalX/Y.  Replica la misma
+				// fórmula que NoteManager.updateNotePosition() evaluada en
+				// t = songPosition (la nota que estaría "en" el strum ahora mismo).
+				// Esto hace que el strum receptor se mueva sincronizado con las
+				// notas al llegar, sin desplazar la referencia de posicionamiento.
+				final sp:Float = this.songPosition;
+
+				// Flat offsets (siempre activos aunque sean 0)
+				if (st.noteOffsetX != 0) spr.x += st.noteOffsetX;
+				if (st.noteOffsetY != 0) spr.y += st.noteOffsetY;
+
+				// DrunkX/Y — onda senoidal (misma fase que NoteManager: t=sp)
+				if (st.drunkX != 0)
+					spr.x += st.drunkX * Math.sin(sp * 0.001 * st.drunkFreq + sp * 0.0008);
+				if (st.drunkY != 0)
+					spr.y += st.drunkY * Math.sin(sp * 0.001 * st.drunkFreq + sp * 0.0008);
+
+				// Tipsy — ola X global por songPosition
+				if (st.tipsy != 0)
+					spr.x += st.tipsy * Math.sin(sp * 0.001 * st.tipsySpeed);
+
+				// Zigzag — escalonado en X por songPosition
+				if (st.zigzag != 0)
+				{
+					final zz:Float = Math.sin(sp * 0.001 * st.zigzagFreq * Math.PI);
+					spr.x += st.zigzag * (zz >= 0 ? 1.0 : -1.0);
+				}
+
+				// Bumpy — ola Y global por songPosition
+				if (st.bumpy != 0)
+					spr.y += st.bumpy * Math.sin(sp * 0.001 * st.bumpySpeed);
+
+				// Wave — ola Y mixta (misma evaluación que NoteManager en t=sp)
+				if (st.wave != 0)
+					spr.y += st.wave * Math.sin(sp * 0.001 * st.waveSpeed - sp * 0.001);
+
+				// Confusion — offset de ángulo plano (idéntico al de cada nota)
+				if (st.confusion != 0)
+					spr.angle += st.confusion;
+
+				// Tornado — ángulo senoidal evaluado en t=sp
+				if (st.tornado != 0)
+					spr.angle += st.tornado * Math.sin(sp * 0.001 * st.drunkFreq);
 			}
 		}
 	}

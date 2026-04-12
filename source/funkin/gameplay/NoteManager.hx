@@ -624,8 +624,27 @@ class NoteManager
 		//   Base: pantalla + SPAWN_PAD_PX → garantiza que notas recién spawneadas no se cull inmediatamente.
 		//   Extra modchart: cuando hay mods activos, drunkY/wave/bumpy pueden desplazar notas
 		//   ±pantalla fuera del área visible. Añadimos FlxG.height extra de margen.
+		//   INVERT FIX: con MOVE_Y grande (ej. 500 px) los strums se desplazan lejos de strumLineY.
+		//   Las notas se posicionan relativas al strum real, así que el margen de cull debe incluir
+		//   la desviación máxima de cualquier strum respecto a strumLineY.
 		final _modCullExtra:Float = (modManager != null && modManager.enabled) ? FlxG.height : 0.0;
-		_dynCullDist = FlxG.height + SPAWN_PAD_PX + _modCullExtra;
+		var _maxStrumYDev:Float = 0.0;
+		if (modManager != null && modManager.enabled && allStrumsGroups != null)
+		{
+			for (_cg in allStrumsGroups)
+			{
+				for (_ci2 in 0...4)
+				{
+					final _cs = _cg.getStrum(_ci2);
+					if (_cs != null)
+					{
+						final _dev = Math.abs(_cs.y - strumLineY);
+						if (_dev > _maxStrumYDev) _maxStrumYDev = _dev;
+					}
+				}
+			}
+		}
+		_dynCullDist = FlxG.height + SPAWN_PAD_PX + _modCullExtra + _maxStrumYDev;
 
 		spawnNotes(songPosition);
 		updateActiveNotes(songPosition);
@@ -875,7 +894,9 @@ class NoteManager
 					for (note in sustainNotes.members)
 					{
 						if (note == null || !note.alive) continue;
-						final nGid:String = (note.strumsGroupIndex < _frameGroupCount)
+						// Misma lógica que updateNotePosition: grupos 0/1 usan mustPress,
+						// grupos >= 2 usan strumsGroupIndex directo.
+						final nGid:String = (note.strumsGroupIndex >= 2 && note.strumsGroupIndex < _frameGroupCount)
 							? allStrumsGroups[note.strumsGroupIndex].id
 							: (note.mustPress ? "player" : "cpu");
 						if (nGid != gid) continue;
@@ -888,7 +909,7 @@ class NoteManager
 						for (note in notes.members)
 						{
 							if (note == null || !note.alive) continue;
-							final nGid:String = (note.strumsGroupIndex < _frameGroupCount)
+							final nGid:String = (note.strumsGroupIndex >= 2 && note.strumsGroupIndex < _frameGroupCount)
 								? allStrumsGroups[note.strumsGroupIndex].id
 								: (note.mustPress ? "player" : "cpu");
 							if (nGid != gid) continue;
@@ -1232,7 +1253,12 @@ class NoteManager
 			final _cached = _frameCenterYCache[_strumCacheKey];
 			if (Math.isNaN(_cached))
 			{
-				strumCenterY = (strum != null) ? strum.y : strumLineY;
+				// Usar logicalY en lugar de strum.y cuando hay modchart activo:
+				// strum.y puede incluir desplazamientos visuales (drunk, tipsy…)
+				// que NO deben contaminar la referencia de posicionamiento de notas.
+				// logicalY = baseY + offsetY, sin modificadores visuales.
+				final _sn:StrumNote = (strum != null) ? Std.downcast(strum, StrumNote) : null;
+				strumCenterY = (_sn != null) ? _sn.logicalY : ((strum != null) ? strum.y : strumLineY);
 				_frameCenterYCache[_strumCacheKey] = strumCenterY;
 			}
 			else
@@ -1264,8 +1290,12 @@ class NoteManager
 		var _noteGroupId:String = note.mustPress ? "player" : "cpu";
 		if (_frameModEnabled)
 		{
-			// Resolver el groupId a partir del strumsGroupIndex de la nota
-			if (note.strumsGroupIndex < _frameGroupCount)
+			// Grupos 0 y 1 (estándar): usar alias "player"/"cpu" basado en mustPress,
+			// igual que getStrumForDirection. strumsGroupIndex 0/1 NO tiene una
+			// correspondencia fija con allStrumsGroups[0/1] porque mustHitSection
+			// puede hacer que un groupIdx=0 sea CPU o player según la sección.
+			// Grupos >= 2 sí tienen groupId propio asignado explícitamente en el JSON.
+			if (note.strumsGroupIndex >= 2 && note.strumsGroupIndex < _frameGroupCount)
 				_noteGroupId = allStrumsGroups[note.strumsGroupIndex].id;
 			_modState = modManager.getState(_noteGroupId, note.noteData);
 		}
@@ -1341,8 +1371,18 @@ class NoteManager
 			// INVERT para notas normales: rotar la flecha 180° cuando la dirección
 			// efectiva es downscroll (notas vienen de arriba).
 			// Usa _effectiveDownscroll (XOR) para ser consistente con la posición Y.
+			//
+			// INVERT FIX: en downscroll real, Note.hx inicializa flipX=true/flipY=true.
+			// Con INVERT activo en upscroll, la nota nació con flipX=false/flipY=false
+			// pero recibe +180° de ángulo → apariencia diferente al downscroll real.
+			// Solución: forzar flipX/flipY al valor que tendría en downscroll efectivo,
+			// sobreescribiendo el estado de inicialización en cada frame.
 			if (!note.isSustainNote)
+			{
 				note.angle = _baseAngle + (_effectiveDownscroll ? 180.0 : 0.0);
+				note.flipX = _effectiveDownscroll;
+				note.flipY = _effectiveDownscroll;
+			}
 
 			// ── Escala / alpha ────────────────────────────────────────────────
 			var newSX = strum.scale.x;
@@ -1384,7 +1424,12 @@ class NoteManager
 				note.alpha = _baseAlpha;
 
 			// ── Posición X base ───────────────────────────────────────────────
-			var _noteX:Float = strum.x + (strum.width - note.width) / 2;
+			// Usar logicalX en lugar de strum.x: después del fix de strum visual,
+			// strum.x puede incluir desplazamientos visuales (drunk, tipsy…).
+			// logicalX = baseX + offsetX, es la referencia limpia de posicionamiento.
+			final _sn:StrumNote = Std.downcast(strum, StrumNote);
+			final _logStrumX:Float = (_sn != null) ? _sn.logicalX : strum.x;
+			var _noteX:Float = _logStrumX + (strum.width - note.width) / 2;
 
 			if (_modState != null)
 			{
@@ -1407,10 +1452,10 @@ class NoteManager
 					_noteX += _modState.zigzag * (_zz >= 0 ? 1.0 : -1.0);
 				}
 
-				// FLIP_X: espejo horizontal alrededor del centro del strum
+				// FLIP_X: espejo horizontal alrededor del centro lógico del strum
 				if (_modState.flipX > 0.5)
 				{
-					final _strumCenter = strum.x + strum.width / 2;
+					final _strumCenter = _logStrumX + strum.width / 2;
 					_noteX = _strumCenter - (_noteX - _strumCenter + note.width / 2) - note.width / 2;
 				}
 			}
@@ -1419,13 +1464,14 @@ class NoteManager
 
 			if (note.isSustainNote)
 			{
-				// FIX: INVERT del modchart estaba poniendo flipX=true, lo que difiere
-				// del comportamiento del downscroll real (que siempre da flipX=false).
-				// La dirección visual ya se maneja con _effectiveDownscroll en la posición Y
-				// y en el ángulo de la nota (+180°). flipX en sustains nunca debe cambiar.
-				// flipY tampoco: el hold mesh y el clipRect gestionan el sentido de la cola.
+				// BUG D FIX: flipX nunca cambia en sustains (la dirección visual se
+				// gestiona con posición Y y ángulo). flipY SÍ debe aplicarse al
+				// tail cap (holdend) para que el gráfico de cola apunte correctamente:
+				//   - upscroll / invert=false: holdend apunta hacia abajo → flipY=false
+				//   - downscroll / invert=true: holdend debe apuntar hacia arriba → flipY=true
+				// El hold body nunca necesita flipY (textura repetitiva simétrica).
 				note.flipX = false;
-				note.flipY = false;
+				note.flipY = note.isTailCap && _effectiveDownscroll;
 
 				// ── Position of the NEXT step (end-of-piece / start-of-next) ──
 				final _nextStrumTime:Float = note.strumTime + Conductor.stepCrochet;
@@ -1449,8 +1495,8 @@ class NoteManager
 						_nextY += _modState.wave * Math.sin(songPosition * 0.001 * _modState.waveSpeed - _nextStrumTime * 0.001);
 				}
 
-				// Next X: same formula as _noteX but at _nextStrumTime
-				var _nextX:Float = strum.x + (strum.width - note.width) / 2;
+				// Next X: misma fórmula que _noteX pero en _nextStrumTime
+				var _nextX:Float = _logStrumX + (strum.width - note.width) / 2;
 				if (_modState != null)
 				{
 					_nextX += _modState.noteOffsetX;
@@ -1469,7 +1515,7 @@ class NoteManager
 
 					if (_modState.flipX > 0.5)
 					{
-						final _sc:Float = strum.x + strum.width / 2;
+						final _sc:Float = _logStrumX + strum.width / 2;
 						_nextX = _sc - (_nextX - _sc + note.width / 2) - note.width / 2;
 					}
 				}
@@ -1563,6 +1609,11 @@ class NoteManager
 			ctx.angle = note.angle;
 			ctx.alpha = note.alpha;
 			ctx.scaleY = note.scale.y;
+			// INVERT FIX: exponer el estado actual de flipX/flipY al script para que
+			// onNotePosition pueda leer (y opcionalmente modificar) el flip efectivo.
+			// Sustains: flipX siempre false (dirección gestionada por ángulo).
+			ctx.flipX = note.isSustainNote ? false : note.flipX;
+			ctx.flipY = note.flipY;
 			modManager.callNotePositionHook(ctx);
 			note.x = ctx.x;
 			note.y = ctx.y;
@@ -1571,6 +1622,20 @@ class NoteManager
 			// scaleY solo si cambió (evita updateHitbox innecesario)
 			if (note.isSustainNote && ctx.scaleY != note.scale.y)
 				note.scale.y = ctx.scaleY;
+			// Aplicar flipX/flipY del script con las restricciones de cada tipo:
+			//   • Notas normales: el script puede cambiar flipX y flipY libremente.
+			//   • Sustains body:  flipX siempre false (la dirección la gestiona el ángulo snake).
+			//   • Sustains tail:  el script puede cambiar flipY; flipX sigue siendo false.
+			if (!note.isSustainNote)
+			{
+				note.flipX = ctx.flipX;
+				note.flipY = ctx.flipY;
+			}
+			else if (note.isTailCap)
+			{
+				note.flipY = ctx.flipY;
+				// note.flipX queda en false (ya fijado arriba, no se toca)
+			}
 		}
 
 		final _noteWidth2:Float = note.width * 2;
@@ -1587,15 +1652,22 @@ class NoteManager
 			else
 			{
 				// Enfoque NoteManager2: threshold unificado en la MITAD del strum,
-				// usando Note.swagWidth * 0.5 como offset fijo respecto a strumLineY.
+				// usando Note.swagWidth * 0.5 como offset fijo respecto al strum de la nota.
 				// Se aplica igual a wasGoodHit y !wasGoodHit — lógica uniforme para
 				// player y CPU, upscroll y downscroll.
+				//
+				// INVERT FIX (bug principal): usar _refY (la Y real del strum de ESTA nota)
+				// en lugar de strumLineY (la Y global del strum del jugador).
+				// Con MOVE_Y=500 en CPU, el strum CPU está a _refY≈550 pero strumLineY≈50.
+				// El clip en strumLineY recortaba todos los sustains CPU desde el primer frame,
+				// haciéndolos invisibles. Ahora cada nota se recorta en su propio strum.
+				//
 				// BUG FIX: usar _effectiveDownscroll (= downscroll XOR modchart invert)
 				// para que el clip sea correcto cuando el mod INVERT está activo.
 				final halfStrum:Float = funkin.gameplay.notes.Note.swagWidth * 0.5;
 				final strumLineThreshold:Float = _effectiveDownscroll
-					? strumLineY - halfStrum   // downscroll: threshold desplazado hacia arriba
-					: strumLineY + halfStrum;  // upscroll:   threshold desplazado hacia dentro del strum
+					? _refY - halfStrum   // downscroll/invert: threshold desplazado hacia arriba del strum
+					: _refY + halfStrum;  // upscroll: threshold desplazado hacia dentro del strum
 
 				if (_effectiveDownscroll)
 				{

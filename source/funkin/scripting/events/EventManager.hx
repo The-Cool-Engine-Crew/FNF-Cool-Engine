@@ -91,6 +91,12 @@ class EventManager
 		// ── Precacheo proactivo de Change Character ───────────────────────────
 		_precacheChangeCharacters();
 
+		// ── onEventPushed: cubre restart y entrada directa sin LoadingState ──
+		// LoadingState ya lo llamó antes de entrar a PlayState; aquí es el
+		// respaldo para accesos directos (debug, restart rápido, etc.).
+		// precacheCharacter() tiene guard interno → segunda llamada gratuita.
+		_dispatchEventPushed();
+
 		trace('[EventManager] ${events.length} eventos cargados.');
 	}
 
@@ -529,6 +535,23 @@ class EventManager
 
 		if (count > 0)
 			trace('[EventManager] Precacheados $count personajes de Change Character.');
+	}
+
+	/**
+	 * Despacha `onEventPushed(name, v1, v2, time)` en todos los scripts cargados
+	 * por cada evento del chart ya parseado en `events`.
+	 *
+	 * Esto permite que scripts como `ChangeCharacter.hx` precacheen assets
+	 * (atlas, iconos) en cuanto se conoce el chart, antes de que arranque la música.
+	 *
+	 * Llamado desde:
+	 *   • `loadEventsFromSong()`     — cubre restart y entrada directa a PlayState
+	 *   • `LoadingState._precacheChartEvents()` — cubre la pantalla de carga visual
+	 */
+	public static function _dispatchEventPushed():Void
+	{
+		for (e in events)
+			ScriptHandler.callOnScripts('onEventPushed', [e.name, e.value1, e.value2, e.time]);
 	}
 
 	static function _resolveChar(game:PlayState,

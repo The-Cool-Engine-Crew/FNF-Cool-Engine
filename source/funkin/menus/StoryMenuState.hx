@@ -110,6 +110,13 @@ class StoryMenuState extends funkin.states.MusicBeatState
 		persistentUpdate = persistentDraw = true;
 
 		// === CARGAR DATOS DESDE EL MISMO JSON QUE FREEPLAY ===
+
+		#if HSCRIPT_ALLOWED
+		StateScriptHandler.init();
+		StateScriptHandler.loadStateScripts('StoryMenuState', this);
+		StateScriptHandler.callOnScripts('onCreate', []);
+		#end
+
 		loadSongsData();
 
 		buildWeeksFromJSON();
@@ -231,10 +238,6 @@ class StoryMenuState extends funkin.states.MusicBeatState
 		}
 
 		#if HSCRIPT_ALLOWED
-		StateScriptHandler.init();
-		StateScriptHandler.loadStateScripts('StoryMenuState', this);
-		StateScriptHandler.callOnScripts('onCreate', []);
-
 		// Obtener semanas custom
 		var customWeeks = StateScriptHandler.callOnScriptsReturn('getCustomWeeks', [], null);
 		if (customWeeks != null && Std.isOfType(customWeeks, Array))
@@ -342,6 +345,11 @@ class StoryMenuState extends funkin.states.MusicBeatState
 		trace("Line 165");
 
 		super.create();
+
+		#if HSCRIPT_ALLOWED
+		StateScriptHandler.refreshStateFields(this);
+		StateScriptHandler.callOnScripts('postCreate', []);
+		#end
 
 		StickerTransition.clearStickers();
 	}

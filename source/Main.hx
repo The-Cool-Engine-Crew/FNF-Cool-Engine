@@ -99,7 +99,16 @@ class Main extends Sprite
 	static function __init__():Void
 	{
 		#if (windows && cpp)
+		// DPI-awareness: debe llamarse antes de cualquier ventana para que
+		// Windows no escale el framebuffer en monitores HiDPI.
 		InitAPI.setDPIAware();
+		#end
+
+		#if (linux && cpp)
+		// GTK_THEME debe establecerse antes de que SDL/Lime inicialice GTK.
+		// Una vez creada la ventana el putenv ya no tiene efecto sobre la
+		// sesion actual, por eso se hace aqui y no en setupStage.
+		InitAPI.setDarkMode(true);
 		#end
 	}
 
@@ -148,14 +157,36 @@ class Main extends Sprite
 		#end
 
 		#if (windows && cpp)
-		InitAPI.setDarkMode(true);
-		CppAPI.changeColor(0, 0, 0);
+		// FIX (PC): GetActiveWindow() devuelve NULL si la ventana del juego todavia
+		// no tiene el foco del teclado en el momento de setupStage().  Esto ocurre
+		// de forma intermitente (ventanas multiples, alt-tab durante el inicio, etc.)
+		// y hace que DwmSetWindowAttribute() no aplique el color ni el dark mode.
+		// Diferir al primer ENTER_FRAME garantiza que la ventana ya existe y tiene
+		// foco antes de llamar a la API de DWM.  Si en el primer frame todavia no
+		// hay HWND valido, _applyWindowStylingDeferred reintenta hasta 5 veces.
+		stage.addEventListener(openfl.events.Event.ENTER_FRAME, _applyWindowStylingDeferred);
+		#elseif (mac && cpp)
+		// macOS: NSApp esta disponible desde el arranque, pero diferimos igualmente
+		// al primer frame para que la ventana ya este visible al aplicar la apariencia.
+		stage.addEventListener(openfl.events.Event.ENTER_FRAME, _applyWindowStylingDeferred);
 		#end
 	}
 
 	private function setupGame():Void
 	{
 		calculateZoom();
+
+		// FIX (mobile): el valor por defecto de `framerate` es BASE_FPS=2000.
+		// FlxGame se construye con ese valor → stage.frameRate=2000 → el GPU de
+		// Android/iOS intenta renderizar 2000 veces/segundo → 1 FPS real y el
+		// despachador de eventos de Lime no procesa los callbacks async de
+		// OpenFlAssets.loadBitmapData / loadSound → la barra se queda en 0% para
+		// siempre.  initializeFramerate() llama setMaxFps(60) DESPUÉS de
+		// createGame(), pero eso llega tarde.  Limitamos a 60 fps ANTES de
+		// construir FlxGame para evitar el burst inicial.
+		#if mobileC
+		framerate = 60;
+		#end
 
 		// ── Audio (ANTES de createGame) ────────────────────────────────────────
 		AudioConfig.load();
@@ -227,6 +258,18 @@ class Main extends Sprite
 		// pero dejamos la curva lineal por si algún SFX usa FlxG.sound.play().
 		FlxG.sound.applySoundCurve  = function(v:Float) return v;
 		FlxG.sound.reverseSoundCurve = function(v:Float) return v;
+
+		// ── FIX (mobile): pantalla negra al volver a la app ──────────────────
+		// En Android/iOS, cuando el OS manda la app a segundo plano y el usuario
+		// vuelve, la superficie EGL puede quedar invalidada.  OpenFL debería
+		// restaurarla automáticamente en el evento ACTIVATE, pero si el juego
+		// estaba congelado (p.ej. por la race condition del framerate de 2000fps)
+		// el handler interno de Lime nunca se ejecutó correctamente.
+		// Forzar stage.invalidate() + re-aplicar framerate en ACTIVATE asegura
+		// que el render pipeline se reanuda con parámetros correctos.
+		#if mobileC
+		stage.addEventListener(openfl.events.Event.ACTIVATE, _onMobileActivate);
+		#end
 
 		// ── Mods ──────────────────────────────────────────────────────────────
 		#if android
@@ -320,12 +363,81 @@ class Main extends Sprite
 		SystemInfo.init();
 	}
 
+	#if ((windows || mac) && cpp)
+	/**
+	 * Aplica dark mode + colores de ventana DWM en el primer frame real.
+	 *
+	 * En Windows, GetActiveWindow() puede devolver NULL si la ventana aun no
+	 * tiene foco activo en la cola de mensajes del thread.  Durante setupStage()
+	 * (antes del primer frame) esto ocurre con frecuencia cuando el usuario
+	 * tiene otras ventanas o el OS pospone el foco.
+	 *
+	 * Mecanismo de reintento: si hasValidWindow() devuelve false el handler
+	 * no se elimina y se vuelve a ejecutar en el siguiente ENTER_FRAME,
+	 * hasta un maximo de MAX_RETRIES intentos.
+	 *
+	 * En macOS el retry no es necesario (NSApp siempre esta disponible),
+	 * pero compartimos la misma funcion para simplicidad.
+	 */
+	private static inline var _WIN_STYLE_MAX_RETRIES:Int = 5;
+	private var _winStyleRetries:Int = 0;
+
+	private function _applyWindowStylingDeferred(_:openfl.events.Event):Void
+	{
+		// Reintento si el HWND aun no esta disponible (solo relevante en Windows)
+		if (!InitAPI.hasValidWindow())
+		{
+			if (++_winStyleRetries < _WIN_STYLE_MAX_RETRIES)
+				return; // quedarse suscrito y reintentar el proximo frame
+			// Superado el limite: eliminar el listener y rendirse silenciosamente
+			stage.removeEventListener(openfl.events.Event.ENTER_FRAME, _applyWindowStylingDeferred);
+			return;
+		}
+
+		stage.removeEventListener(openfl.events.Event.ENTER_FRAME, _applyWindowStylingDeferred);
+
+		// Dark mode del frame / barra de titulo (Win10 1809+ y Win11 / macOS 10.14+)
+		InitAPI.setDarkMode(true);
+
+		#if windows
+		// Color del borde y del caption a negro (Win11 22000+).
+		// NOTA: setWindowCaptionColor faltaba en la version anterior — era la
+		// causa de que la barra de titulo mantuviese el color del sistema.
+		CppAPI.changeColor(0, 0, 0);        // DWMWA_BORDER_COLOR
+		CppAPI.changeCaptionColor(0, 0, 0); // DWMWA_CAPTION_COLOR  ← fix
+		#end
+	}
+	#end
+
 	#if mobileC
 	/** Deferred init for StickerTransition on mobile — waits for the OpenGL context. */
 	private function _initStickersDeferred(_:openfl.events.Event):Void
 	{
 		stage.removeEventListener(openfl.events.Event.ENTER_FRAME, _initStickersDeferred);
 		StickerTransition.init();
+	}
+	#end
+
+	#if mobileC
+	/**
+	 * Corrige la pantalla negra al volver a la app en Android/iOS.
+	 *
+	 * Cuando el OS destruye la superficie EGL (app en segundo plano) y la
+	 * recrea al volver, OpenFL debe re-enlazar el framebuffer y re-subir
+	 * todas las texturas. stage.invalidate() fuerza un redraw completo.
+	 * Re-aplicar el framerate garantiza que stage.frameRate no quedó
+	 * revirtido a 2000 por algún reset interno de Lime/SDL.
+	 */
+	private function _onMobileActivate(_:openfl.events.Event):Void
+	{
+		// Forzar redraw completo para restaurar el framebuffer EGL
+		openfl.Lib.current.stage.invalidate();
+		// Re-asegurar framerate correcto (algunos drivers Android lo resetean)
+		setMaxFps(60);
+		// FIX: SDL puede resetear el swap interval al recrear la superficie EGL
+		// (destruccion/recreacion de contexto OpenGL al volver de segundo plano).
+		// Sin esto el VSync queda desactivado aunque el save lo tenga a true.
+		Main.applyVSync();
 	}
 	#end
 
@@ -486,6 +598,12 @@ class Main extends Sprite
 			SaveData.data.fpsTarget = 60;
 			setMaxFps(60);
 		}
+		#else
+		// FIX (mobile): aunque framerate ya se fijó a 60 antes de createGame(),
+		// FlxG.updateFramerate / FlxG.drawFramerate y stage.frameRate pueden
+		// haber quedado en 2000 si Flixel los restauró internamente.
+		// Llamar setMaxFps() aquí los sincroniza todos definitivamente.
+		setMaxFps(60);
 		#end
 	}
 
@@ -543,11 +661,19 @@ class Main extends Sprite
 		#end
 	}
 
-	/** Aplica el estado de VSync guardado en save via extensión nativa. */
+	/**
+	 * Aplica el estado de VSync guardado en save via extension nativa.
+	 *
+	 * FIX: la expresion original `SaveData.data.vsync == true` evalua a false
+	 * cuando vsync es null (usuario nuevo sin save previo), desactivando el
+	 * VSync de forma silenciosa en el primer arranque.
+	 * Con `!= false`, null se trata como true → VSync activado por defecto,
+	 * que es el comportamiento correcto en todas las plataformas.
+	 */
 	public static function applyVSync():Void
 	{
 		#if cpp
-		VSyncAPI.setVSync(SaveData.data.vsync == true);
+		VSyncAPI.setVSync(SaveData.data.vsync != false);
 		#end
 	}
 

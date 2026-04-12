@@ -468,6 +468,7 @@ class FreeplayState extends funkin.states.MusicBeatState
 		}
 
 		#if HSCRIPT_ALLOWED
+		StateScriptHandler.refreshStateFields(this);
 		StateScriptHandler.callOnScripts('postCreate', []);
 		#end
 

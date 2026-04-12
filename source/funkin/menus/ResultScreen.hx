@@ -189,7 +189,11 @@ class ResultScreen extends FlxSubState {
 
 		_startIntroSequence();
 
+		#if HSCRIPT_ALLOWED
+		StateScriptHandler.refreshStateFields(this);
 		StateScriptHandler.callOnScripts('postCreate', []);
+		#end
+		
 		StateTransition.onStateCreated();
 	}
 
@@ -245,7 +249,9 @@ class ResultScreen extends FlxSubState {
 		if (retry && canExit && !isExiting)
 			_exit(true);
 
+		#if HSCRIPT_ALLOWED
 		StateScriptHandler.callOnScripts('onUpdatePost', [elapsed]);
+		#end
 	}
 
 	override function destroy():Void {

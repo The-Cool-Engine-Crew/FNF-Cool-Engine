@@ -245,6 +245,13 @@ class Note extends FlxSprite
 		// scale.set() directamente para evitar que el scale se multiplique
 		// acumulativamente en cada recycle (_noteScale^N en la N-ésima reutilización).
 		_noteScale = tex.scale != null ? tex.scale : 1.0;
+		// BUG C FIX: si loadAtlas() no encontró el asset del skin personalizado y
+		// cayó al fallback (textura Default), la escala del skin custom NO debe
+		// aplicarse sobre la textura Default — si no, las notas aparecen con la
+		// textura Default pero escaladas al tamaño del skin custom (notas gigantes).
+		// NoteSkinSystem.lastLoadFellBack se activa en todos los fallbacks de loadAtlas().
+		if (NoteSkinSystem.lastLoadFellBack)
+			_noteScale = 0.7; // escala fija de la skin Default
 		scale.set(_noteScale, _noteScale);
 		updateHitbox();
 

@@ -143,7 +143,14 @@ class NoteRenderer
     public function getNote(strumTime:Float, noteData:Int, ?prevNote:Note, ?sustainNote:Bool = false, ?mustHitNote:Bool = false, ?groupSkin:String, strumsGroupIndex:Int = 0):Note
     {
         var note:Note = null;
-        final skinKey:String = (groupSkin != null && groupSkin != '') ? groupSkin : '';
+        // BUG B FIX: normalizar la skinKey al nombre real de la skin en vez de usar
+        // '' cuando groupSkin es null. recycleNote() guarda la nota con poolKey
+        // basada en note.loadedSkinName (siempre el nombre real, e.g. "Default"),
+        // pero getNote() buscaba con '' → pools nunca coincidían → notas nunca
+        // recicladas → new Note() en cada spawn → GC pressure + flash de skin vacía.
+        final skinKey:String = (groupSkin != null && groupSkin != '')
+            ? groupSkin
+            : funkin.gameplay.notes.NoteSkinSystem.currentSkin;
         // POOL FIX: composite key = skinName + "|" + strumsGroupIndex
         // Prevents notes from different groups sharing the same pool slot even
         // when they have the same skin name.

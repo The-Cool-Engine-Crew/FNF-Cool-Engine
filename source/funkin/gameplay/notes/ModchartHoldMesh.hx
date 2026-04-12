@@ -42,6 +42,7 @@ import flixel.math.FlxPoint;
 import funkin.data.Conductor;
 import funkin.gameplay.NoteManager;
 import funkin.gameplay.modchart.ModChartManager.StrumState;
+import funkin.gameplay.notes.StrumNote;
 
 class ModchartHoldMesh extends FlxBasic {
 	// ── Configuración ────────────────────────────────────────────────────────
@@ -111,11 +112,34 @@ class ModchartHoldMesh extends FlxBasic {
 
 	/**
 	 * Devuelve true si algún modificador que produce desplazamiento curvilíneo
-	 * en X o Y tiene valor distinto de cero en el StrumState dado.
+	 * o rotación de carril tiene valor distinto de cero.
+	 *
+	 * @param st          StrumState del grupo/nota
+	 * @param strumAngle  strum.angle actual (spin acumulado + st.angle)
 	 */
 	@:inline
-	function _hasCurve(st:StrumState):Bool
-		return st.drunkX != 0 || st.drunkY != 0 || st.wave != 0 || st.bumpy != 0 || st.tipsy != 0 || st.zigzag != 0 || st.flipX > 0.5;
+	function _hasCurve(st:StrumState, strumAngle:Float):Bool
+		return st.drunkX != 0 || st.drunkY != 0 || st.wave != 0 || st.bumpy != 0
+			|| st.tipsy != 0 || st.zigzag != 0 || st.flipX > 0.5
+			|| strumAngle != 0 || st.confusion != 0 || st.tornado != 0;
+
+	/**
+	 * Ángulo total en grados para el punto a tiempo `t`.
+	 * Replica _baseAngle de NoteManager: strum.angle + confusion + tornado senoidal.
+	 *
+	 * @param t           strumTime del punto (ms)
+	 * @param strumAngle  strum.angle actual
+	 * @param confusion   st.confusion
+	 * @param tornado     st.tornado
+	 * @param drunkFreq   st.drunkFreq (frecuencia compartida con tornado)
+	 */
+	@:inline
+	function _evalAngle(t:Float, strumAngle:Float, confusion:Float, tornado:Float, drunkFreq:Float):Float {
+		var a:Float = strumAngle + confusion;
+		if (tornado != 0)
+			a += tornado * Math.sin(t * 0.001 * drunkFreq);
+		return a;
+	}
 
 	/**
 	 * Calcula la posición X en pantalla de un punto del path a tiempo `t`.
@@ -231,12 +255,24 @@ class ModchartHoldMesh extends FlxBasic {
 
 				// ── Resolver StrumState del ModChartManager ──────────────────
 
+				// Grupos 0/1: alias mustPress-based, igual que NoteManager.
+				// Grupos >= 2: groupId propio del JSON.
 				var groupId:String = note.mustPress ? "player" : "cpu";
-				if (allGroups != null && note.strumsGroupIndex < allGroups.length)
+				if (allGroups != null && note.strumsGroupIndex >= 2 && note.strumsGroupIndex < allGroups.length)
 					groupId = allGroups[note.strumsGroupIndex].id;
 
 				var st:StrumState = mm.getState(groupId, note.noteData);
-				if (st == null || !_hasCurve(st))
+				if (st == null)
+					continue;
+
+				// ── Obtener receptor (antes del guard para leer strum.angle) ──
+
+				var strum:FlxSprite = nm.getStrumForDir(note.noteData, note.strumsGroupIndex, note.mustPress);
+				if (strum == null)
+					continue;
+
+				// Guard unificado: desplazamiento curvilíneo O rotación de carril
+				if (!_hasCurve(st, strum.angle))
 					continue;
 
 				// ── Parámetros de scroll efectivos para esta nota ────────────
@@ -246,34 +282,68 @@ class ModchartHoldMesh extends FlxBasic {
 				var isInvert:Bool = st.invert > 0.5;
 				var pEffDown:Bool = baseDown != isInvert; // XOR, igual que NoteManager
 
-				// ── Obtener receptor ─────────────────────────────────────────
-
-				var strum:FlxSprite = nm.getStrumForDir(note.noteData, note.strumsGroupIndex, note.mustPress);
-				if (strum == null)
-					continue;
-
-				var strumX:Float = strum.x;
+				// Cast a StrumNote para acceder a logicalX/Y — posiciones de referencia
+				// lógicas (baseX/Y + offsetX/Y) sin modificadores visuales (drunk, tipsy…).
+				// Esto espeja exactamente NoteManager: _refY = sn.logicalY, _logStrumX = sn.logicalX.
+				var sn:StrumNote = Std.downcast(strum, StrumNote);
+				var strumX:Float = (sn != null) ? sn.logicalX : strum.x;
 				var strumW:Float = strum.width;
 				var noteW:Float = note.width;
-				// Centro Y del receptor (igual que NoteManager, línea ~1067)
-				// FIX: usar strum.y directamente — igual que NoteManager._refY = strum.y.
-				// Antes se usaba (strum.y - strum.offset.y + strum.height*0.5), que es
-				// el centro visual del sprite pero NO la referencia que usa NoteManager
-				// para posicionar las notas/sustains. Esa diferencia causaba que el mesh
-				// apareciera desplazado en Y respecto a los sprites (especialmente notorio
-				// con beat bumps o skins con offset grande).
-				var refY:Float = strum.y;
+				// Centro Y del receptor — usar logicalY para paridad exacta con
+				// NoteManager._refY = sn.logicalY. strum.y puede incluir offsets
+				// visuales de mods (drunk, tipsy, beat-bump…) que desalinearían
+				// el mesh respecto a los sprites de nota y sustain.
+				var refY:Float = (sn != null) ? sn.logicalY : strum.y;
 
 				// ── Muestrear path: HOLD_SUBS+1 puntos ──────────────────────
 				//
 				// Evaluamos de strumTime a strumTime+stepCrochet para cubrir
 				// exactamente esta pieza de sustain.  Los puntos se acumulan
 				// en los buffers de instancia sin ningún alloc.
+				//
+				// ANGLE FIX: después de calcular la posición en espacio sin rotar,
+				// giramos cada punto alrededor del centro del strum (strumCenterX, refY)
+				// por el ángulo total = strum.angle + confusion + tornado(t).
+				// Esto replica exactamente _baseAngle de NoteManager pero aplicado
+				// a la posición, no al sprite individual → el snake completo rota
+				// como una unidad y los segmentos siempre conectan entre sí.
+				var _strumAngle:Float   = strum.angle; // spin acumulado + st.angle
+				var _confusion:Float    = st.confusion;
+				var _tornado:Float      = st.tornado;
+				var _applyRot:Bool      = (_strumAngle != 0.0 || _confusion != 0.0 || _tornado != 0.0);
+				var _strumCX:Float      = strumX + strumW * 0.5; // centro X del receptor
+				// Para rotación uniforme (sin tornado) precalcular cos/sin una sola vez.
+				var _cosU:Float = 1.0;
+				var _sinU:Float = 0.0;
+				if (_applyRot && _tornado == 0.0) {
+					var _radU:Float = (_strumAngle + _confusion) * (Math.PI / 180.0);
+					_cosU = Math.cos(_radU);
+					_sinU = Math.sin(_radU);
+				}
+
 				var dt:Float = stepC / HOLD_SUBS;
 				for (i in 0...HOLD_SUBS + 1) {
 					var t:Float = note.strumTime + i * dt;
-					_ptsX[i] = _evalX(t, songPos, st, strumX, strumW, noteW);
-					_ptsY[i] = _evalY(t, songPos, st, refY, pEffSpeed, pEffDown);
+					var px:Float = _evalX(t, songPos, st, strumX, strumW, noteW);
+					var py:Float = _evalY(t, songPos, st, refY, pEffSpeed, pEffDown);
+
+					if (_applyRot) {
+						var cosA:Float = _cosU;
+						var sinA:Float = _sinU;
+						if (_tornado != 0.0) {
+							// Tornado: ángulo diferente por punto → recalcular cada vez
+							var rad:Float = _evalAngle(t, _strumAngle, _confusion, _tornado, st.drunkFreq) * (Math.PI / 180.0);
+							cosA = Math.cos(rad);
+							sinA = Math.sin(rad);
+						}
+						var dxR:Float = px - _strumCX;
+						var dyR:Float = py - refY;
+						_ptsX[i] = _strumCX + dxR * cosA - dyR * sinA;
+						_ptsY[i] = refY      + dxR * sinA + dyR * cosA;
+					} else {
+						_ptsX[i] = px;
+						_ptsY[i] = py;
+					}
 				}
 
 				// ── Ocultar sprite original ──────────────────────────────────

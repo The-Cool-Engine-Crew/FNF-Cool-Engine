@@ -156,6 +156,16 @@ class LoadingState extends funkin.states.MusicBeatState {
 			checkLoadSong(getSongPath());
 			if (PlayState.SONG.needsVoices)
 				checkLoadSong(getVocalPath());
+
+			// ── Precargue de eventos durante la barra de carga ───────────────
+			// Carga los scripts globales y del tema, luego llama onEventPushed
+			// por cada evento del chart. ChangeCharacter.hx responde a esto
+			// llamando precacheCharacter() + Paths.image(icono), así los atlases
+			// quedan pinned en VRAM antes de que PlayState siquiera arranque.
+			// PlayState.create() volverá a llamar init()+loadSongScripts() de
+			// forma segura: ambas funciones limpian el estado antes de recargar.
+			_precacheChartEvents();
+
 			// ── NO cargar librerías "characters" y "stages" completas ──────────
 			// Codename Engine NO hace Assets.loadLibrary("characters/stages").
 			// Cargar esas librerías sube TODOS los personajes y stages a RAM de
@@ -167,6 +177,81 @@ class LoadingState extends funkin.states.MusicBeatState {
 			FlxG.camera.fade(FlxG.camera.bgColor, fadeTime, true);
 			new FlxTimer().start(fadeTime + MIN_TIME, function(_) introComplete());
 		});
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// ─────────────────────────────────────────────────────────────────────────
+
+	/**
+	 * Carga los scripts globales y del tema, luego despacha `onEventPushed`
+	 * por cada evento del chart. Se ejecuta durante la barra de carga, antes
+	 * de entrar a PlayState, para que scripts como ChangeCharacter.hx puedan
+	 * precachear personajes (atlas + icono) sin causar lag al hacer el swap.
+	 *
+	 * Soporta ambos formatos de chart:
+	 *   • Nuevo  : SwagSong.events  [ { type, value, stepTime } ]
+	 *   • Legacy : SwagSong.notes   [ sección → nota[4..6] = evento ]
+	 */
+	function _precacheChartEvents():Void
+	{
+		final songData = PlayState.SONG;
+		if (songData == null) return;
+
+		// 1. Scripts: globales (custom_events, data/scripts/events)
+		//             + del tema  (songs/{name}/scripts, songs/{name}/events)
+		funkin.scripting.ScriptHandler.init();
+		funkin.scripting.ScriptHandler.loadSongScripts(songData.song);
+
+		var dispatched = 0;
+
+		// ── Formato nuevo ────────────────────────────────────────────────────
+		if (songData.events != null && songData.events.length > 0)
+		{
+			for (evt in songData.events)
+			{
+				var v1 = evt.value != null ? evt.value : '';
+				var v2 = '';
+
+				// Partir "v1|v2" sólo si hay exactamente un pipe (formato clásico).
+				// Con múltiples pipes (Camera Follow con offsets, etc.) dejamos v1 intacto
+				// para no romper handlers que lo parsean ellos mismos.
+				if (v1.contains('|'))
+				{
+					final idx  = v1.indexOf('|');
+					final rest = v1.substring(idx + 1);
+					if (!rest.contains('|'))
+					{
+						v2 = rest.trim();
+						v1 = v1.substring(0, idx).trim();
+					}
+				}
+
+				final ms:Float = funkin.scripting.events.EventManager.stepToMs(evt.stepTime, songData.bpm);
+				funkin.scripting.ScriptHandler.callOnScripts('onEventPushed', [evt.type, v1, v2, ms]);
+				dispatched++;
+			}
+		}
+		// ── Formato legacy ───────────────────────────────────────────────────
+		else if (songData.notes != null)
+		{
+			for (section in songData.notes)
+			{
+				if (section.sectionNotes == null) continue;
+				for (note in section.sectionNotes)
+				{
+					if (note.length < 5 || note[4] == null || Std.string(note[4]) == '') continue;
+					final evtName:String = Std.string(note[4]);
+					final ev1:String     = note.length >= 6 ? Std.string(note[5]) : '';
+					final ev2:String     = note.length >= 7 ? Std.string(note[6]) : '';
+					final evMs:Float     = cast(note[0], Float);
+					funkin.scripting.ScriptHandler.callOnScripts('onEventPushed', [evtName, ev1, ev2, evMs]);
+					dispatched++;
+				}
+			}
+		}
+
+		trace('[LoadingState] onEventPushed despachado: $dispatched eventos para "${songData.song}".');
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────

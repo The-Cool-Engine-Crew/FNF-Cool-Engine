@@ -1645,10 +1645,13 @@ class RuleScriptInstance implements IScript
 		r('getScriptVar', _fnGetScriptVar);
 
 		// Modifiers (modchart)
-		r('setModifier', _fnSetMod);
-		r('getModifier', _fnGetMod);
-		r('clearModifiers', _fnClearMods);
-		r('noteModifier', _fnNoteMod);
+		r('setModifier',       _fnSetMod);      // 'all' - todos los grupos (legacy)
+		r('setPlayerModifier', _fnSetPlayerMod); // solo grupo del jugador
+		r('setCpuModifier',    _fnSetCpuMod);    // solo grupo CPU/oponente
+		r('setGroupModifier',  _fnSetGroupMod);  // grupo por ID (e.g. 'bf', 'dad')
+		r('getModifier',       _fnGetMod);
+		r('clearModifiers',    _fnClearMods);
+		r('noteModifier',      _fnNoteMod);
 
 		// Events
 		r('triggerEvent', _fnTriggerEv);
@@ -5107,6 +5110,48 @@ BossBar = Class {
 		catch (_)
 		{
 		};
+		return 0;
+	}
+
+	// setPlayerModifier(name, value) -- solo grupo del jugador
+	static function _fnSetPlayerMod(l:Dynamic):Int
+	{
+		final name = Lua.tostring(l, 1);
+		final v = Lua.tonumber(l, 2);
+		Lua.settop(l, 0);
+		try {
+			final beat = Math.floor(funkin.data.Conductor.songPosition / funkin.data.Conductor.crochet);
+			funkin.gameplay.modchart.ModChartManager.instance.addEventSimple(beat, 'player', -1, name, v, 0.0, 'linear');
+		} catch (_) {};
+		return 0;
+	}
+
+	// setCpuModifier(name, value) -- solo grupo CPU/oponente
+	static function _fnSetCpuMod(l:Dynamic):Int
+	{
+		final name = Lua.tostring(l, 1);
+		final v = Lua.tonumber(l, 2);
+		Lua.settop(l, 0);
+		try {
+			final beat = Math.floor(funkin.data.Conductor.songPosition / funkin.data.Conductor.crochet);
+			funkin.gameplay.modchart.ModChartManager.instance.addEventSimple(beat, 'cpu', -1, name, v, 0.0, 'linear');
+		} catch (_) {};
+		return 0;
+	}
+
+	// setGroupModifier(groupId, name, value) -- grupo especifico por ID
+	// Ej: setGroupModifier('bf','invert',1)  -> solo BF
+	//     setGroupModifier('dad','drunk',80) -> solo el papa
+	static function _fnSetGroupMod(l:Dynamic):Int
+	{
+		final target = Lua.tostring(l, 1);
+		final name   = Lua.tostring(l, 2);
+		final v      = Lua.tonumber(l, 3);
+		Lua.settop(l, 0);
+		try {
+			final beat = Math.floor(funkin.data.Conductor.songPosition / funkin.data.Conductor.crochet);
+			funkin.gameplay.modchart.ModChartManager.instance.addEventSimple(beat, target, -1, name, v, 0.0, 'linear');
+		} catch (_) {};
 		return 0;
 	}
 

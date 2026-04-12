@@ -179,8 +179,48 @@ class VSyncAPI
     public static function isVSyncEnabled():Bool { return false; }
 }
 
+#elseif mobileC
+
+// ──────────────────────────────────────────────────────────────────────────────
+//  Android / iOS — VSync via la ventana de Lime (SDL swap interval).
+//
+//  VSyncAPI no puede usar directamente wgl/glX/CGL en móvil porque el contexto
+//  OpenGL ES está gestionado por SDL/EGL, no por las extensiones de escritorio.
+//  Lime expone lime.ui.Window.vsync que internamente llama SDL_GL_SetSwapInterval,
+//  que sí funciona en Android (EGL) e iOS (EAGL/CADisplayLink).
+//
+//  Por qué importa:
+//    • Sin esto, setVSync() es un stub vacío → el VSync nunca se aplica en móvil.
+//    • SDL puede resetear el swap interval al recrear la superficie EGL cuando la
+//      app vuelve de segundo plano. Re-llamar setVSync() desde _onMobileActivate
+//      (junto con este bloque) garantiza que el estado se restaura correctamente.
+// ──────────────────────────────────────────────────────────────────────────────
+class VSyncAPI
+{
+    /**
+     * Activa o desactiva el VSync en la ventana de Lime/SDL.
+     * Internamente llama SDL_GL_SetSwapInterval(1|0) en Android/iOS.
+     */
+    public static function setVSync(enable:Bool):Void
+    {
+        var win = lime.app.Application.current?.window;
+        if (win != null)
+            win.vsync = enable;
+    }
+
+    /**
+     * Devuelve true si el VSync está activo según la ventana de Lime.
+     */
+    public static function isVSyncEnabled():Bool
+    {
+        var win = lime.app.Application.current?.window;
+        return win != null ? win.vsync : false;
+    }
+}
+
 #else
 
+// Otras plataformas (HTML5, etc.) — stubs vacios
 class VSyncAPI
 {
     public static inline function setVSync(enable:Bool):Void {}

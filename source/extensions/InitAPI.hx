@@ -1,21 +1,30 @@
 package extensions;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// InitAPI — funciones nativas de Windows via DWM/User32.
+// InitAPI — funciones nativas de ventana por plataforma.
 //
-// Compilado condicionalmente: el bloque #if windows usa @:functionCode para
-// generar C++ inline que llama directamente a la API de Windows.
-// En macOS/Linux todas las funciones son stubs inline vacíos.
-//
-// ─── Funciones disponibles ───────────────────────────────────────────────────
+// ─── Windows (DWM / User32) ───────────────────────────────────────────────────
 //  setWindowBorderColor(r,g,b)  — tint DWM Win11 (DWMWA_BORDER_COLOR)
 //  setWindowCaptionColor(r,g,b) — tint título DWM Win11 (DWMWA_CAPTION_COLOR)
 //  setDarkMode(enable)          — Win10 1809+ dark/light frame
 //  setDPIAware()                — SetProcessDPIAware para monitores HiDPI
+//  hasValidWindow()             — true si se pudo obtener un HWND válido
+//
+// ─── macOS (AppKit / NSAppearance) ────────────────────────────────────────────
+//  setDarkMode(enable)          — NSApp.appearance = Dark/Light Aqua (10.14+)
+//  hasValidWindow()             — siempre true (NSApp disponible desde el arranque)
+//
+// ─── Linux (GTK / putenv) ─────────────────────────────────────────────────────
+//  setDarkMode(enable)          — GTK_THEME=Adwaita:dark  (debe llamarse ANTES
+//                                 de que se cree la ventana, desde __init__)
+//  hasValidWindow()             — siempre true
 //
 // ─────────────────────────────────────────────────────────────────────────────
 
-#if windows
+// ══════════════════════════════════════════════════════════════════════════════
+//  WINDOWS
+// ══════════════════════════════════════════════════════════════════════════════
+#if (windows && cpp)
 
 @:buildXml('
 <target id="haxe">
@@ -47,16 +56,34 @@ package extensions;
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
   #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
+
+static inline HWND _getGameHwnd() {
+    HWND hwnd = GetForegroundWindow();
+    if (hwnd == NULL) hwnd = GetActiveWindow();
+    if (hwnd == NULL) hwnd = GetConsoleWindow();
+    return hwnd;
+}
 ')
 class InitAPI
 {
     /**
-     * Cambia el color del borde de la ventana (DWMWA_BORDER_COLOR).
-     * Sólo visible en Windows 11 (build 22000+).
+     * Devuelve true si se puede obtener un HWND valido para la ventana del juego.
+     * Usar como guarda antes de llamar a las funciones DWM; si devuelve false,
+     * reintentar en el siguiente ENTER_FRAME.
      */
     @:functionCode('
+        return (_getGameHwnd() != NULL);
+    ')
+    public static function hasValidWindow():Bool { return false; }
+
+    /**
+     * Cambia el color del borde de la ventana (DWMWA_BORDER_COLOR).
+     * Solo visible en Windows 11 (build 22000+).
+     */
+    @:functionCode('
+        HWND hwnd = _getGameHwnd();
+        if (hwnd == NULL) return;
         COLORREF color = RGB(r, g, b);
-        HWND hwnd = GetActiveWindow();
         DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &color, sizeof(COLORREF));
         UpdateWindow(hwnd);
     ')
@@ -64,11 +91,12 @@ class InitAPI
 
     /**
      * Cambia el color del caption/titlebar (DWMWA_CAPTION_COLOR).
-     * Sólo visible en Windows 11 (build 22000+).
+     * Solo visible en Windows 11 (build 22000+).
      */
     @:functionCode('
+        HWND hwnd = _getGameHwnd();
+        if (hwnd == NULL) return;
         COLORREF color = RGB(r, g, b);
-        HWND hwnd = GetActiveWindow();
         DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &color, sizeof(COLORREF));
         UpdateWindow(hwnd);
     ')
@@ -77,11 +105,15 @@ class InitAPI
     /**
      * Activa/desactiva el frame oscuro (DWMWA_USE_IMMERSIVE_DARK_MODE).
      * Disponible en Windows 10 build 1809+ y Windows 11.
+     * Intenta primero el atributo 20 (Win11 / Win10 21H1+) y hace fallback al
+     * atributo 19 (Win10 1809-20H2) si el primero falla.
      */
     @:functionCode('
+        HWND hwnd = _getGameHwnd();
+        if (hwnd == NULL) return;
         BOOL darkMode = (BOOL)enable;
-        HWND hwnd = GetActiveWindow();
         if (S_OK != DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkMode, sizeof(BOOL))) {
+            // Fallback: atributo 19 usado en Win10 1809-20H2
             DwmSetWindowAttribute(hwnd, 19, &darkMode, sizeof(BOOL));
         }
         UpdateWindow(hwnd);
@@ -90,8 +122,8 @@ class InitAPI
 
     /**
      * Registra el proceso como DPI-aware.
-     * Llamar antes de que se cree cualquier ventana.
-     * Sin esto, Windows escala el framebuffer en monitores HiDPI → blur + coords incorrectas.
+     * Llamar antes de que se cree cualquier ventana (en __init__).
+     * Sin esto, Windows escala el framebuffer en monitores HiDPI -> blur + coords incorrectas.
      */
     @:functionCode('
         SetProcessDPIAware();
@@ -99,15 +131,92 @@ class InitAPI
     public static function setDPIAware():Void {}
 }
 
-#else
+// ══════════════════════════════════════════════════════════════════════════════
+//  macOS  — NSAppearance via AppKit (requiere compilacion Objective-C++)
+//  HXCPP en macOS compila los archivos generados como Objective-C++ (.mm),
+//  por lo que la sintaxis [obj message] es valida en @:functionCode.
+// ══════════════════════════════════════════════════════════════════════════════
+#elseif (mac && cpp)
 
-// ── Stubs para macOS / Linux ──────────────────────────────────────────────────
+@:headerCode('
+#import <AppKit/AppKit.h>
+')
 class InitAPI
 {
+    /**
+     * En macOS siempre hay acceso a NSApp desde el arranque.
+     */
+    public static inline function hasValidWindow():Bool return true;
+
+    /**
+     * Cambia la apariencia global de la app (Dark/Light Aqua).
+     * Disponible en macOS 10.14 Mojave+.
+     * Afecta a la barra de titulo y controles del OS.
+     */
+    @:functionCode('
+        if (@available(macOS 10.14, *)) {
+            NSAppearanceName name = enable
+                ? NSAppearanceNameDarkAqua
+                : NSAppearanceNameAqua;
+            [NSApp setAppearance:[NSAppearance appearanceNamed:name]];
+        }
+    ')
+    public static function setDarkMode(enable:Bool):Void {}
+
+    // Decoraciones de ventana en macOS las controla el OS; no hay equivalente
+    // a las APIs DWM de Windows. Se dejan como no-op intencionalmente.
     public static inline function setWindowBorderColor(r:Int, g:Int, b:Int):Void {}
     public static inline function setWindowCaptionColor(r:Int, g:Int, b:Int):Void {}
-    public static inline function setDarkMode(enable:Bool):Void {}
     public static inline function setDPIAware():Void {}
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  Linux  — GTK_THEME via putenv
+//  IMPORTANTE: setDarkMode() debe llamarse ANTES de que SDL/Lime inicialice GTK
+//  (es decir, desde Main.__init__() o muy al inicio de setupStage()).
+//  Una vez que GTK ha creado la ventana, el cambio de env var no tiene efecto
+//  en la sesion actual.
+// ══════════════════════════════════════════════════════════════════════════════
+#elseif (linux && cpp)
+
+@:headerCode('
+#include <stdlib.h>
+')
+class InitAPI
+{
+    public static inline function hasValidWindow():Bool return true;
+
+    /**
+     * Establece GTK_THEME=Adwaita:dark (o Adwaita) para que la ventana SDL/GTK
+     * use el tema oscuro del sistema.
+     * Llamar desde __init__() ANTES de que se cree la ventana.
+     */
+    @:functionCode('
+        if (enable) {
+            putenv((char*)"GTK_THEME=Adwaita:dark");
+        } else {
+            putenv((char*)"GTK_THEME=Adwaita");
+        }
+    ')
+    public static function setDarkMode(enable:Bool):Void {}
+
+    public static inline function setWindowBorderColor(r:Int, g:Int, b:Int):Void {}
+    public static inline function setWindowCaptionColor(r:Int, g:Int, b:Int):Void {}
+    public static inline function setDPIAware():Void {}
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  Otras plataformas (HTML5, consolas, etc.) — stubs vacios
+// ══════════════════════════════════════════════════════════════════════════════
+#else
+
+class InitAPI
+{
+    public static inline function hasValidWindow():Bool                       return true;
+    public static inline function setWindowBorderColor(r:Int, g:Int, b:Int):Void {}
+    public static inline function setWindowCaptionColor(r:Int, g:Int, b:Int):Void {}
+    public static inline function setDarkMode(enable:Bool):Void               {}
+    public static inline function setDPIAware():Void                          {}
 }
 
 #end

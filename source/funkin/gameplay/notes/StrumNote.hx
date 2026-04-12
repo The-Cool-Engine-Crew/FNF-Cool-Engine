@@ -12,6 +12,20 @@ class StrumNote extends FlxSprite
 {
 	public var noteID:Int = 0;
 
+	/**
+	 * Posición X de referencia para el posicionamiento de notas — igual a
+	 * `baseX + offsetX` del StrumState, sin modificadores visuales (drunk, tipsy…).
+	 * Actualizado cada frame por ModChartManager.applyAllStates().
+	 * Cuando no hay modchart activo mantiene el valor del constructor.
+	 */
+	public var logicalX:Float = 0.0;
+
+	/**
+	 * Posición Y de referencia para el posicionamiento de notas — igual a
+	 * `baseY + offsetY` del StrumState, sin modificadores visuales.
+	 */
+	public var logicalY:Float = 0.0;
+
 	var animArrow:Array<String> = ['LEFT', 'DOWN', 'UP', 'RIGHT'];
 
 	// ── Estado de skin ────────────────────────────────────────────────────
@@ -49,6 +63,8 @@ class StrumNote extends FlxSprite
 	{
 		super(x, y);
 
+		logicalX = x;
+		logicalY = y;
 		this.noteID = noteID;
 
 		NoteSkinSystem.init();
@@ -102,6 +118,10 @@ class StrumNote extends FlxSprite
 		}
 
 		var noteScale = tex.scale != null ? tex.scale : 1.0;
+		// BUG C FIX: si loadAtlas() cayó al fallback Default, no aplicar la escala
+		// del skin custom sobre la textura incorrecta → strums gigantes.
+		if (NoteSkinSystem.lastLoadFellBack)
+			noteScale = 0.7;
 		// BUGFIX: usar scale.set() directo en lugar de setGraphicSize(width*scale)
 		// que usaría el hitbox stale si loadSkin() se llamara de nuevo (recarga de skin).
 		scale.set(noteScale, noteScale);

@@ -1,45 +1,38 @@
-# Carpeta de Eventos — data/events/
+# Events Folder — data/events/
 
-Esta carpeta contiene las definiciones de eventos del engine organizadas por contexto.
+This folder contains the engine's event definitions organized by context.
 
-## Estructura de carpetas
+## Folder Structure
 
-```
 data/events/
-  chart/        ← Eventos que se disparan durante el gameplay (Chart Editor)
-  cutscene/     ← Eventos para SpriteCutscene
-  playstate/    ← Eventos para el PlayState Editor
-  modchart/     ← Eventos para el Modchart Editor
-  global/       ← Visible y activo en TODOS los contextos
-```
+  chart/        ← Events triggered during gameplay (Chart Editor)
+  cutscene/     ← Events for SpriteCutscene
+  playstate/    ← Events for the PlayState Editor
+  modchart/     ← Events for the Modchart Editor
+  global/       ← Visible and active in ALL contexts
 
-## Formato de evento — archivos planos
+## Event Format — flat files
 
-El nombre del archivo (sin extensión) = nombre del evento.
+The file name (without extension) = event name.
 
-```
 chart/
-  Camera Follow.json    ← configuración UI del editor
-  Camera Follow.hx      ← handler HScript (opcional)
-  Camera Follow.lua     ← handler Lua (opcional)
-```
+  Camera Follow.json    ← editor UI configuration
+  Camera Follow.hx      ← HScript handler (optional)
+  Camera Follow.lua     ← Lua handler (optional)
 
-## Formato de evento — carpeta por evento
+## Event Format — folder per event
 
-```
 chart/
   My Custom Event/
-    event.json          ← (o config.json)
-    handler.hx          ← (o My Custom Event.hx)
-    handler.lua         ← (o My Custom Event.lua)
-```
+    event.json          ← (or config.json)
+    handler.hx          ← (or My Custom Event.hx)
+    handler.lua         ← (or My Custom Event.lua)
 
-## Formato del JSON (event.json o EventName.json)
+## JSON Format (event.json or EventName.json)
 
-```json
 {
   "name": "My Event",
-  "description": "Hace algo genial en el gameplay.",
+  "description": "Does something cool during gameplay.",
   "color": "#88FF88",
   "context": ["chart"],
   "aliases": ["my event", "ME"],
@@ -48,191 +41,63 @@ chart/
       "name": "Target",
       "type": "DropDown(bf,dad,gf)",
       "defaultValue": "bf",
-      "description": "Personaje objetivo"
+      "description": "Target character"
     },
     {
       "name": "Duration",
       "type": "Float(0,10)",
       "defaultValue": "1.0",
-      "description": "Duración en segundos"
+      "description": "Duration in seconds"
     },
     {
       "name": "Loop",
       "type": "Bool",
       "defaultValue": "false",
-      "description": "¿Repetir el efecto?"
+      "description": "Repeat the effect?"
     },
     {
       "name": "Value",
       "type": "Int(0,100)",
       "defaultValue": "50",
-      "description": "Valor entero"
+      "description": "Integer value"
     },
     {
       "name": "Label",
       "type": "String",
       "defaultValue": "",
-      "description": "Texto libre"
+      "description": "Free text"
     }
   ]
 }
-```
 
-### Tipos de parámetro soportados
+### Supported Parameter Types
 
-| Tipo JSON          | Descripción                          |
-|--------------------|--------------------------------------|
-| `"String"`         | Campo de texto libre                 |
-| `"Bool"`           | Dropdown true/false                  |
-| `"Int"`            | Número entero                        |
-| `"Int(min,max)"`   | Entero con rango                     |
-| `"Float"`          | Número decimal                       |
-| `"Float(min,max)"` | Decimal con rango                    |
-| `"DropDown(a,b,c)"`| Dropdown con opciones fijas          |
-| `"Color"`          | Campo de color hex (ej: `#FFFFFF`)   |
+- "String": Free text field  
+- "Bool": true/false dropdown  
+- "Int": Integer number  
+- "Int(min,max)": Integer with range  
+- "Float": Decimal number  
+- "Float(min,max)": Decimal with range  
+- "DropDown(a,b,c)": Dropdown with fixed options  
+- "Color": Hex color field (e.g. #FFFFFF)
 
-### Contextos disponibles
+### Available Contexts
 
-| Contexto     | Descripción                              |
-|--------------|------------------------------------------|
-| `"chart"`    | Chart Editor + durante el gameplay       |
-| `"cutscene"` | Editor de SpriteCutscene                 |
-| `"playstate"`| PlayState Editor                         |
-| `"modchart"` | Modchart Editor                          |
-| `"global"`   | Todos los editores y contextos           |
+- "chart": Chart Editor + during gameplay  
+- "cutscene": SpriteCutscene Editor  
+- "playstate": PlayState Editor  
+- "modchart": Modchart Editor  
+- "global": All editors and contexts  
 
-Un evento puede tener múltiples contextos: `"context": ["chart", "modchart"]`
+An event can have multiple contexts: "context": ["chart", "modchart"]
 
-## Handlers de script
+## Script Handlers
 
-El handler recibe el evento cuando se dispara. Puede retornar `true` para
-**cancelar el built-in** del engine, o `false`/`nil` para dejar que también corra.
+The handler receives the event when triggered. It can return true to cancel the engine built-in, or false/nil to allow it to run as well.
 
-### HScript (My Event.hx)
+## Dispatch Priority (execution order)
 
-```haxe
-// Variables disponibles: v1, v2, time, game
-// game = PlayState.instance (puede ser null fuera de gameplay)
-
-function onTrigger(v1, v2, time) {
-    trace('My Event disparado! v1=' + v1 + ' v2=' + v2);
-    // Retorna false para que el built-in también corra (si existe)
-    // Retorna true para cancelar el built-in
-    return false;
-}
-
-// También compatible con el callback de scripts globales:
-function onEvent(name, v1, v2, time) {
-    if (name == 'My Event') {
-        // lógica aquí
-    }
-    return false;
-}
-
-// Llamado al cargar el handler
-function onCreate() {
-    trace('Handler de My Event cargado!');
-}
-
-// Llamado al descargar (PlayState.destroy)
-function onDestroy() {
-    trace('Handler descargado');
-}
-```
-
-### Lua (My Event.lua)
-
-```lua
--- Variables disponibles: v1, v2, time
--- game accesible vía getProperty / playState global
-
-function onTrigger(v1, v2, time)
-    trace("My Event: " .. tostring(v1) .. " | " .. tostring(v2))
-    return false  -- false = también corre el built-in
-end
-
-function onCreate()
-    trace("Handler cargado!")
-end
-
-function onDestroy()
-    trace("Handler descargado")
-end
-```
-
-## Prioridad de dispatch (orden de ejecución)
-
-1. Scripts globales → `onEvent(name, v1, v2, time)` — si retorna `true`, cancela todo lo siguiente
-2. Handlers custom → `registerCustomEvent()` / `registerEvent()` — si retorna `true`, cancela lo siguiente
-3. Handler por-evento → `onTrigger(v1, v2, time)` en el script de la carpeta `data/events/` — si retorna `true`, cancela lo siguiente
-4. Built-in del engine (`EventManager._handleBuiltin`)
-
-## Uso desde scripts
-
-### HScript
-
-```haxe
-// Disparar un evento
-events.fire("My Event", "bf", "1.5");
-
-// Escuchar un evento
-events.on("My Event", function(v1, v2, time) {
-    trace('Recibido: ' + v1);
-    return false;
-});
-
-// Registrar un evento nuevo con su definición
-events.register({
-    name: "My New Event",
-    description: "Hace algo",
-    color: 0xFF88FF88,
-    contexts: ["chart"],
-    params: [
-        { name: "Target", type: "String", defaultValue: "bf" }
-    ]
-});
-
-// Listar eventos de un contexto
-var chartEvents = events.list("chart");
-```
-
-### Lua
-
-```lua
--- Disparar
-triggerEvent("My Event", "bf", "1.5")
-
--- Escuchar (vía onEvent callback global)
-function onEvent(name, v1, v2, time)
-    if name == "My Event" then
-        trace("Recibido: " .. v1)
-        return false
-    end
-end
-
--- Listar eventos
-local names = listEvents("chart")
-for i, name in ipairs(names) do
-    trace(name)
-end
-
--- Obtener definición
-local def = getEventDef("Camera Follow")
-if def then
-    trace(def.name)
-    trace(def.description)
-    trace(#def.params .. " params")
-end
-
--- Registrar un nuevo evento
-registerEventDef({
-    name = "My Lua Event",
-    description = "Evento registrado desde Lua",
-    color = 0xFF88FF88,
-    contexts = { "chart" },
-    aliases = { "mle" },
-    params = {
-        { name = "Value", type = "Float(0,1)", defaultValue = "0.5" }
-    }
-})
-```
+1. Global scripts → onEvent(name, v1, v2, time)
+2. Custom handlers → registerCustomEvent() / registerEvent()
+3. Per-event handler → onTrigger(v1, v2, time)
+4. Engine built-in

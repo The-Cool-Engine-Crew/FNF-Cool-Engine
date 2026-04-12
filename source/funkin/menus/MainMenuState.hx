@@ -104,6 +104,7 @@ class MainMenuState extends funkin.states.MusicBeatState
 		StateScriptHandler.init();
 		StateScriptHandler.loadStateScripts('MainMenuState', this);
 		StateScriptHandler.callOnScripts('onCreate', []);
+		#end
 
 		persistentUpdate = persistentDraw = true;
 
@@ -135,6 +136,7 @@ class MainMenuState extends funkin.states.MusicBeatState
 		menuItems = new FlxTypedGroup<FunkinSprite>();
 		add(menuItems);
 
+		#if HSCRIPT_ALLOWED
 		// Obtener items custom
 		var customItems = StateScriptHandler.callOnScriptsReturn('getCustomMenuItems', [], null);
 		if (customItems != null && Std.isOfType(customItems, Array))
@@ -206,6 +208,7 @@ class MainMenuState extends funkin.states.MusicBeatState
 		#end
 
 		#if HSCRIPT_ALLOWED
+		StateScriptHandler.refreshStateFields(this);
 		StateScriptHandler.callOnScripts('postCreate', []);
 		#end
 		
