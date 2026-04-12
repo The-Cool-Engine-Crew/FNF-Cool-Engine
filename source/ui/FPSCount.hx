@@ -109,21 +109,21 @@ class FPSCount extends TextField
 		{
 			var mem:Float;
 			var gcMem:Float;
+
+			var line1:String = 'FPS: $showFps | ';
 			#if cpp
-			// MEM_INFO_USAGE  = objetos vivos en heap (RAM real usada por el juego).
-			// MEM_INFO_CURRENT = heap GC total (usado + páginas libres del GC).
-			// MEM_INFO_RESERVED = reserva del OS (puede ser 3-5x el uso real → engañoso).
-			// Mostramos USAGE/CURRENT para dar una lectura honesta sin alarmar.
 			mem = cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_USAGE) / (byteValue * byteValue);
 			gcMem = cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_CURRENT) / (byteValue * byteValue);
+			if (mem > memPeak) memPeak = mem;
+			line1 += 'Mem: ${formatMem(mem)}/${formatMem(memPeak)} - GC: ${formatMem(gcMem)}';
 			#else
 			mem = System.totalMemory / (byteValue * byteValue);
-			gcMem = mem;
+			if (mem > memPeak) memPeak = mem;
+			line1 += 'Mem: ${formatMem(mem)}/${formatMem(memPeak)}';
 			#end
 			if (mem > memPeak)
 				memPeak = mem;
 
-			var line1 = 'FPS: $showFps | Mem: ${formatMem(mem)}/${formatMem(memPeak)} - GC: ${formatMem(gcMem)}';
 			#if (gl_stats && !disable_cffi && (!html5 || !canvas))
 			line1 += "  DC: " + Context3DStats.totalDrawCalls();
 			#end

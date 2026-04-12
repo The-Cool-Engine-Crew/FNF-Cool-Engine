@@ -334,11 +334,6 @@ class PlayState extends funkin.states.MusicBeatState
 		#end
 
 		Paths.clearPreviousSession();
-		#if (desktop && cpp && !hl)
-		funkin.cache.PathsCache.instance.flushGPUCache();
-		cpp.vm.Gc.run(true);
-		cpp.vm.Gc.compact();
-		#end
 
 		if (scriptsEnabled)
 		{
@@ -440,16 +435,8 @@ class PlayState extends funkin.states.MusicBeatState
 
 		FlxG.signals.focusLost.add(_onGlobalFocusLost);
 
-		// FIX RAM: Activar modo gameplay — límites de caché más estrictos
-		// (30 texturas / 20 sonidos) durante la canción. Restaurar en destroy().
 		funkin.cache.PathsCache.setGameplayMode(true);
 
-		// FIX RAM: Reducido de 3 frames a 1 frame.
-		// 1 frame garantiza que el render loop haya procesado al menos un
-		// draw call (subiendo todos los BitmapData a VRAM). disposeImage()
-		// libera entonces la copia CPU sin riesgo de corrupción.
-		// Extendido de #if (desktop && cpp && !hl) a todos los targets con
-		// context3D (!flash && !html5) para que Android/iOS también libere.
 		#if (!flash && !html5)
 		var _flushFrameCount:Int = 0;
 		final _flushFramesNeeded:Int = 1;
@@ -2886,9 +2873,17 @@ class PlayState extends funkin.states.MusicBeatState
 		grpHoldCovers   = null;
 
 		StickerTransition.invalidateCache();
-		Paths.clearUnusedMemory();
+
+		// FIX RAM: Paths.clearUnusedMemory() hacía Gc.run(true) + Gc.compact() aquí,
+		// pero FunkinCache.postStateSwitch ejecuta otro collectMajor() completo justo
+		// después de que el nuevo state haya cargado sus assets. Dos GC completos
+		// consecutivos = stutter doble sin beneficio extra. Se reemplaza por solo
+		// bitmap.clearUnused() para limpiar wrappers FlxGraphic huérfanos sin bloquear.
+		// El GC completo final queda exclusivamente en manos de postStateSwitch,
+		// que es el único punto donde se sabe exactamente qué assets sobreviven.
+		try { flixel.FlxG.bitmap.clearUnused(); } catch (_:Dynamic) {}
 		Paths.pruneAtlasCache();
-		
+
 		funkin.cache.PathsCache.setGameplayMode(false);
 		funkin.cache.PathsCache.instance.flushGPUCache();
 	}

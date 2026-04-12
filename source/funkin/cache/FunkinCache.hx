@@ -86,12 +86,16 @@ class FunkinCache extends AssetCache
 
 		FlxG.signals.preStateSwitch.add(function()
 		{
-			// ── Paso 0: expulsar FlxGraphics muertos ANTES de rotar ───────────
+			try { openfl.system.System.gc(); } catch (_:Dynamic) {}
+
+			// ── Paso 0b: expulsar FlxGraphics muertos ANTES de rotar ─────────
 			// Si el state anterior dejó FlxGraphics con useCount=0 en el pool de
 			// Flixel (sprites destruidos pero gráfico aún referenciado), deben
 			// eliminarse ANTES de moverlos a SECOND para que clearSecondLayer()
 			// no los evalúe ni intente rescatarlos.
 			try { FlxG.bitmap.clearUnused(); } catch (_:Dynamic) {}
+
+			try { MemoryUtil.collectMinor(); } catch (_:Dynamic) {}
 
 			// ── Paso 1: rotar capas de assets ─────────────────────────────────
 			instance.moveToSecondLayer();
@@ -129,9 +133,6 @@ class FunkinCache extends AssetCache
 			}
 			catch (_:Dynamic) {}
 
-			#if (android || mobileC || ios)
-			try { MemoryUtil.collectMinor(); } catch (_:Dynamic) {}
-			#end
 		});
 
 		FlxG.signals.postStateSwitch.add(function()
@@ -170,15 +171,16 @@ class FunkinCache extends AssetCache
 			#if lime
 			try { lime.utils.Assets.cache.clear('songs');  } catch (_:Dynamic) {}
 			try { lime.utils.Assets.cache.clear('music');  } catch (_:Dynamic) {}
+			try { lime.utils.Assets.cache.clear('sounds'); } catch (_:Dynamic) {}
 			#end
 
 			#if (android || mobileC || ios)
-			try { MemoryUtil.collectMinor(); } catch (_:Dynamic) {} // inmediato: libera wrappers rápido
-			new flixel.util.FlxTimer().start(0.13, function(_) // ~8 frames a 60fps
+			try { MemoryUtil.collectMinor(); } catch (_:Dynamic) {} // inmediato: limpia gen. joven
+			haxe.Timer.delay(function()                             // ~130ms después
 			{
 				try { MemoryUtil.collectMajor(); } catch (_:Dynamic) {}
 				try { flixel.FlxG.bitmap.clearUnused(); } catch (_:Dynamic) {}
-			});
+			}, 130);
 			#else
 			MemoryUtil.collectMajor();
 			try { FlxG.bitmap.clearUnused(); } catch (_:Dynamic) {}

@@ -115,6 +115,7 @@ class MainMenuState extends funkin.states.MusicBeatState
 		bg = new FlxSprite().loadGraphic(Bitmap.fromFile(Paths.image('menu/menuBG')));
 		var bgScale:Float = Math.max(FlxG.width / bg.width, FlxG.height / bg.height) * 1.1;
 		bg.scale.set(bgScale, bgScale);
+		bg.scrollFactor.set(0.05,0.05);
 		bg.updateHitbox();
 		bg.screenCenter();
 		bg.antialiasing = SaveData.data.antialiasing;
