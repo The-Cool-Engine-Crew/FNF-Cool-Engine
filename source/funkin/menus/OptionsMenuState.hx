@@ -638,7 +638,7 @@ class OptionsMenuState extends MusicBeatSubstate
 			isOpenOptions = false;
 			close();
 		} else {
-			MusicBeatState.switchState(new MainMenuState());
+			StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('MainMenuState') ?? new MainMenuState());
 		}
 	}
 	#end
