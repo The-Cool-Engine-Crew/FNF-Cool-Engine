@@ -203,18 +203,36 @@ class VSyncAPI
      */
     public static function setVSync(enable:Bool):Void
     {
-        var win = lime.app.Application.current?.window;
-        if (win != null)
-            win.vsync = enable;
+        // 1. Obtenemos la aplicación actual de forma segura
+        var app = lime.app.Application.current;
+        if (app != null && app.window != null)
+        {
+            var win = app.window;
+            try {
+                // 2. Reflect.setProperty es "invisible" para el compilador.
+                // Si la propiedad existe en el móvil, la cambia. Si no, no pasa nada.
+                Reflect.setProperty(win, "vsync", enable);
+            } catch(e:Dynamic) {
+                // Silenciamos cualquier error en tiempo de ejecución
+            }
+        }
     }
 
     /**
-     * Devuelve true si el VSync está activo según la ventana de Lime.
+     * Consulta el estado del VSync de forma segura.
      */
     public static function isVSyncEnabled():Bool
     {
-        var win = lime.app.Application.current?.window;
-        return win != null ? win.vsync : false;
+        var app = lime.app.Application.current;
+        if (app != null && app.window != null)
+        {
+            try {
+                // Intentamos obtener el valor dinámicamente
+                var val:Dynamic = Reflect.getProperty(app.window, "vsync");
+                if (val != null) return (val == true);
+            } catch(e:Dynamic) {}
+        }
+        return false;
     }
 }
 

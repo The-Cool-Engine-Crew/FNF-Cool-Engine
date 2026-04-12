@@ -26,7 +26,6 @@ import funkin.system.WindowManager;
 import funkin.system.WindowManager.ScaleMode;
 import funkin.cache.PathsCache;
 import funkin.cache.FunkinCache;
-import extensions.CppAPI;
 import extensions.FrameLimiterAPI;
 import extensions.InitAPI;
 import extensions.VSyncAPI;
@@ -398,14 +397,8 @@ class Main extends Sprite
 
 		// Dark mode del frame / barra de titulo (Win10 1809+ y Win11 / macOS 10.14+)
 		InitAPI.setDarkMode(true);
-
-		#if windows
-		// Color del borde y del caption a negro (Win11 22000+).
-		// NOTA: setWindowCaptionColor faltaba en la version anterior — era la
-		// causa de que la barra de titulo mantuviese el color del sistema.
-		CppAPI.changeColor(0, 0, 0);        // DWMWA_BORDER_COLOR
-		CppAPI.changeCaptionColor(0, 0, 0); // DWMWA_CAPTION_COLOR  ← fix
-		#end
+		InitAPI.setWindowCaptionColor(0, 0, 0);
+		InitAPI.setWindowBorderColor(0, 0, 0);
 	}
 	#end
 
