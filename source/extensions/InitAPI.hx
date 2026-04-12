@@ -149,13 +149,10 @@ class InitAPI
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  macOS  — NSAppearance via AppKit (requiere compilacion Objective-C++)
-//  HXCPP en macOS compila los archivos generados como Objective-C++ (.mm),
-//  por lo que la sintaxis [obj message] es valida en @:functionCode.
+//  macOS  — NSAppearance via AppKit
 // ══════════════════════════════════════════════════════════════════════════════
 #elseif (mac && cpp)
-
-@:headerCode('
+@:cppFileCode('
 #import <AppKit/AppKit.h>
 ')
 class InitAPI
@@ -167,8 +164,6 @@ class InitAPI
 
     /**
      * Cambia la apariencia global de la app (Dark/Light Aqua).
-     * Disponible en macOS 10.14 Mojave+.
-     * Afecta a la barra de titulo y controles del OS.
      */
     @:functionCode('
         if (@available(macOS 10.14, *)) {
@@ -180,8 +175,6 @@ class InitAPI
     ')
     public static function setDarkMode(enable:Bool):Void {}
 
-    // Decoraciones de ventana en macOS las controla el OS; no hay equivalente
-    // a las APIs DWM de Windows. Se dejan como no-op intencionalmente.
     public static inline function setWindowBorderColor(r:Int, g:Int, b:Int):Void {}
     public static inline function setWindowCaptionColor(r:Int, g:Int, b:Int):Void {}
     public static inline function setDPIAware():Void {}

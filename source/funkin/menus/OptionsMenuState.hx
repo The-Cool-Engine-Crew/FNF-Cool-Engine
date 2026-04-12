@@ -147,6 +147,15 @@ class OptionsMenuState extends MusicBeatSubstate
 	var _scrollArrowUp:flixel.text.FlxText;
 	var _scrollArrowDown:flixel.text.FlxText;
 
+	// ── Touch input (only mobileC) ────────────────────────────────────────────
+	#if mobileC
+	var _touchStartX:Float  = 0;
+	var _touchStartY:Float  = 0;
+	var _touchPrevY:Float   = 0;
+	var _touchIsDrag:Bool   = false;
+	var _touchIsScroll:Bool = false;
+	#end
+
 	var warningText:FlxText;
 	var bindingIndicator:FlxText;
 
@@ -423,7 +432,12 @@ class OptionsMenuState extends MusicBeatSubstate
 		add(footerBorder);
 
 		var helpText = new FlxText(footerBG.x + 20, footerBG.y + 12, footerBG.width - 40,
-			"LEFT/RIGHT : Tab  |  UP/DOWN : Navigate  |  ENTER : Toggle/Edit  |  A/D : Adjust  |  ESC : Back", 18);
+			#if mobileC
+			"TAP Section: Change Section  |  TAP: Select  |  TAP 2x: Activate  |  SLIDE UP/DOWN: scroll  |  SLIDE L/R: Section  |  TAP Title/Footage: return",
+			#else
+			"LEFT/RIGHT : Tab  |  UP/DOWN : Navigate  |  ENTER : Toggle/Edit  |  A/D : Adjust  |  ESC : Back",
+			#end
+			18);
 		helpText.setFormat(Paths.font("Funkin.otf"), 18, 0xFFAAAAAA, CENTER, OUTLINE, FlxColor.BLACK);
 		helpText.borderSize = 1.5;
 		helpText.antialiasing = SaveData.data.antialiasing;
@@ -480,6 +494,154 @@ class OptionsMenuState extends MusicBeatSubstate
 		StateScriptHandler.callOnScripts('postCreate', []);
 		#end
 	}
+
+	#if mobileC
+	/**
+	 * Manage touch input according to the help prompts:
+	 * TAP section: Change tab | TAP: Select | TAP 2x: Activate
+	 * SWIPE UP/DOWN: Scroll | SWIPE L/R: Change tab | TAP Title/Footage: Back
+	 */
+	function handleTouchInput():Void
+	{
+		for (touch in FlxG.touches.list)
+		{
+			if (touch.justPressed)
+			{
+				_touchStartX = touch.screenX;
+				_touchStartY = touch.screenY;
+				_touchPrevY = touch.screenY;
+				_touchIsScroll = false;
+			}
+
+			if (touch.pressed)
+			{
+				var deltaY = touch.screenY - _touchPrevY;
+				var totalDeltaY = Math.abs(touch.screenY - _touchStartY);
+				var totalDeltaX = Math.abs(touch.screenX - _touchStartX);
+
+				// Detectar inicio de scroll vertical (SLIDE UP/DOWN)
+				if (!_touchIsScroll && totalDeltaY > 20 && totalDeltaY > totalDeltaX)
+					_touchIsScroll = true;
+
+				if (_touchIsScroll)
+				{
+					_optScrollY -= deltaY;
+					// Limitar el scroll para no salirse de la lista
+					var maxScroll = Math.max(0, (currentOptions.length * OPT_SPACING) - OPT_VISIBLE_H);
+					if (_optScrollY < 0) _optScrollY = 0;
+					if (_optScrollY > maxScroll) _optScrollY = maxScroll;
+
+					_updateScroll();
+				}
+				_touchPrevY = touch.screenY;
+			}
+
+			if (touch.justReleased)
+			{
+				var totalDeltaX = touch.screenX - _touchStartX;
+				var totalDeltaY = touch.screenY - _touchStartY;
+
+				if (!_touchIsScroll)
+				{
+					if (Math.abs(totalDeltaX) < 25 && Math.abs(totalDeltaY) < 25)
+					{
+						// 1. TAP Title o Footage (Volver)
+						if (touch.screenY < 80 || touch.screenY > FlxG.height - 100)
+						{
+							if (_editMode) {
+								_editMode = false;
+								_editModeIndicator.visible = false;
+								FlxG.sound.play(Paths.sound('menus/cancelMenu'), 0.7);
+							} else {
+								_exitOptionsMenu();
+							}
+							return;
+						}
+
+						if (touch.screenY > 80 && touch.screenY < 135)
+						{
+							var categoryWidth = (FlxG.width - 120) / categories.length;
+							var tabIdx = Std.int((touch.screenX - 60) / categoryWidth);
+							if (tabIdx >= 0 && tabIdx < categories.length && tabIdx != curCategory)
+							{
+								curCategory = tabIdx;
+								loadCategory(curCategory);
+								FlxG.sound.play(Paths.sound('menus/scrollMenu'), 0.7);
+								return;
+							}
+						}
+
+						if (touch.screenY >= OPT_START_Y && touch.screenY <= OPT_START_Y + OPT_VISIBLE_H)
+						{
+							var relativeY = touch.screenY - OPT_START_Y + _optScrollY;
+							var clickedIdx = Std.int(relativeY / OPT_SPACING);
+
+							if (clickedIdx >= 0 && clickedIdx < currentOptions.length)
+							{
+								if (curSelected == clickedIdx)
+								{
+									_triggerSelectedOption();
+								}
+								else
+								{
+									curSelected = clickedIdx;
+									updateOptionDisplay();
+									FlxG.sound.play(Paths.sound('menus/scrollMenu'), 0.7);
+								}
+							}
+						}
+					}
+					else if (Math.abs(totalDeltaX) > 60 && Math.abs(totalDeltaY) < 50)
+					{
+						if (totalDeltaX > 0)
+							curCategory--;
+						else
+							curCategory++;
+
+						if (curCategory < 0) curCategory = categories.length - 1;
+						if (curCategory >= categories.length) curCategory = 0;
+
+						loadCategory(curCategory);
+						FlxG.sound.play(Paths.sound('menus/scrollMenu'), 0.7);
+					}
+				}
+			}
+		}
+	}
+
+	function _triggerSelectedOption():Void
+	{
+		if (currentOptions.length == 0) return;
+		
+		final opt = currentOptions[curSelected];
+		if (opt.left != null || opt.right != null)
+		{
+			_editMode = true;
+			_editModeIndicator.text = "⟵ A / D ⟶ Adjusting: " + opt.name + "   (TAP Title/Footer to confirm)";
+			_editModeIndicator.visible = true;
+			FlxG.sound.play(Paths.sound('menus/scrollMenu'), 0.7);
+		}
+		else if (opt.toggle != null)
+		{
+			opt.toggle();
+			updateOptionDisplay();
+			FlxG.sound.play(Paths.sound('menus/scrollMenu'), 0.7);
+		}
+	}
+
+	function _exitOptionsMenu():Void
+	{
+		if (bindingState != "select") return;
+
+		FlxG.sound.play(Paths.sound('menus/cancelMenu'), 0.7);
+		if (fromPause) {
+			isOpenOptions = false;
+			close();
+		} else {
+			MusicBeatState.switchState(new MainMenuState());
+		}
+	}
+	#end
 
 	#if HSCRIPT_ALLOWED
 	/**
@@ -1909,6 +2071,7 @@ class OptionsMenuState extends MusicBeatSubstate
 		// ── Guard de input: esperar a que se suelten todas las teclas de ACCEPT ──
 		// Previene que el ENTER/SPACE usado para abrir el menú dispare
 		// una acción en el primer frame.
+
 		if (_inputGuard)
 		{
 			// BUG FIX #4: antes solo se bloqueaban ENTER/SPACE/Z hardcodeados.
@@ -1924,6 +2087,10 @@ class OptionsMenuState extends MusicBeatSubstate
 			else
 				return;
 		}
+
+		#if mobileC
+		handleTouchInput();
+		#end
 
 		// ── Actualizar shaders de fondo ───────────────────────────────────────
 		if (fromPause && _gridShader != null)

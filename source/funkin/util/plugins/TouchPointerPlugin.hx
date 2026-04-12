@@ -323,6 +323,7 @@ class TouchPointer extends FlxSprite
 
 	private var _lastPos:FlxPoint;
 	private var _isMoving:Bool = false;
+	private var _skipMoveCheck:Bool = true;
 
 	// Usar PNGs propios si existen, si no la textura procedural
 	private static var _customStillExists:Null<Bool> = null;
@@ -341,32 +342,38 @@ class TouchPointer extends FlxSprite
 
 	public function init(id:Int):Void
 	{
+		FlxTween.cancelTweensOf(this);
+
 		touchId = id;
 		_isMoving = false;
-		alpha = 0;
+		_skipMoveCheck = true; // ignorar el primer frame de movimiento (lastPos = 0,0)
 
 		_loadStill();
 
 		// Pop de entrada
 		scale.set(1.4, 1.4);
 		alpha = 0.9;
-		FlxTween.cancelTweensOf(scale);
 		FlxTween.tween(scale, {x: 1.0, y: 1.0}, 0.18, {ease: FlxEase.backOut});
 	}
 
 	public function updateFromTouch(touch:FlxTouch, cam:FlxCamera):Void
 	{
-		// Posición en coordenadas de vista
-		var vp = FlxPoint.get();
-		vp.set(touch.screenX, touch.screenY);
+		var sx:Float = touch.screenX;
+		var sy:Float = touch.screenY;
 
-		x = vp.x - width  / 2;
-		y = vp.y - height / 2;
+		x = sx - width  / 2;
+		y = sy - height / 2;
 
-		if (cam.target != null) { x -= cam.target.x; y -= cam.target.y; }
+		if (_skipMoveCheck)
+		{
+			_lastPos.set(sx, sy);
+			_skipMoveCheck = false;
+			return;
+		}
 
-		// Detectar movimiento
-		var moved = _lastPos.distanceTo(FlxPoint.weak(vp.x, vp.y)) > 4;
+		var dx = sx - _lastPos.x;
+		var dy = sy - _lastPos.y;
+		var moved = (dx * dx + dy * dy) > 16;
 
 		if (moved && !_isMoving)
 		{
@@ -381,9 +388,6 @@ class TouchPointer extends FlxSprite
 
 		if (moved)
 		{
-			// Rotar hacia la dirección del movimiento
-			var dx = vp.x - _lastPos.x;
-			var dy = vp.y - _lastPos.y;
 			angle = Math.atan2(dy, dx) * (180 / Math.PI);
 		}
 		else
@@ -391,8 +395,7 @@ class TouchPointer extends FlxSprite
 			angle = 0;
 		}
 
-		_lastPos.copyFrom(vp);
-		vp.put();
+		_lastPos.set(sx, sy);
 	}
 
 	// ── Cargar textura ────────────────────────────────────────────────────

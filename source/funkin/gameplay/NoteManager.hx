@@ -1185,12 +1185,24 @@ class NoteManager
 			return (targetH * (_stretch + _extra)) / note.frameHeight;
 		}
 
-		// Iterar sobre todos los sustains activos en el grupo de notas largas
+		// Iterar sobre todos los sustains activos (body Y tail caps).
+		//
+		// FIX tail cap: antes se excluía isTailCap con un `continue`, dejando el
+		// extremo del hold con el scale calculado al spawnear la nota (velocidad
+		// inicial). Cuando un evento de chart o el jugador cambiaban el scroll rate,
+		// los body-pieces se ajustaban pero el tail cap se quedaba con el scale
+		// antiguo → el extremo final sobresalía o quedaba corto respecto al body.
+		//
+		// IMPORTANTE: tail caps tienen frameHeight distinto a los body-pieces, pero
+		// calcScaleY() ya usa note.frameHeight individualmente, así que produce el
+		// scale correcto para cada pieza independientemente de su tipo.
+		// updateNotePosition() respeta note.sustainBaseScaleY para tail caps (no les
+		// aplica la escala Euclídea), así que actualizar sustainBaseScaleY aquí es
+		// la única vía para que el tail cap refleje el cambio de velocidad.
 		for (note in sustainNotes.members)
 		{
-			if (note == null || !note.alive || !note.isSustainNote || note.isTailCap)
+			if (note == null || !note.alive || !note.isSustainNote)
 				continue;
-			// Solo piezas hold (no las colas/tails — tienen frameHeight distinto)
 			var newSY = calcScaleY(note);
 			if (newSY > 0 && newSY != note.sustainBaseScaleY)
 			{
@@ -1464,12 +1476,6 @@ class NoteManager
 
 			if (note.isSustainNote)
 			{
-				// BUG D FIX: flipX nunca cambia en sustains (la dirección visual se
-				// gestiona con posición Y y ángulo). flipY SÍ debe aplicarse al
-				// tail cap (holdend) para que el gráfico de cola apunte correctamente:
-				//   - upscroll / invert=false: holdend apunta hacia abajo → flipY=false
-				//   - downscroll / invert=true: holdend debe apuntar hacia arriba → flipY=true
-				// El hold body nunca necesita flipY (textura repetitiva simétrica).
 				note.flipX = false;
 				note.flipY = note.isTailCap && _effectiveDownscroll;
 
