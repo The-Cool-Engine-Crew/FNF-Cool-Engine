@@ -953,10 +953,6 @@ class OptionsMenuState extends MusicBeatSubstate
 					SaveData.data.hitsounds = !SaveData.data.hitsounds;
 				}
 			},
-			// ── Lane Backdrop (osu-style) ───────────────────────────────────────
-			// Fondo negro semitransparente detrás del carril de notas del jugador.
-			// La posición se adapta automáticamente a Middlescroll / Downscroll / Upscroll.
-			// Alpha 0% = transparente (por defecto). Ajustar con ← / → o A / D.
 			{
 				name: "Lane Backdrop",
 				get: function()
@@ -2351,7 +2347,6 @@ class OptionsMenuState extends MusicBeatSubstate
 			"Downscroll",
 			"Middlescroll",
 			"Note Splashes",
-			"Rating Position",
 			"Perfect Mode",
 			"Sick Mode",
 			"Static Stage",
