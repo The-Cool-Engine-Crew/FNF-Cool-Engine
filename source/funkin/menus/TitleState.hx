@@ -86,12 +86,13 @@ class TitleState extends funkin.states.MusicBeatState
 
 	override public function create():Void
 	{
+		autoScriptLoad = false;
+
 		super.create();
 
 		#if HSCRIPT_ALLOWED
 		StateScriptHandler.init();
 		StateScriptHandler.loadStateScripts('TitleState', this);
-		StateScriptHandler.callOnScripts('onCreate', []);
 		#end
 
 		bg = new FlxSprite().loadGraphic(Paths.getGraphic('menu/menuBGtitle'));

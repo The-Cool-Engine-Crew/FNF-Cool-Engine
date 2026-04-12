@@ -705,6 +705,11 @@ class StateScriptHandler
 
 		var fields:Array<String> = [];
 		var cls:Dynamic = Type.getClass(state);
+
+		for (f in Type.getClassFields(cls))
+			if (!fields.contains(f))
+				fields.push(f);
+
 		while (cls != null)
 		{
 			for (f in Type.getInstanceFields(cls))
@@ -965,6 +970,11 @@ class StateScriptHandler
 		// usamos Dynamic para la variable de iteración y evitamos el error de tipos.
 		var fields:Array<String> = [];
 		var cls:Dynamic = Type.getClass(state);
+
+		for (f in Type.getClassFields(cls))
+			if (!fields.contains(f))
+				fields.push(f);
+
 		while (cls != null)
 		{
 			for (f in Type.getInstanceFields(cls))
