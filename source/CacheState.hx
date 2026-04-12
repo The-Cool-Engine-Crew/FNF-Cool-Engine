@@ -325,10 +325,7 @@ class CacheState extends funkin.states.MusicBeatState
 
         funkin.transitions.StateTransition.setNext('none');
 
-        // Contar 3 ENTER_FRAMEs reales antes del switch para garantizar que
-        // el display mostró "Ready! 100%" con la barra verde.
-        // (Ver explicación completa de por qué no usamos FlxTimer aquí arriba.)
-        var framesLeft:Int = 3;
+        var framesLeft:Int = 6;
         var stage = openfl.Lib.current.stage;
         var frameListener:openfl.events.Event->Void = null;
         frameListener = function(_:openfl.events.Event):Void
@@ -336,7 +333,7 @@ class CacheState extends funkin.states.MusicBeatState
             framesLeft--;
             if (framesLeft > 0) return;
             stage.removeEventListener(openfl.events.Event.ENTER_FRAME, frameListener);
-            new FlxTimer().start(0.4, function(_) { goToTitle(); });
+            haxe.Timer.delay(goToTitle, 400);
         };
         stage.addEventListener(openfl.events.Event.ENTER_FRAME, frameListener);
 

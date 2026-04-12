@@ -363,39 +363,33 @@ class Main extends Sprite
 	}
 
 	#if ((windows || mac) && cpp)
-	/**
-	 * Aplica dark mode + colores de ventana DWM en el primer frame real.
-	 *
-	 * En Windows, GetActiveWindow() puede devolver NULL si la ventana aun no
-	 * tiene foco activo en la cola de mensajes del thread.  Durante setupStage()
-	 * (antes del primer frame) esto ocurre con frecuencia cuando el usuario
-	 * tiene otras ventanas o el OS pospone el foco.
-	 *
-	 * Mecanismo de reintento: si hasValidWindow() devuelve false el handler
-	 * no se elimina y se vuelve a ejecutar en el siguiente ENTER_FRAME,
-	 * hasta un maximo de MAX_RETRIES intentos.
-	 *
-	 * En macOS el retry no es necesario (NSApp siempre esta disponible),
-	 * pero compartimos la misma funcion para simplicidad.
-	 */
-	private static inline var _WIN_STYLE_MAX_RETRIES:Int = 5;
+	private static inline var _WIN_STYLE_MAX_RETRIES:Int = 120;
 	private var _winStyleRetries:Int = 0;
+	private var _winStyleApplied:Bool = false;
 
 	private function _applyWindowStylingDeferred(_:openfl.events.Event):Void
 	{
-		// Reintento si el HWND aun no esta disponible (solo relevante en Windows)
 		if (!InitAPI.hasValidWindow())
 		{
 			if (++_winStyleRetries < _WIN_STYLE_MAX_RETRIES)
-				return; // quedarse suscrito y reintentar el proximo frame
-			// Superado el limite: eliminar el listener y rendirse silenciosamente
+				return; // reintentar el siguiente frame
 			stage.removeEventListener(openfl.events.Event.ENTER_FRAME, _applyWindowStylingDeferred);
 			return;
 		}
 
 		stage.removeEventListener(openfl.events.Event.ENTER_FRAME, _applyWindowStylingDeferred);
 
-		// Dark mode del frame / barra de titulo (Win10 1809+ y Win11 / macOS 10.14+)
+		_doApplyWindowStyling();
+
+		if (!_winStyleApplied)
+		{
+			_winStyleApplied = true;
+			new flixel.util.FlxTimer().start(0.5, function(_) _doApplyWindowStyling());
+		}
+	}
+
+	private function _doApplyWindowStyling():Void
+	{
 		InitAPI.setDarkMode(true);
 		InitAPI.setWindowCaptionColor(0, 0, 0);
 		InitAPI.setWindowBorderColor(0, 0, 0);

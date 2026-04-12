@@ -41,7 +41,6 @@ package extensions;
 #include <winuser.h>
 #include <vector>
 #include <string>
-// Deshacer macros de Windows que colisionan con Haxe
 #undef TRUE
 #undef FALSE
 #undef NO_ERROR
@@ -57,10 +56,28 @@ package extensions;
   #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
 
+static BOOL CALLBACK _enumGameWindow(HWND w, LPARAM lParam) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(w, &pid);
+    if (pid == GetCurrentProcessId() && IsWindowVisible(w) && GetParent(w) == NULL) {
+        *(HWND*)lParam = w;
+        return false;
+    }
+    return true;
+}
+
 static inline HWND _getGameHwnd() {
-    HWND hwnd = GetForegroundWindow();
-    if (hwnd == NULL) hwnd = GetActiveWindow();
-    if (hwnd == NULL) hwnd = GetConsoleWindow();
+    HWND hwnd = GetActiveWindow();
+    if (hwnd != NULL) return hwnd;
+    hwnd = GetForegroundWindow();
+    if (hwnd != NULL) {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(hwnd, &pid);
+        if (pid == GetCurrentProcessId()) return hwnd;
+    }
+
+    hwnd = NULL;
+    EnumWindows(_enumGameWindow, (LPARAM)&hwnd);
     return hwnd;
 }
 ')

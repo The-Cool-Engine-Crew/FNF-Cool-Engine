@@ -164,21 +164,9 @@ class FunkinCache extends AssetCache
 			funkin.cache.PathsCache.instance.clearPreviousSounds();
 
 			Paths.pruneAtlasCache();
-
-			// ── Limpiar FlxGraphics huérfanos del pool interno de Flixel ─────────
-			// clearSecondLayer() + clearPreviousGraphics() liberaron las referencias
-			// de PathsCache/FunkinCache, pero FlxBitmapFrontEnd sigue con wrappers
-			// cuyo useCount=0 y bitmap=null. clearUnused() los expulsa del pool
-			// antes del GC para que collectMajor() los recoja en la misma pasada.
+			
 			try { FlxG.bitmap.clearUnused(); } catch (_:Dynamic) {}
 
-			// ── Purgar cachés de audio de OpenFL/Lime ─────────────────────────
-			// clearSecondLayer() llama s.close() sobre los Sound individuales,
-			// pero los bundles de library 'songs' y 'music' registrados en
-			// LimeAssets conservan sus buffers PCM aunque los Sound estén cerrados.
-			// clear('songs') + clear('music') libera esos buffers de golpe.
-			// Se llama DESPUÉS de clearSecondLayer() para no cerrar sonidos
-			// que el nuevo state ya rescató (están en CURRENT, no en SECOND).
 			#if lime
 			try { lime.utils.Assets.cache.clear('songs');  } catch (_:Dynamic) {}
 			try { lime.utils.Assets.cache.clear('music');  } catch (_:Dynamic) {}
@@ -189,9 +177,11 @@ class FunkinCache extends AssetCache
 			new flixel.util.FlxTimer().start(0.13, function(_) // ~8 frames a 60fps
 			{
 				try { MemoryUtil.collectMajor(); } catch (_:Dynamic) {}
+				try { flixel.FlxG.bitmap.clearUnused(); } catch (_:Dynamic) {}
 			});
 			#else
 			MemoryUtil.collectMajor();
+			try { FlxG.bitmap.clearUnused(); } catch (_:Dynamic) {}
 			#end
 		});
 	}

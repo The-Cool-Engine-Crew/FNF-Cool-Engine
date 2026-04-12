@@ -679,26 +679,24 @@ class FreeplayState extends funkin.states.MusicBeatState
 			final entry = freeplayData.songs[i];
 			final meta = new SongMetadata(entry.name, entry.group ?? i, entry.icon ?? 'bf', i);
 
-			// Artista: campo directo > meta.json
-			#if sys
+			var songArtist = '';
 			try
 			{
 				final m = funkin.data.MetaData.load(entry.name.toLowerCase());
 				if (m.artist != null)
-					artist = m.artist;
+					songArtist = m.artist;
 			}
 			catch (_)
 			{
 			}
-			#end
-			if (artist == '')
-				artist = entry.artist ?? '';
+			if (songArtist == '')
+				songArtist = entry.artist ?? '';
+			meta.artist = songArtist;
 			meta.album = entry.album ?? '';
 			meta.albumText = entry.albumText ?? '';
 
 			songs.push(meta);
 
-			// Color del grupo (un color por grupo, usando el de la primera canción del grupo)
 			if (i >= coolColors.length)
 			{
 				final colorInt:Null<Int> = Std.parseInt(entry.color ?? '0xFFFFD900');
@@ -1173,9 +1171,8 @@ class FreeplayState extends funkin.states.MusicBeatState
 		var song = songs[curSelected];
 		spotlightTitle.setText(song.songName);
 
-		// ── Artist — lee del SongMetadata (ya resuelto en songsSystem) ────────
-		// Formato: "by <artista>"  si hay artista; si no, "from <weekName>" como antes.
-		var artistStr = artist;
+		// Format : <by artist>
+		var artistStr = song.artist;
 		if (artistStr != '')
 		{
 			spotlightArtist.text = 'by  $artistStr';
@@ -1548,6 +1545,9 @@ class SongMetadata
 
 	/** Clave de atlas de texto de álbum para esta canción. */
 	public var albumText:String = '';
+
+	/** Song artist, read from meta.json or the artist field of freeplayList. */
+	public var artist:String = '';
 
 	public function new(song:String, week:Int, songCharacter:String, ?songIndex:Int = 0)
 	{

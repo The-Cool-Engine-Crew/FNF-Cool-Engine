@@ -113,9 +113,6 @@ class MainMenuState extends funkin.states.MusicBeatState
 		persistentUpdate = persistentDraw = true;
 
 		bg = new FlxSprite().loadGraphic(Bitmap.fromFile(Paths.image('menu/menuBG')));
-		bg.scrollFactor.x = 0;
-		bg.scrollFactor.y = 0.18;
-		// Escalar el fondo para cubrir siempre el ancho completo (fix 1080p)
 		var bgScale:Float = Math.max(FlxG.width / bg.width, FlxG.height / bg.height) * 1.1;
 		bg.scale.set(bgScale, bgScale);
 		bg.updateHitbox();

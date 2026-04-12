@@ -519,6 +519,19 @@ class MusicBeatState extends CoolUIState
 			}
 			#end
 
+			#if HSCRIPT_ALLOWED
+			try
+			{
+				StateScriptHandler.callOnScripts('onDestroy', []);
+				StateScriptHandler.clearStateScripts();
+				funkin.scripting.ScriptHandler.clearSongScripts();
+				funkin.scripting.ScriptHandler.clearStageScripts();
+				funkin.scripting.ScriptHandler.clearCharScripts();
+				funkin.scripting.ScriptHandler.clearMenuScripts();
+			}
+			catch (_:Dynamic) {}
+			#end
+
 			FlxG.resetState();
 		}
 	}

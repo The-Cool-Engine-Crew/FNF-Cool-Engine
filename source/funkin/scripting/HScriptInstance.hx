@@ -457,7 +457,14 @@ class HScriptInstance implements IScript
 	public function dispose():Void
 	{
 		#if HSCRIPT_ALLOWED
-		interp = null;
+		if (interp != null)
+		{
+			try { interp.variables.clear(); } catch (_:Dynamic) {}
+			try { @:privateAccess interp.locals.clear(); } catch (_:Dynamic) {}
+			interp.scriptObject = null;
+
+			interp = null;
+		}
 		program = null;
 		_source = '';
 		_funcCache.clear();

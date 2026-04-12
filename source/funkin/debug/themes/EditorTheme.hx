@@ -81,6 +81,7 @@ class EditorTheme
 		if (!FileSystem.exists(SAVE_PATH))
 		{
 			current = _darkTheme();
+			CoolUITheme.syncFromDynamic(current);
 			return;
 		}
 		try
@@ -105,7 +106,8 @@ class EditorTheme
 			{
 				trace('[EditorTheme] Archivo antiguo/corrupto (v$fileVersion < v$FORMAT_VERSION). Regenerando desde preset "$presetName".');
 				current = base;
-				save(); // re-guarda en formato nuevo
+				save();
+				CoolUITheme.syncFromDynamic(current);
 				return;
 			}
 
@@ -140,6 +142,7 @@ class EditorTheme
 				{
 					current = base;
 					trace('[EditorTheme] Cargado preset limpio: "$presetName"');
+					CoolUITheme.syncFromDynamic(current);
 					return;
 				}
 			}

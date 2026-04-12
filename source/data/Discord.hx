@@ -17,7 +17,7 @@ using StringTools;
 class DiscordClient
 {
 	// ── Valores por defecto del engine (hardcoded) ────────────────────────────
-	static inline var DEFAULT_CLIENT_ID:String    = "886146334451720242";
+	static inline var DEFAULT_CLIENT_ID:String    = "1492944020366692597";
 	static inline var DEFAULT_LARGE_IMAGE:String  = "icon";
 	static inline var DEFAULT_IMAGE_TEXT:String   = "FNF' Cool Engine";
 	static inline var DEFAULT_MENU_DETAILS:String = "In the Menu";
