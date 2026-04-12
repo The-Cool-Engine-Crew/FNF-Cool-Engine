@@ -43,6 +43,10 @@ class MainMenuState extends funkin.states.MusicBeatState
 	var newInput:Bool = true;
 	var menuItem:FlxSprite;
 
+	var bg:FlxSprite;
+	var versionShit2:FlxText;
+	var modShit:FlxText;
+
 	var versionAPI:String = "0.4.4B";
 
 	public static var firstStart:Bool = true;
@@ -108,7 +112,7 @@ class MainMenuState extends funkin.states.MusicBeatState
 
 		persistentUpdate = persistentDraw = true;
 
-		var bg:FlxSprite = new FlxSprite().loadGraphic(Bitmap.fromFile(Paths.image('menu/menuBG')));
+		bg = new FlxSprite().loadGraphic(Bitmap.fromFile(Paths.image('menu/menuBG')));
 		bg.scrollFactor.x = 0;
 		bg.scrollFactor.y = 0.18;
 		// Escalar el fondo para cubrir siempre el ancho completo (fix 1080p)
@@ -167,7 +171,7 @@ class MainMenuState extends funkin.states.MusicBeatState
 			menuItem.updateHitbox();
 		}
 
-		var versionShit2:FlxText = new FlxText(5, FlxG.height - 19, 0, 'Cool Engine - v${Application.current.meta.get('version')}', 12);
+		versionShit2 = new FlxText(5, FlxG.height - 19, 0, 'Cool Engine - v${Application.current.meta.get('version')}', 12);
 		versionShit2.scrollFactor.set();
 		versionShit2.setFormat("VCR OSD Mono", 16, FlxColor.WHITE, LEFT, FlxTextBorderStyle.OUTLINE, FlxColor.BLACK);
 		versionShit2.antialiasing = SaveData.data.antialiasing;
@@ -175,9 +179,9 @@ class MainMenuState extends funkin.states.MusicBeatState
 		
 		#if mobileC
 		// En móvil: texto "[ MODS ]" tappable en lugar de "Press Shift"
-		var modShit:FlxText = new FlxText(5, FlxG.height - 19, 0, '[ MODS ]', 12);
+		modShit = new FlxText(5, FlxG.height - 19, 0, '[ MODS ]', 12);
 		#else
-		var modShit:FlxText = new FlxText(5, FlxG.height - 19, 0, 'Press Shift - Menu Mods - API v'+versionAPI, 12);
+		modShit = new FlxText(5, FlxG.height - 19, 0, 'Press Shift - Menu Mods - API v'+versionAPI, 12);
 		#end
 		modShit.scrollFactor.set();
 		modShit.setFormat("VCR OSD Mono", 16, FlxColor.WHITE, LEFT, FlxTextBorderStyle.OUTLINE, FlxColor.BLACK);
@@ -248,12 +252,12 @@ class MainMenuState extends funkin.states.MusicBeatState
 
 		// ── Mod Selector ────────────────────────────────────────────────────────
 		if (FlxG.keys.justPressed.SHIFT)
-			StateTransition.switchState(new ModSelectorState());
+			StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('ModSelectorState') ?? new ModSelectorState());
 		#if mobileC
 		// Tap en la zona del texto "[ MODS ]" (esquina inferior izquierda)
 		for (touch in FlxG.touches.justStarted())
 			if (touch.screenX < 130 && touch.screenY > FlxG.height - 60)
-				StateTransition.switchState(new ModSelectorState());
+				StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('ModSelectorState') ?? new ModSelectorState());
 		#end
 
 		if (!selectedSomethin)
@@ -272,7 +276,7 @@ class MainMenuState extends funkin.states.MusicBeatState
 
 			if (controls.BACK)
 			{
-				StateTransition.switchState(new TitleState());
+				StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('TitleState') ?? new TitleState());
 			}
 
 			if (controls.ACCEPT)
@@ -315,13 +319,13 @@ class MainMenuState extends funkin.states.MusicBeatState
 								switch (daChoice)
 								{
 									case 'storymode':
-										StateTransition.switchState(new StoryMenuState());
+										StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('StoryMenuState') ?? new StoryMenuState());
 									case 'freeplay':
-										StateTransition.switchState(new FreeplayState());
+										StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('FreeplayState') ?? new FreeplayState());
 									case 'options':
-										StateTransition.switchState(new OptionsMenuState());
+										StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('OptionsMenuState') ?? new OptionsMenuState());
 									case 'credits':
-										StateTransition.switchState(new funkin.menus.credits.CreditsState());
+										StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('CreditsState') ?? new funkin.menus.credits.CreditsState());
 								}
 							});
 						});

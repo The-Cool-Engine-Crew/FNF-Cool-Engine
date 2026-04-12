@@ -344,6 +344,11 @@ class StateScriptHandler
 			if (script.interp != null)
 				_reflectStateFields(script.interp, state, true); // true = modo refresh
 		#end
+		#if (LUA_ALLOWED && linc_luajit)
+		for (lua in luaScripts)
+			if (lua.active)
+				_reflectLuaStateFields(lua, state, true); // true = modo refresh
+		#end
 	}
 
 	// ─── Llamadas ─────────────────────────────────────────────────────────────
@@ -573,6 +578,42 @@ class StateScriptHandler
 		script.set('Std',   Std);
 		script.set('self',  state);
 
+		// ── AUTO-REFLECT: exponer TODOS los campos públicos del state ─────────
+		// Igual que _reflectStateFields para HScript — los scripts Lua pueden
+		// acceder a curSelected, menuItems, logoBl, etc. sin getField().
+		_reflectLuaStateFields(script, state);
+
+		// ── Leer/escribir campos del state por nombre ─────────────────────────
+		// Para primitivos (Bool/Int/Float/String) que no son referencias.
+		script.set('getField', function(name:String):Dynamic {
+			try   { return Reflect.getProperty(state, name); }
+			catch (e:Dynamic) { trace('[LuaStateScript] getField("$name") failed: $e'); return null; }
+		});
+		script.set('setField', function(name:String, value:Dynamic):Void {
+			try   { Reflect.setProperty(state, name, value); }
+			catch (e:Dynamic) { trace('[LuaStateScript] setField("$name") failed: $e'); }
+		});
+
+		// ── Llamar métodos del state por nombre ───────────────────────────────
+		script.set('callMethod', function(name:String, ?args:Array<Dynamic>):Dynamic {
+			try {
+				final fn = Reflect.getProperty(state, name);
+				if (fn != null && Reflect.isFunction(fn))
+					return Reflect.callMethod(state, fn, args ?? []);
+			} catch (e:Dynamic) { trace('[LuaStateScript] callMethod("$name") failed: $e'); }
+			return null;
+		});
+
+		// ── Re-sincronizar campos del state hacia el script ───────────────────
+		// Llamar desde Lua cuando el state crea objetos después del onCreate:
+		//   refreshFields()
+		script.set('refreshFields', function():Void {
+			_reflectLuaStateFields(script, state, true);
+		});
+
+		// ── save data ─────────────────────────────────────────────────────────
+		script.set('save', flixel.FlxG.save.data);
+
 		// ui object — backward compat
 		final uiHelper:Dynamic =
 			(state != null && Std.isOfType(state, flixel.FlxState))
@@ -588,7 +629,7 @@ class StateScriptHandler
 		script.set('remove', function(obj:Dynamic) return st.remove(obj));
 		script.set('insert', function(pos:Int, obj:Dynamic) { st.insert(pos, obj); return obj; });
 
-		// Navigation
+		// Navigation — respeta stateOverrides de GlobalConfig
 		script.set('switchState',         function(name:String) funkin.scripting.ScriptBridge.switchStateByName(name));
 		script.set('switchStateInstance', function(inst:flixel.FlxState) funkin.transitions.StateTransition.switchState(inst));
 		script.set('stickerSwitch',       function(inst:flixel.FlxState)
@@ -626,9 +667,72 @@ class StateScriptHandler
 		});
 		script.set('stopMusic', function() { if (flixel.FlxG.sound.music != null) flixel.FlxG.sound.music.stop(); });
 
+		// Shared data (mismo API que HScript para scripts mixtos en el mismo estado)
+		script.set('setShared',    function(k:String, v:Dynamic)    setShared(k, v));
+		script.set('getShared',    function(k:String, ?def:Dynamic) return getShared(k, def));
+		script.set('deleteShared', function(k:String)               deleteShared(k));
+
+		// Broadcast
+		script.set('broadcast', function(ev:String, ?args:Array<Dynamic>) broadcast(ev, args ?? []));
+
 		// PlayState reference if available
 		final ps = funkin.gameplay.PlayState.instance;
 		if (ps != null) script.set('game', ps);
+	}
+
+	/**
+	 * Expone AUTOMÁTICAMENTE todos los campos de instancia del state al script Lua,
+	 * igual que _reflectStateFields hace para HScript.
+	 *
+	 * @param refresh  Si true, actualiza campos del state EXCEPTO vars fijas del API.
+	 *                 Si false (init), no sobreescribe nada que ya exista.
+	 */
+	static final _LUA_API_VARS:Array<String> = [
+		'FlxG', 'Math', 'Std', 'self', 'save',
+		'getField', 'setField', 'callMethod', 'refreshFields',
+		'ui', 'add', 'remove', 'insert',
+		'switchState', 'switchStateInstance', 'stickerSwitch', 'loadState',
+		'timer', 'interval', 'cancelTweens',
+		'shake', 'flash', 'fade', 'zoomCamera',
+		'center', 'centerX', 'centerY',
+		'playSound', 'playMusic', 'stopMusic',
+		'setShared', 'getShared', 'deleteShared', 'broadcast', 'game'
+	];
+
+	static function _reflectLuaStateFields(script:RuleScriptInstance, state:Dynamic, refresh:Bool = false):Void
+	{
+		if (state == null || !Std.isOfType(state, flixel.FlxState)) return;
+
+		var fields:Array<String> = [];
+		var cls:Dynamic = Type.getClass(state);
+		while (cls != null)
+		{
+			for (f in Type.getInstanceFields(cls))
+				if (!fields.contains(f))
+					fields.push(f);
+			cls = Type.getSuperClass(cls);
+			// Parar en FlxState para no exponer internos de Flixel/OpenFL
+			if (cls != null && Type.getClassName(cls) == 'flixel.FlxState')
+				break;
+		}
+
+		for (fieldName in fields)
+		{
+			// En modo init: no sobreescribir las vars fijas del API Lua.
+			// En modo refresh: actualizar campos del state SALVO las vars fijas.
+			if (!refresh && _LUA_API_VARS.contains(fieldName)) continue;
+			if (refresh  && _LUA_API_VARS.contains(fieldName)) continue;
+
+			try
+			{
+				final value = Reflect.getProperty(state, fieldName);
+				script.set(fieldName, value);
+			}
+			catch (e:Dynamic)
+			{
+				// Campo write-only o inaccesible — ignorar silenciosamente
+			}
+		}
 	}
 	#end
 

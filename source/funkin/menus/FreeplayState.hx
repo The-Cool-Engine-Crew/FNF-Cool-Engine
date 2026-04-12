@@ -915,7 +915,7 @@ class FreeplayState extends funkin.states.MusicBeatState
 		if (controls.BACK)
 		{
 			FlxG.sound.play(Paths.sound('menus/cancelMenu'));
-			StateTransition.switchState(new MainMenuState());
+			StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('MainMenuState') ?? new MainMenuState());
 		}
 		if (FlxG.keys.justPressed.E && mods.ModManager.developerMode)
 			StateTransition.switchState(new funkin.debug.editors.FreeplayEditorState());

@@ -514,6 +514,16 @@ class CrashHandler {
 
 		// ── 3. In-process dialog (only when watcher is not available) ─────────
 		if (!_watcherRunning) {
+			// On Android/iOS the native dialog has no scroll; use the overlay.
+			// The overlay close button calls Sys.exit(1), so we return here to
+			// avoid the unconditional Sys.exit(1) at step 5 below.
+			#if (android || mobileC || ios)
+			try {
+				_showMobileScrollOverlay(report, "Cool Engine — Fatal Error", logPath != "" ? logPath : null);
+				return;
+			} catch (_:Dynamic) {}
+			#end
+
 			try {
 				var msg = _truncate(report, 2000);
 				if (logPath != "")
@@ -936,6 +946,150 @@ class CrashHandler {
 	//  NATIVE DIALOGS
 	// =========================================================================
 
+	// ── Mobile scrollable overlay (Android / iOS / mobileC) ──────────────────
+
+	#if (android || mobileC || ios)
+	/**
+	 * Shows a full-screen OpenFL overlay with the crash report text.
+	 *
+	 * WHY: lime.app.Application.current.window.alert() on Android renders a
+	 * standard AlertDialog that has no scroll support.  Long crash reports are
+	 * silently truncated and the bottom frames (the most useful ones) are never
+	 * visible.  This overlay replaces that with an openfl.text.TextField that:
+	 *   • shows the full, untruncated report
+	 *   • supports finger-drag scrolling
+	 *   • calls Sys.exit(1) from the Close button so the app exits cleanly
+	 *     (instead of from _showAndExit(), which would kill the app before the
+	 *     user can read anything)
+	 *
+	 * @param message  Full crash-report string (NOT truncated).
+	 * @param title    Title bar text.
+	 * @param logPath  Optional: path to the saved .txt log (appended at bottom).
+	 */
+	private static function _showMobileScrollOverlay(message:String, title:String, ?logPath:String):Void
+	{
+		var stage = openfl.Lib.current.stage;
+		final W:Float = stage.stageWidth;
+		final H:Float = stage.stageHeight;
+
+		// ── Root container ────────────────────────────────────────────────────
+		var overlay = new openfl.display.Sprite();
+		overlay.name = "__CrashOverlay__";
+
+		// Opaque background (keeps the broken game render hidden)
+		var bgShape = new openfl.display.Shape();
+		bgShape.graphics.beginFill(0x0F0F0F, 0.97);
+		bgShape.graphics.drawRect(0, 0, W, H);
+		bgShape.graphics.endFill();
+		overlay.addChild(bgShape);
+
+		// ── Title bar ─────────────────────────────────────────────────────────
+		var titleBar = new openfl.display.Shape();
+		titleBar.graphics.beginFill(0xAA1111);
+		titleBar.graphics.drawRect(0, 0, W, 64);
+		titleBar.graphics.endFill();
+		overlay.addChild(titleBar);
+
+		var titleFmt = new openfl.text.TextFormat("_sans", 20, 0xFFFFFF, true);
+		var titleField = new openfl.text.TextField();
+		titleField.defaultTextFormat = titleFmt;
+		titleField.text = title;
+		titleField.x = 10;
+		titleField.y = 14;
+		titleField.width = W - 130;
+		titleField.height = 44;
+		titleField.selectable = false;
+		titleField.mouseEnabled = false;
+		overlay.addChild(titleField);
+
+		// ── Close / Exit button ───────────────────────────────────────────────
+		final BTN_W:Float = 110;
+		final BTN_H:Float = 44;
+		var closeBtn = new openfl.display.Sprite();
+
+		var closeBg = new openfl.display.Shape();
+		closeBg.graphics.beginFill(0x661111);
+		closeBg.graphics.drawRoundRect(0, 0, BTN_W, BTN_H, 10, 10);
+		closeBg.graphics.endFill();
+		closeBtn.addChild(closeBg);
+
+		var closeLbl = new openfl.text.TextField();
+		closeLbl.defaultTextFormat = new openfl.text.TextFormat("_sans", 16, 0xFFFFFF, true);
+		closeLbl.text = "Close";
+		closeLbl.width = BTN_W;
+		closeLbl.height = BTN_H;
+		closeLbl.selectable = false;
+		closeLbl.mouseEnabled = false;
+		closeBtn.addChild(closeLbl);
+
+		closeBtn.x = W - BTN_W - 8;
+		closeBtn.y = 10;
+		closeBtn.buttonMode = true;
+		closeBtn.mouseChildren = false;
+		closeBtn.useHandCursor = true;
+		closeBtn.addEventListener(openfl.events.MouseEvent.CLICK, function(_)
+		{
+			try { stage.removeChild(overlay); } catch (_) {}
+			try { Sys.exit(1);               } catch (_) {}
+		});
+		overlay.addChild(closeBtn);
+
+		// ── Scrollable report text ────────────────────────────────────────────
+		final MARGIN:Float = 10;
+		final TOP:Float    = 70;
+
+		var fullText = (message != null) ? message : "(no message)";
+		if (logPath != null && logPath != "")
+			fullText += '\n\n─────────────────────\nLog saved at:\n$logPath';
+
+		var tf = new openfl.text.TextField();
+		tf.defaultTextFormat = new openfl.text.TextFormat("_typewriter", 14, 0xDDDDDD);
+		tf.multiline  = true;
+		tf.wordWrap   = true;
+		tf.text       = fullText;
+		tf.x          = MARGIN;
+		tf.y          = TOP;
+		tf.width      = W - MARGIN * 2;
+		tf.height     = H - TOP - MARGIN;
+		tf.selectable = true;
+		tf.scrollV    = 1;
+		overlay.addChild(tf);
+
+		// ── Touch-drag scrolling ──────────────────────────────────────────────
+		// On Android/iOS, OpenFL maps touch events to MOUSE_DOWN/MOUSE_MOVE,
+		// so standard MouseEvent listeners work for finger scrolling.
+		var dragStartY:Float    = 0;
+		var dragStartScroll:Int = 1;
+		var dragging:Bool       = false;
+
+		overlay.addEventListener(openfl.events.MouseEvent.MOUSE_DOWN, function(e:openfl.events.MouseEvent)
+		{
+			dragging       = true;
+			dragStartY     = e.stageY;
+			dragStartScroll = tf.scrollV;
+		});
+		// Register MOUSE_UP on stage so a fast swipe that leaves the overlay
+		// still stops dragging.
+		stage.addEventListener(openfl.events.MouseEvent.MOUSE_UP, function(_)
+		{
+			dragging = false;
+		});
+		overlay.addEventListener(openfl.events.MouseEvent.MOUSE_MOVE, function(e:openfl.events.MouseEvent)
+		{
+			if (!dragging) return;
+			final delta:Float  = dragStartY - e.stageY;
+			// Estimate pixel height per text line.
+			final lineH:Float  = (tf.maxScrollV > 1) ? tf.textHeight / tf.maxScrollV : 20.0;
+			var newV:Int = dragStartScroll + Std.int(delta / Math.max(lineH, 1.0));
+			if (newV < 1)           newV = 1;
+			if (newV > tf.maxScrollV) newV = tf.maxScrollV;
+			tf.scrollV = newV;
+		});
+
+		stage.addChild(overlay);
+	}
+	#end
+
 	/**
 	 * Shows a modal error dialog using OS tools without going through Lime/OpenFL.
 	 * Each platform spawns an independent process so there is no deadlock even
@@ -1117,6 +1271,26 @@ class CrashHandler {
 			} catch (_) {}
 		}
 
+		// ── Mobile path ───────────────────────────────────────────────────────
+		// On Android/iOS, lime.app.Application.current.window.alert() renders a
+		// native AlertDialog without scroll support — long reports get truncated.
+		// Show the custom OpenFL overlay instead.  The Close button calls
+		// Sys.exit(1), so we must NOT call it here or the app dies before the
+		// user can read the report.
+		#if (android || mobileC || ios)
+		try {
+			_showMobileScrollOverlay(dialogMsg, "Cool Engine — Fatal Error", logPath);
+			return; // ← overlay owns the exit; do NOT fall through to Sys.exit below
+		} catch (_:Dynamic) {
+			// Overlay failed (e.g. stage not ready) — fall back to native alert
+			// and exit immediately so at least something is shown.
+			try { lime.app.Application.current.window.alert(_truncate(message, 2000), "Cool Engine — Fatal Error"); } catch (_) {}
+			try { Sys.exit(1); } catch (_) {}
+			return;
+		}
+		#end
+
+		// ── Desktop / other path ──────────────────────────────────────────────
 		if (!_watcherRunning)
 			try {
 				_nativeDialog(dialogMsg, "Cool Engine — Fatal Error");

@@ -19,6 +19,7 @@ import funkin.debug.editors.AnimationDebug;
 import funkin.debug.themes.EditorTheme;
 import funkin.states.MusicBeatState;
 import funkin.transitions.StateTransition;
+import funkin.menus.MainMenuState;
 import ui.Alphabet;
 import haxe.Json;
 
@@ -113,6 +114,12 @@ class CharacterSelectorState extends MusicBeatState
 		// Resetear la flag solo cuando realmente se cambia la pista.
 		if (!MusicManager.isPlaying('configurator'))
 			MusicManager.play('configurator', 0.7);
+
+		#if (HSCRIPT_ALLOWED || (LUA_ALLOWED && linc_luajit))
+		funkin.scripting.StateScriptHandler.init();
+		funkin.scripting.StateScriptHandler.loadStateScripts('CharacterSelectorState', this);
+		funkin.scripting.StateScriptHandler.callOnScripts('onCreate', []);
+		#end
 		
 		loadCharList();
 
@@ -200,6 +207,11 @@ class CharacterSelectorState extends MusicBeatState
 
 		changeSelection();
 		super.create();
+
+		#if (HSCRIPT_ALLOWED || (LUA_ALLOWED && linc_luajit))
+		funkin.scripting.StateScriptHandler.refreshStateFields(this);
+		funkin.scripting.StateScriptHandler.callOnScripts('postCreate', []);
+		#end
 	}
 
 	// ── Lista ─────────────────────────────────────────────────────────────────
@@ -826,6 +838,9 @@ class CharacterSelectorState extends MusicBeatState
 
 	override function update(elapsed:Float):Void
 	{
+		#if (HSCRIPT_ALLOWED || (LUA_ALLOWED && linc_luajit))
+		funkin.scripting.StateScriptHandler.callOnScripts('onUpdate', [elapsed]);
+		#end
 		super.update(elapsed);
 
 		if (FlxG.sound.music != null && FlxG.sound.music.volume < 0.7)
@@ -894,8 +909,21 @@ class CharacterSelectorState extends MusicBeatState
 		if (controls.BACK)
 		{
 			FlxG.sound.play(Paths.sound('menus/cancelMenu'));
-			StateTransition.switchState(new MainMenuState());
+			StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('MainMenuState') ?? new MainMenuState());
 		}
+
+		#if (HSCRIPT_ALLOWED || (LUA_ALLOWED && linc_luajit))
+		funkin.scripting.StateScriptHandler.callOnScripts('onUpdatePost', [elapsed]);
+		#end
+	}
+
+	override function destroy():Void
+	{
+		#if (HSCRIPT_ALLOWED || (LUA_ALLOWED && linc_luajit))
+		funkin.scripting.StateScriptHandler.callOnScripts('onDestroy', []);
+		funkin.scripting.StateScriptHandler.clearStateScripts();
+		#end
+		super.destroy();
 	}
 
 	// ── Visual bars ───────────────────────────────────────────────────────────

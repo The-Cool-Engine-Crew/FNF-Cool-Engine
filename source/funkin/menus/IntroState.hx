@@ -252,7 +252,11 @@ class IntroState extends funkin.states.MusicBeatState
 		if (_data == null || _data.slides == null || _data.slides.length == 0)
 		{
 			trace('[IntroState] No slides found — jumping straight to TitleState.');
-			_goNext();
+			// FIX (Android/Adreno): calling StateTransition.switchState() synchronously
+			// inside create() corrupts the OpenGL context because the previous state's
+			// render cycle has not finished yet.  Defer by one frame so Flixel has time
+			// to complete the state transition bookkeeping before we switch again.
+			new FlxTimer().start(0, function(_) _goNext());
 			return;
 		}
 		_totalSlides = _data.slides.length;
@@ -270,7 +274,12 @@ class IntroState extends funkin.states.MusicBeatState
 		StateScriptHandler.callOnScripts('onCreate', []);
 		#end
 
-		_playSlide(0);
+		// FIX (Android/Adreno): defer first slide by one frame for the same reason
+		// as the no-slides path above.  This also prevents any synchronous callback
+		// chains triggered by _playSlide (e.g., an immediately-missing video asset
+		// calling its onComplete inside create()) from reaching _goNext() before
+		// Flixel's state machine is ready.
+		new FlxTimer().start(0, function(_) _playSlide(0));
 	}
 
 	override function update(elapsed:Float):Void
@@ -353,7 +362,21 @@ class IntroState extends funkin.states.MusicBeatState
 		if (slide.asset == null || slide.asset.trim() == '')
 		{
 			trace('[IntroState] Slide $index (video) has no asset — skipping.');
-			_endSlide(index);
+			new FlxTimer().start(0, function(_) _endSlide(index));
+			return;
+		}
+
+		// FIX: pre-validate the path BEFORE calling playCutscene.
+		// If the video asset is missing, VideoManager.playCutscene() fires its
+		// onComplete synchronously (before returning).  Without this guard that
+		// would kick off _endSlide → ... → _goNext() all within the same call
+		// frame, which is the same OpenGL-context corruption bug as the create()
+		// crash — but triggered by a missing video rather than missing slides.
+		final resolvedPath = VideoManager._resolvePath(slide.asset);
+		if (resolvedPath == null)
+		{
+			trace('[IntroState] Slide $index: video not found "${slide.asset}" — skipping.');
+			new FlxTimer().start(0, function(_) _endSlide(index));
 			return;
 		}
 
@@ -362,17 +385,31 @@ class IntroState extends funkin.states.MusicBeatState
 
 		VideoManager.playCutscene(slide.asset, function()
 		{
+			// Guard against double-advance: _onVideoEnded (the signal safety-
+			// fallback below) may fire first on some platforms, clearing
+			// _videoPlaying before this callback runs.
+			if (!_videoPlaying) return;
 			_videoPlaying = false;
 			VideoManager.onVideoEnded.remove(_onVideoEnded);
-			_endSlide(index);
+			// Defer: never call _endSlide synchronously from a video callback —
+			// the callback may arrive inside a Lime event dispatch where Flixel's
+			// render cycle is already in progress.
+			new FlxTimer().start(0, function(_) _endSlide(_curSlide));
 		});
 	}
 
-	/** Safety callback for platforms where playCutscene's callback may not fire. */
+	/**
+	 * Safety fallback: fired when VideoManager dispatches onVideoEnded but the
+	 * playCutscene callback was never called (e.g. platforms where the
+	 * finishCallback pipe is unreliable).  Also acts as the first handler when
+	 * both fire, preventing a double _endSlide via the _videoPlaying guard.
+	 */
 	function _onVideoEnded():Void
 	{
+		if (!_videoPlaying) return; // already handled — don't double-advance
 		_videoPlaying = false;
 		VideoManager.onVideoEnded.remove(_onVideoEnded);
+		new FlxTimer().start(0, function(_) _endSlide(_curSlide));
 	}
 
 	// ── Static image ──────────────────────────────────────────────────────────
@@ -509,9 +546,13 @@ class IntroState extends funkin.states.MusicBeatState
 				var _pollTimer:FlxTimer = null;
 				_pollTimer = new FlxTimer().start(1 / 60, function(t:FlxTimer)
 				{
+					// FIX: the original condition was `finished == false` which
+					// evaluated done=true while the animation was STILL PLAYING,
+					// causing the fade-out to start immediately instead of waiting.
+					// Correct: done when finished IS true (or sprite was destroyed).
 					final done = (_funkinSprite == null)
 						|| (_funkinSprite.anim == null)
-						|| (_funkinSprite.anim.finished == false);
+						|| _funkinSprite.anim.finished;
 
 					if (done)
 					{
@@ -697,7 +738,7 @@ class IntroState extends funkin.states.MusicBeatState
 
 	function _goNext():Void
 	{
-		StateTransition.switchState(new TitleState());
+		StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('TitleState') ?? new TitleState());
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────

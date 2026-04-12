@@ -153,6 +153,12 @@ class ModSelectorState extends MusicBeatState {
 		_buildConfigTab();
 		_buildSystemTab();
 
+		#if (HSCRIPT_ALLOWED || (LUA_ALLOWED && linc_luajit))
+		funkin.scripting.StateScriptHandler.init();
+		funkin.scripting.StateScriptHandler.loadStateScripts('ModSelectorState', this);
+		funkin.scripting.StateScriptHandler.callOnScripts('onCreate', []);
+		#end
+
 		super.create();
 
 		// Posicionar cursor de lista al mod activo
@@ -167,6 +173,11 @@ class ModSelectorState extends MusicBeatState {
 			_showEmptyMessage();
 
 		_switchTab(0, true);
+
+		#if (HSCRIPT_ALLOWED || (LUA_ALLOWED && linc_luajit))
+		funkin.scripting.StateScriptHandler.refreshStateFields(this);
+		funkin.scripting.StateScriptHandler.callOnScripts('postCreate', []);
+		#end
 	}
 
 	inline function _sndScroll():Void
@@ -564,6 +575,9 @@ class ModSelectorState extends MusicBeatState {
 	// ─────────────────────────────────────────────────────────────────────────
 
 	override function update(elapsed:Float) {
+		#if (HSCRIPT_ALLOWED || (LUA_ALLOWED && linc_luajit))
+		funkin.scripting.StateScriptHandler.callOnScripts('onUpdate', [elapsed]);
+		#end
 		super.update(elapsed);
 
 		if (_inputCooldown > 0) {
@@ -607,6 +621,10 @@ class ModSelectorState extends MusicBeatState {
 			case 2:
 				_updateSystem();
 		}
+
+		#if (HSCRIPT_ALLOWED || (LUA_ALLOWED && linc_luajit))
+		funkin.scripting.StateScriptHandler.callOnScripts('onUpdatePost', [elapsed]);
+		#end
 	}
 
 	function _handleMouse():Void {
@@ -1277,10 +1295,15 @@ class ModSelectorState extends MusicBeatState {
 
 	function _goBack():Void {
 		#if cpp _stopVideo(); #end
-		StateTransition.switchState(new MainMenuState());
+		final target = funkin.scripting.ScriptBridge.resolveState('MainMenuState') ?? new MainMenuState();
+		StateTransition.switchState(target);
 	}
 
 	override function destroy() {
+		#if (HSCRIPT_ALLOWED || (LUA_ALLOWED && linc_luajit))
+		funkin.scripting.StateScriptHandler.callOnScripts('onDestroy', []);
+		funkin.scripting.StateScriptHandler.clearStateScripts();
+		#end
 		#if cpp _stopVideo(); #end
 		super.destroy();
 	}

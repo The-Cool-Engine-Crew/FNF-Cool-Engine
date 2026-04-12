@@ -643,7 +643,7 @@ class StoryMenuState extends funkin.states.MusicBeatState
 		{
 			FlxG.sound.play(Paths.sound('menus/cancelMenu'));
 			movedBack = true;
-			StateTransition.switchState(new MainMenuState());
+			StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('MainMenuState') ?? new MainMenuState());
 			return; // IMPORTANTE: Detener la ejecución aquí
 		}
 

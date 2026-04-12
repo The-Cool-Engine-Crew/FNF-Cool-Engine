@@ -13,6 +13,8 @@ import flixel.group.FlxSpriteGroup;
 import funkin.states.LoadingState;
 import funkin.transitions.StateTransition;
 import funkin.transitions.StickerTransition;
+import funkin.scripting.ScriptableState;
+import funkin.data.GlobalConfig;
 
 /**
  * ScriptBridge — puente entre HScript y el motor.
@@ -230,24 +232,52 @@ class ScriptBridge
 	public static inline function switchStateByName(name:String):Void
 		_switchStateByName(name);
 
+	/**
+	 * Construye una instancia de FlxState a partir de su nombre de clase,
+	 * aplicando primero los stateOverrides de GlobalConfig.
+	 *
+	 * Si existe un override para `name` en global.json, devuelve un
+	 * ScriptableState con el nombre del override en lugar del state nativo.
+	 *
+	 * Uso desde Haxe (para que los menus propios también respeten los overrides):
+	 *   StateTransition.switchState(ScriptBridge.resolveState('MainMenuState'));
+	 */
+	public static function resolveState(name:String):Null<FlxState>
+	{
+		// Verificar override primero
+		final overrideName = GlobalConfig.resolveStateOverride(name);
+		if (overrideName != null)
+		{
+			trace('[ScriptBridge] State override: "$name" → ScriptableState("$overrideName")');
+			return new ScriptableState(overrideName);
+		}
+		return _buildNativeState(name);
+	}
+
 	static function _switchStateByName(name:String):Void
 	{
-		final inst:FlxState = switch (name.toLowerCase())
-		{
-			case 'mainmenu'  | 'mainmenustate':   new funkin.menus.MainMenuState();
-			case 'freeplay'  | 'freeplaystate':   new funkin.menus.FreeplayState();
-			case 'story'     | 'storymenustate':  new funkin.menus.StoryMenuState();
-			case 'title'     | 'titlestate':      new funkin.menus.TitleState();
-			case 'options'   | 'optionsmenustate':new funkin.menus.OptionsMenuState();
-			case 'credits'   | 'creditsstate':    new funkin.menus.credits.CreditsState();
-			case 'play'      | 'playstate':       new funkin.gameplay.PlayState();
-			default:
-				trace('[ScriptBridge] Estado desconocido: "$name"');
-				null;
-		};
-
+		final inst = resolveState(name);
 		if (inst != null)
 			StateTransition.switchState(inst);
+		else
+			trace('[ScriptBridge] Estado desconocido: "$name"');
+	}
+
+	static function _buildNativeState(name:String):Null<FlxState>
+	{
+		return switch (name.toLowerCase())
+		{
+			case 'mainmenu'  | 'mainmenustate':    new funkin.menus.MainMenuState();
+			case 'freeplay'  | 'freeplaystate':    new funkin.menus.FreeplayState();
+			case 'story'     | 'storymenustate':   new funkin.menus.StoryMenuState();
+			case 'title'     | 'titlestate':       new funkin.menus.TitleState();
+			case 'options'   | 'optionsmenustate': new funkin.menus.OptionsMenuState();
+			case 'credits'   | 'creditsstate':     new funkin.menus.credits.CreditsState();
+			case 'play'      | 'playstate':        new funkin.gameplay.PlayState();
+			case 'charselector' | 'characterselectorstate': new funkin.menus.CharacterSelectorState();
+			case 'modselector'  | 'modselectorstate':       new funkin.menus.ModSelectorState();
+			default: null;
+		};
 	}
 
 	static function _resolveEase(name:String):Float->Float

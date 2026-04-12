@@ -94,7 +94,7 @@ class TitleState extends funkin.states.MusicBeatState
 		StateScriptHandler.callOnScripts('onCreate', []);
 		#end
 
-		var bg:FlxSprite = new FlxSprite().loadGraphic(Paths.getGraphic('menu/menuBGtitle'));
+		bg = new FlxSprite().loadGraphic(Paths.getGraphic('menu/menuBGtitle'));
 		var bgScale:Float = Math.max(FlxG.width / bg.width, FlxG.height / bg.height);
 		bg.scale.set(bgScale, bgScale);
 		bg.updateHitbox();
@@ -111,11 +111,11 @@ class TitleState extends funkin.states.MusicBeatState
 		}
 
 		#if FREEPLAY
-		StateTransition.switchState(new FreeplayState());
+		StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('FreeplayState') ?? new FreeplayState());
 		#elseif CHARTING
 		StateTransition.switchState(new ChartingState());
 		#elseif MAINMENU
-		StateTransition.switchState(new MainMenuState());
+		StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('MainMenuState') ?? new MainMenuState());
 		#else
 		titleData = _loadTitleData();
 		if (titleData != null && titleData.randomLines != null && titleData.randomLines.length > 0)
@@ -134,6 +134,11 @@ class TitleState extends funkin.states.MusicBeatState
 		StateScriptHandler.callOnScripts('postCreate', []);
 		#end
 	}
+
+	// FIX: promoted from local var inside create() to class field so that
+	// StateScriptHandler.refreshStateFields() / Type.getInstanceFields() can
+	// expose it to mod scripts.
+	var bg:FlxSprite;
 
 	var logoBl:FunkinSprite;
 	var gfDance:FunkinSprite;
@@ -275,14 +280,14 @@ class TitleState extends funkin.states.MusicBeatState
 					}
 					else
 					{
-						StateTransition.switchState(new MainMenuState());
+						StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('MainMenuState') ?? new MainMenuState());
 					}
 				}
 
 				http.onError = function(error)
 				{
 					trace('[TitleState] Error al comprobar versión: $error');
-					StateTransition.switchState(new MainMenuState());
+					StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('MainMenuState') ?? new MainMenuState());
 				}
 
 				http.request();

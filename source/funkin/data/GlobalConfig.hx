@@ -150,6 +150,61 @@ class GlobalConfig
 	/** Volumen de la música del menú de freeplay (0.0-1.0). -1 = usar default. */
 	public var freeplayMusicVolume:Float = -1.0;
 
+	// ─── State Overrides ─────────────────────────────────────────────────────────
+
+	/**
+	 * Reemplaza un state del engine por un ScriptableState personalizado.
+	 *
+	 * Ejemplo en global.json:
+	 * {
+	 *   "stateOverrides": {
+	 *     "TitleState":    "TitleMenu",
+	 *     "MainMenuState": "MainMenu",
+	 *     "FreeplayState": "MyFreeplay"
+	 *   }
+	 * }
+	 *
+	 * Cuando el engine intente navegar a "TitleState", en su lugar cargará
+	 * un ScriptableState('TitleMenu') cuyo script está en:
+	 *   assets/states/titlemenu/    o    mods/{mod}/states/titlemenu/
+	 *
+	 * Keys aceptadas (case-insensitive):
+	 *   TitleState, MainMenuState, FreeplayState, StoryMenuState,
+	 *   OptionsMenuState, CreditsState, CharacterSelectorState
+	 *
+	 * El valor es el nombre del ScriptableState a cargar (sin distinción de case).
+	 */
+	public var stateOverrides:Map<String, String> = new Map();
+
+	/**
+	 * Resuelve un nombre de state aplicando overrides del global.json.
+	 * Si hay un override definido devuelve el nombre del ScriptableState de destino,
+	 * si no existe override devuelve null (el engine usa el state nativo).
+	 *
+	 * Ejemplo:
+	 *   var override = GlobalConfig.resolveStateOverride('TitleState');
+	 *   if (override != null)
+	 *       StateTransition.switchState(new ScriptableState(override));
+	 *   else
+	 *       StateTransition.switchState(new TitleState());
+	 */
+	public static function resolveStateOverride(stateName:String):Null<String>
+	{
+		final cfg = instance;
+		if (cfg.stateOverrides == null || cfg.stateOverrides.iterator() == null) return null;
+
+		// Buscar primero case-sensitive, luego case-insensitive
+		if (cfg.stateOverrides.exists(stateName))
+			return cfg.stateOverrides.get(stateName);
+
+		final lower = stateName.toLowerCase();
+		for (key => value in cfg.stateOverrides)
+			if (key.toLowerCase() == lower)
+				return value;
+
+		return null;
+	}
+
 	// ─── Carga interna ───────────────────────────────────────────────────────────
 
 	function new() {}
@@ -212,6 +267,24 @@ class GlobalConfig
 
 			// ── Audio ─────────────────────────────────────────────────────────
 			if (raw.freeplayMusicVolume != null) cfg.freeplayMusicVolume = (raw.freeplayMusicVolume : Float);
+
+			// ── State Overrides ───────────────────────────────────────────────
+			// "stateOverrides": { "TitleState": "TitleMenu", "MainMenuState": "MainMenu" }
+			if (raw.stateOverrides != null)
+			{
+				cfg.stateOverrides = new Map();
+				for (key in Reflect.fields(raw.stateOverrides))
+				{
+					final value = Reflect.field(raw.stateOverrides, key);
+					if (value != null && Std.string(value).trim() != '')
+						cfg.stateOverrides.set(key, Std.string(value));
+				}
+				if (cfg.stateOverrides.iterator() != null)
+				{
+					final overrideList = [for (k => v in cfg.stateOverrides) '$k → $v'].join(', ');
+					trace('[GlobalConfig] State overrides: $overrideList');
+				}
+			}
 
 			final src = fromMod ? 'mod:${ModManager.activeMod}' : 'base';
 			trace('[GlobalConfig] Cargado ($src) — ui="${cfg.ui}" skin="${cfg.noteSkin}" splash="${cfg.noteSplash}" holdCover=${cfg.holdCoverEnabled}');
@@ -326,6 +399,20 @@ class GlobalConfig
 			if (middlescroll)      data.middlescroll  = true;
 			if (!noteSplashEnabled) data.noteSplashEnabled = false;
 			if (freeplayMusicVolume >= 0) data.freeplayMusicVolume = freeplayMusicVolume;
+
+			// stateOverrides — solo serializar si tiene entradas
+			if (stateOverrides != null)
+			{
+				var hasOverrides = false;
+				for (_ in stateOverrides) { hasOverrides = true; break; }
+				if (hasOverrides)
+				{
+					var overridesObj:Dynamic = {};
+					for (k => v in stateOverrides)
+						Reflect.setField(overridesObj, k, v);
+					data.stateOverrides = overridesObj;
+				}
+			}
 
 			File.saveContent(savePath, Json.stringify(data, null, '\t'));
 			trace('[GlobalConfig] Guardado en $savePath');

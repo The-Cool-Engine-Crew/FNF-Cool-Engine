@@ -2106,7 +2106,7 @@ class OptionsMenuState extends MusicBeatSubstate
 			}
 			else
 			{
-				StateTransition.switchState(new MainMenuState());
+				StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('MainMenuState') ?? new MainMenuState());
 			}
 		}
 

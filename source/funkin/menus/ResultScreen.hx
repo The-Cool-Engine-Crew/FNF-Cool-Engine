@@ -955,9 +955,9 @@ class ResultScreen extends FlxSubState {
 				});
 			} else {
 				if (PlayState.isStoryMode)
-					StateTransition.switchState(new funkin.menus.StoryMenuState());
+					StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('StoryMenuState') ?? new funkin.menus.StoryMenuState());
 				else
-					StickerTransition.start(function() StateTransition.switchState(new funkin.menus.FreeplayState()));
+					StickerTransition.start(function() StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('FreeplayState') ?? new funkin.menus.FreeplayState()));
 			}
 		});
 	}
