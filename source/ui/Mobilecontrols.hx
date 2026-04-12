@@ -36,7 +36,7 @@ class Mobilecontrols extends FlxSpriteGroup
 			case VIRTUALPAD_CUSTOM:
 				initVirtualPad(2);
 			case HITBOX:
-				_hitbox = new Hitbox();
+				_hitbox = new Hitbox(FlxG.width);
 				add(_hitbox);
 			case KEYBOARD:
 		}

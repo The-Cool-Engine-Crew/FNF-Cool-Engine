@@ -566,9 +566,11 @@ class LoadingState extends funkin.states.MusicBeatState {
 
 	static function getNextState(target:FlxState, stopMusic = false):FlxState {
 		#if NO_PRELOAD_ALL
-		var loaded = isSoundLoaded(getSongPath()) && (!PlayState.SONG.needsVoices || isSoundLoaded(getVocalPath()));
-		if (!loaded)
-			return new LoadingState(target, stopMusic);
+		if (PlayState.SONG != null) {
+			var loaded = isSoundLoaded(getSongPath()) && (!PlayState.SONG.needsVoices || isSoundLoaded(getVocalPath()));
+			if (!loaded)
+				return new LoadingState(target, stopMusic);
+		}
 		#end
 		if (stopMusic && FlxG.sound.music != null)
 			FlxG.sound.music.stop();

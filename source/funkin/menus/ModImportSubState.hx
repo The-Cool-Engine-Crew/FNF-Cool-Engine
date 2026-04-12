@@ -108,7 +108,7 @@ class ModImportSubState extends FlxSubState
 		final accent = new FlxSprite(px, py).makeGraphic(PW, 4, T.accent);
 		accent.scrollFactor.set(); add(accent);
 
-		// ── Título ────────────────────────────────────────────────────────────
+		// ── Title ────────────────────────────────────────────────────────────
 		final title = new FlxText(px, py + 12, PW, '⬆  IMPORT MOD');
 		title.setFormat(Paths.font('vcr.ttf'), 20, T.textPrimary, CENTER, OUTLINE, T.bgDark);
 		title.scrollFactor.set(); add(title);
@@ -116,10 +116,16 @@ class ModImportSubState extends FlxSubState
 		final sep = new FlxSprite(px + 16, py + 44).makeGraphic(PW - 32, 1, T.borderColor);
 		sep.scrollFactor.set(); add(sep);
 
-		// ── Descripción ───────────────────────────────────────────────────────
+		// ── Description ───────────────────────────────────────────────────────
+		#if mobileC
+		final desc = new FlxText(px + 20, py + 52, PW - 40,
+			'On mobile, copy your mod folder or .zip to the mods directory shown below.\n' +
+			'Supported: Psych Engine, Codename Engine, Base FNF.');
+		#else
 		final desc = new FlxText(px + 20, py + 52, PW - 40,
 			'Type a path, click [Browse], or drag a mod folder / .zip onto this window.\n' +
 			'Supported: Psych Engine, Codename Engine, Base FNF.');
+		#end
 		desc.setFormat(Paths.font('vcr.ttf'), 12, T.textSecondary, LEFT);
 		desc.wordWrap = true;
 		desc.scrollFactor.set(); add(desc);
@@ -132,29 +138,41 @@ class ModImportSubState extends FlxSubState
 		_pathInput.setFormat(Paths.font('vcr.ttf'), 14, T.textPrimary, LEFT);
 		_pathInput.scrollFactor.set(); add(_pathInput);
 
-		// ── Browse button ─────────────────────────────────────────────────────
+		// ── Browse button / indicator disponibility ───────────────────────
 		final bx = px + 16 + INP_W + 8;
+		#if mobileC
+		_browseBtnBg = new FlxSprite(bx, py + 88).makeGraphic(BTN_W, 36, T.bgPanelAlt);
+		_browseBtnBg.scrollFactor.set(); add(_browseBtnBg);
+		_browseBtnTxt = new FlxText(bx, py + 96, BTN_W, 'Browse');
+		_browseBtnTxt.setFormat(Paths.font('vcr.ttf'), 13, T.textDim, CENTER, NONE, 0x00000000);
+		_browseBtnTxt.scrollFactor.set(); add(_browseBtnTxt);
+		#else
 		_browseBtnBg = new FlxSprite(bx, py + 88).makeGraphic(BTN_W, 36, T.accent);
 		_browseBtnBg.scrollFactor.set(); add(_browseBtnBg);
-
 		_browseBtnTxt = new FlxText(bx, py + 96, BTN_W, 'Browse');
 		_browseBtnTxt.setFormat(Paths.font('vcr.ttf'), 13, T.bgDark, CENTER, OUTLINE, 0x00000000);
 		_browseBtnTxt.scrollFactor.set(); add(_browseBtnTxt);
+		#end
 
-		// ── Drop zone ─────────────────────────────────────────────────────────
-		// Outer border (2px thick simulated with a slightly larger sprite)
+		// ── Drop zone / instructions rute mobile ──────────────────────────
 		_dropZoneBorder = new FlxSprite(px + 16, py + 136)
 			.makeGraphic(PW - 32, 90, T.borderColor);
 		_dropZoneBorder.scrollFactor.set(); add(_dropZoneBorder);
 
-		// Inner fill (2px inset)
 		_dropZoneBg = new FlxSprite(px + 18, py + 138)
 			.makeGraphic(PW - 36, 86, T.bgPanelAlt);
 		_dropZoneBg.scrollFactor.set(); add(_dropZoneBg);
 
+		#if mobileC
+		_dropZoneTxt = new FlxText(px + 16, py + 148, PW - 32,
+			'Copy mods here:\n' + mods.ModManager.MODS_FOLDER);
+		_dropZoneTxt.setFormat(Paths.font('vcr.ttf'), 13, T.accent, CENTER);
+		_dropZoneTxt.wordWrap = true;
+		#else
 		_dropZoneTxt = new FlxText(px + 16, py + 164, PW - 32,
-			'📁  Drop mod folder or .zip here');
+			'\u{1F4C1}  Drop mod folder or .zip here');
 		_dropZoneTxt.setFormat(Paths.font('vcr.ttf'), 16, T.textDim, CENTER);
+		#end
 		_dropZoneTxt.scrollFactor.set(); add(_dropZoneTxt);
 
 		// ── Step / log ────────────────────────────────────────────────────────
@@ -175,8 +193,13 @@ class ModImportSubState extends FlxSubState
 		_statusTxt.setFormat(Paths.font('vcr.ttf'), 14, T.success, CENTER);
 		_statusTxt.scrollFactor.set(); add(_statusTxt);
 
+		#if mobileC
+		_hintTxt = new FlxText(px + 20, py + PH - 42, PW - 40,
+			'Tap path field to type   [Enter] Import   [Esc] Cancel');
+		#else
 		_hintTxt = new FlxText(px + 20, py + PH - 42, PW - 40,
 			'[Enter] Import   [B] Browse   [Esc] Cancel');
+		#end
 		_hintTxt.setFormat(Paths.font('vcr.ttf'), 12, T.textDim, CENTER);
 		_hintTxt.scrollFactor.set(); add(_hintTxt);
 
@@ -185,7 +208,10 @@ class ModImportSubState extends FlxSubState
 		{
 			_limeWindow = lime.app.Application.current;
 			_limeWindow.window.onTextInput.add(_onText);
+			// onDropFile solo existe y funciona en desktop — ignorar en móvil
+			#if !mobileC
 			_limeWindow.window.onDropFile.add(_onDropFile);
+			#end
 			FlxG.stage.addEventListener(openfl.events.KeyboardEvent.KEY_DOWN, _onKeyDown);
 		}
 		catch (_) {}
@@ -256,16 +282,17 @@ class ModImportSubState extends FlxSubState
 				_startImport();
 			}
 
+			#if !mobileC
 			if (FlxG.keys.justPressed.B)
 				_browseForFolder();
 
-			// Browse button click
 			if (FlxG.mouse.justPressed && _browseBtnBg != null
 				&& _browseBtnBg.overlapsPoint(FlxG.mouse.getWorldPosition(null), true, _camSub))
 			{
 				FlxG.sound.play(Paths.sound('menus/confirmMenu'));
 				_browseForFolder();
 			}
+			#end
 		}
 		else if (_phase == DONE && (FlxG.keys.justPressed.ENTER || FlxG.keys.justPressed.ESCAPE))
 		{
