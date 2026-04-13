@@ -9,8 +9,7 @@ import sys.FileSystem;
 
 using StringTools;
 
-typedef CharacterData =
-{
+typedef CharacterData = {
 	var path:String;
 	var animations:Array<AnimData>;
 	var isPlayer:Bool;
@@ -23,6 +22,7 @@ typedef CharacterData =
 	@:optional var isFlxAnimate:Bool;
 	@:optional var spritemapName:String;
 	@:optional var healthIcon:String;
+
 	/**
 	 * Clave del asset en el portal Discord Developer.
 	 * Si es null, se usa `healthIcon` como fallback.
@@ -30,10 +30,13 @@ typedef CharacterData =
 	 * (ej: charName 'monster-christmas' → discordIcon 'monster').
 	 */
 	@:optional var discordIcon:String;
+
 	@:optional var healthBarColor:String;
 	@:optional var cameraOffset:Array<Float>;
+
 	/** Offset de posición global del personaje (campo "position" de Psych). Se suma a la posición del stage. */
 	@:optional var positionOffset:Array<Float>;
+
 	@:optional var gameOverSound:String;
 	@:optional var gameOverMusic:String;
 	@:optional var gameOverEnd:String;
@@ -42,6 +45,7 @@ typedef CharacterData =
 	@:optional var deathAnimSuffix:String;
 
 	// ── Renderizado 3D ────────────────────────────────────────────────────────
+
 	/**
 	 * Tipo de renderizado alternativo.
 	 * Si se omite o es null, usa el renderizado 2D estándar (Sparrow/Atlas).
@@ -79,8 +83,7 @@ typedef CharacterData =
 
 // También modificar AnimData para incluir la hoja a la que pertenece:
 
-typedef AnimData =
-{
+typedef AnimData = {
 	var offsets:Array<Float>;
 	var name:String;
 	var looped:Bool;
@@ -89,6 +92,7 @@ typedef AnimData =
 	@:optional var indices:Array<Int>;
 	@:optional var assetPath:String;
 	@:optional var renderType:String;
+
 	/**
 	 * Voltear horizontalmente SOLO para esta animación, independiente del flipX global.
 	 * Útil cuando un sub-atlas tiene el sprite dibujado en la dirección contraria.
@@ -129,8 +133,7 @@ typedef AnimData =
 
 	duplicated even if the same character is instantiated multiple times.
  */
-class Character extends FunkinSprite
-{
+class Character extends FunkinSprite {
 	public var animOffsets:Map<String, Array<Dynamic>>;
 	public var debugMode:Bool = false;
 
@@ -156,9 +159,11 @@ class Character extends FunkinSprite
 	var danced:Bool = false;
 
 	/** Nombre de la animación del frame anterior — para detectar fin de anim. */
-	var _prevAnimName  :String = '';
+	var _prevAnimName:String = '';
+
 	/** Si la animación estaba terminada en el frame anterior. */
-	var _prevAnimDone  :Bool   = false;
+	var _prevAnimDone:Bool = false;
+
 	var _singAnimPrefix:String = "sing";
 	var _idleAnim:String = "idle";
 
@@ -221,21 +226,22 @@ class Character extends FunkinSprite
 	static var _precachePool:Map<String, Character> = [];
 
 	/** Invalida las entradas de un personaje específico (recarga de mod). */
-	public static function invalidateCharCache(charName:String):Void
-	{
+	public static function invalidateCharCache(charName:String):Void {
 		_dataCache.remove(charName);
 		_pathCache.remove(charName);
 		FunkinSprite.invalidateCache('char_sparrow:$charName');
 		FunkinSprite.invalidateCache('char_packer:$charName');
 		// Si había un dummy en el pool, destruirlo también
 		final pooled = _precachePool.get(charName);
-		if (pooled != null) { _precachePool.remove(charName); pooled.destroy(); }
+		if (pooled != null) {
+			_precachePool.remove(charName);
+			pooled.destroy();
+		}
 		trace('[Character] Cache invalidado para: $charName');
 	}
 
 	/** Limpia todos los cachés de Character, incluyendo el pool de precacheo. */
-	public static function clearCharCaches():Void
-	{
+	public static function clearCharCaches():Void {
 		releasePrecachePool();
 		_dataCache.clear();
 		_pathCache.clear();
@@ -247,10 +253,12 @@ class Character extends FunkinSprite
 	 * Llamar al terminar la canción (EventManager.clear) para liberar
 	 * la VRAM reservada por personajes que no llegaron a usarse.
 	 */
-	public static function releasePrecachePool():Void
-	{
+	public static function releasePrecachePool():Void {
 		var count = 0;
-		for (_ => dummy in _precachePool) { dummy.destroy(); count++; }
+		for (_ => dummy in _precachePool) {
+			dummy.destroy();
+			count++;
+		}
 		_precachePool.clear();
 		if (count > 0)
 			trace('[Character] Pool liberado: $count dummies destruidos.');
@@ -274,34 +282,30 @@ class Character extends FunkinSprite
 	 *
 	 * @param name  Nombre del personaje a precachear
 	 */
-	public static function precacheCharacter(name:String):Void
-	{
+	public static function precacheCharacter(name:String):Void {
 		// BUGFIX: se eliminó `|| _dataCache.exists(name)` de la guarda.
 		// Antes, si el JSON del personaje ya estaba en _dataCache (cargado en otra
 		// canción o como personaje activo), no se creaba el dummy → las texturas
 		// NO quedaban pinned en VRAM y podían ser liberadas por el GC de Flixel
 		// entre el precacheo y el evento Change Character → GPU re-upload → lag.
 		// Ahora siempre se crea el dummy salvo que ya exista uno en el pool.
-		if (name == null || name == '' || _precachePool.exists(name)) return;
+		if (name == null || name == '' || _precachePool.exists(name))
+			return;
 
-		try
-		{
-			final dummy    = new Character(-99999, -99999, name, false);
-			dummy.visible  = false;
-			dummy.active   = false;
+		try {
+			final dummy = new Character(-99999, -99999, name, false);
+			dummy.visible = false;
+			dummy.active = false;
 			_precachePool.set(name, dummy);
 			trace('[Character] Precacheado (pool pinned): "$name"');
-		}
-		catch (e:Dynamic)
-		{
+		} catch (e:Dynamic) {
 			trace('[Character] Precacheo fallido para "$name": $e');
 		}
 	}
 
 	// ── Constructor ───────────────────────────────────────────────────────────
 
-	public function new(x:Float, y:Float, ?character:String = "bf", ?isPlayer:Bool = false)
-	{
+	public function new(x:Float, y:Float, ?character:String = "bf", ?isPlayer:Bool = false) {
 		super(x, y);
 
 		animOffsets = new Map<String, Array<Dynamic>>();
@@ -311,13 +315,10 @@ class Character extends FunkinSprite
 
 		loadCharacterData(character);
 
-		if (characterData != null)
-		{
+		if (characterData != null) {
 			characterLoad(curCharacter);
 			trace('[Character] Cargado: $character');
-		}
-		else
-		{
+		} else {
 			trace('[Character] No se encontraron datos para "$character", usando bf');
 			loadCharacterData("bf");
 			characterLoad("bf");
@@ -348,20 +349,15 @@ class Character extends FunkinSprite
 
 	// ── Carga de datos con caché ──────────────────────────────────────────────
 
-	function loadCharacterData(character:String):Void
-	{
+	function loadCharacterData(character:String):Void {
 		// ── Caché hit ─────────────────────────────────────────────────────────
-		if (_dataCache.exists(character))
-		{
-			try
-			{
+		if (_dataCache.exists(character)) {
+			try {
 				// Deep-copy del JSON cacheado para aislar la instancia
 				characterData = cast haxe.Json.parse(_dataCache.get(character));
 				applyCharacterDataDefaults(characterData, character);
 				return;
-			}
-			catch (e:Dynamic)
-			{
+			} catch (e:Dynamic) {
 				// Si el JSON cacheado está corrupto, invalidar y recargar
 				trace('[Character] Cache corrupto para "$character", recargando...');
 				_dataCache.remove(character);
@@ -370,14 +366,12 @@ class Character extends FunkinSprite
 
 		// ── Caché miss: cargar desde disco ────────────────────────────────────
 		var jsonPath = _pathCache.get(character);
-		if (jsonPath == null)
-		{
+		if (jsonPath == null) {
 			jsonPath = mods.compat.ModCompatLayer.resolveCharacterPath(character);
 			_pathCache.set(character, jsonPath);
 		}
 
-		try
-		{
+		try {
 			var content:String;
 			if (FileSystem.exists(jsonPath))
 				content = File.getContent(jsonPath);
@@ -396,26 +390,20 @@ class Character extends FunkinSprite
 			if (mods.ModManager.developerMode)
 				funkin.debug.JsonWatcher.watch(jsonPath, 'character', character);
 			#end
-		}
-		catch (e:Dynamic)
-		{
+		} catch (e:Dynamic) {
 			trace('[Character] Error cargando datos de "$character": $e');
 			characterData = null;
 		}
 	}
 
 	/** Aplica valores derivados del CharacterData (healthIcon, barColor, etc.) */
-	function applyCharacterDataDefaults(data:CharacterData, character:String):Void
-	{
+	function applyCharacterDataDefaults(data:CharacterData, character:String):Void {
 		healthIcon = data.healthIcon != null ? data.healthIcon : character;
 		healthBarColor = data.healthBarColor != null ? FlxColor.fromString(data.healthBarColor) : healthBarColor;
 		cameraOffset = data.cameraOffset != null ? data.cameraOffset : cameraOffset;
-		// positionOffset se almacena en characterData.positionOffset y se aplica en PlayState/AnimationDebug
-		// after setPosition(), por lo que no se toca aquí (evitar double-apply).
 	}
 
-	function characterLoad(character:String):Void
-	{
+	function characterLoad(character:String):Void {
 		// ── Multi-atlas al estilo V-Slice ────────────────────────────────────
 		// Recolectamos todos los assetPath únicos por animación.
 		// Si alguna animación tiene su propio assetPath, construimos el atlas
@@ -430,16 +418,16 @@ class Character extends FunkinSprite
 		final subPaths:Array<String> = [];
 		var needsMultiAtlas:Bool = false;
 
-		for (animData in characterData.animations)
-		{
-			if (animData.assetPath == null || animData.assetPath == mainPath) continue;
-			if (subPaths.contains(animData.assetPath)) continue;
+		for (animData in characterData.animations) {
+			if (animData.assetPath == null || animData.assetPath == mainPath)
+				continue;
+			if (subPaths.contains(animData.assetPath))
+				continue;
 			subPaths.push(animData.assetPath);
 			needsMultiAtlas = true;
 		}
 
-		if (needsMultiAtlas)
-		{
+		if (needsMultiAtlas) {
 			// V-Slice style: main primero, subs después.
 			// IMPORTANTE: usamos resolveAtlasFolder() que ya sabe buscar en mods/ primero
 			// y luego en assets/. Así "tankman/basic" → "mods/base_game/characters/images/tankman/basic"
@@ -447,12 +435,14 @@ class Character extends FunkinSprite
 			// NO construimos el path a mano para evitar ignorar el mod activo.
 			final resolveCharAtlas = (p:String) -> {
 				// Si ya es un path absoluto resuelto (mods/ o assets/) lo usamos directo
-				if (p.startsWith('assets/') || p.startsWith('mods/') || p.startsWith('/')) return p;
+				if (p.startsWith('assets/') || p.startsWith('mods/') || p.startsWith('/'))
+					return p;
 				// Normalizar a clave relativa a characters/images/
 				final charKey = p.startsWith('characters/images/') ? p : 'characters/images/$p';
 				// resolveAtlasFolder busca en mods → assets y devuelve el path real con Animation.json
 				final resolved = animationdata.FunkinSprite.resolveAtlasFolder(charKey);
-				if (resolved != null) return resolved;
+				if (resolved != null)
+					return resolved;
 				// Fallback: devolver como estaba (loadMultiAnimateAtlas lo intentará con assets/)
 				return charKey;
 			};
@@ -460,9 +450,7 @@ class Character extends FunkinSprite
 			final allPaths:Array<String> = [resolveCharAtlas(mainPath)].concat(subPaths.map(resolveCharAtlas));
 			trace('[Character] Multi-atlas para "$curCharacter": ${allPaths.length} atlases → ${allPaths.join(", ")}');
 			loadMultiAnimateAtlas(allPaths);
-		}
-		else
-		{
+		} else {
 			// FunkinSprite auto-detecta Atlas → Sparrow → Packer
 			loadCharacterSparrow(mainPath);
 		}
@@ -472,12 +460,13 @@ class Character extends FunkinSprite
 		else
 			trace('[Character] Modo Sparrow/Packer para "$curCharacter"');
 
-		for (animData in characterData.animations)
-		{
+		for (animData in characterData.animations) {
 			var loop:Null<Bool> = animData.looped;
-			if (loop == null) animData.looped = false;
+			if (loop == null)
+				animData.looped = false;
 			var fr:Null<Float> = animData.framerate;
-			if (fr == null) animData.framerate = 24;
+			if (fr == null)
+				animData.framerate = 24;
 			addAnim(animData.name, animData.prefix, Std.int(animData.framerate), animData.looped,
 				(animData.indices != null && animData.indices.length > 0) ? animData.indices : null);
 
@@ -485,6 +474,12 @@ class Character extends FunkinSprite
 			if (!isAnimateAtlas && (fa == null || fa.numFrames == 0))
 				trace('[Character] WARN: "${animData.name}" 0 frames (prefix="${animData.prefix}")');
 
+			var offX:Null<Float> = animData.offsets[0];
+			var offY:Null<Float> = animData.offsets[1];
+			if (offX == null)
+				animData.offsets[0] = 0;
+			if (offY == null)
+				animData.offsets[1] = 0;
 			addOffset(animData.name, animData.offsets[0], animData.offsets[1]);
 		}
 
@@ -512,15 +507,14 @@ class Character extends FunkinSprite
 	}
 
 	/** Inicializa el companion Flx3DSprite para personajes con renderType = "model3d". */
-	function _initModel3D():Void
-	{
-		final modelName  = characterData.modelFile ?? curCharacter;
-		final mw     = characterData.modelWidth  != null ? characterData.modelWidth  : 320;
-		final mh     = characterData.modelHeight != null ? characterData.modelHeight : 400;
-		final mscale = characterData.modelScale  != null ? characterData.modelScale  : 1.0;
-		final mCamZ  = characterData.modelCamZ   != null ? characterData.modelCamZ   : 5.0;
-		final offX   = characterData.modelOffset != null && characterData.modelOffset.length > 0 ? characterData.modelOffset[0] : 0.0;
-		final offY   = characterData.modelOffset != null && characterData.modelOffset.length > 1 ? characterData.modelOffset[1] : 0.0;
+	function _initModel3D():Void {
+		final modelName = characterData.modelFile ?? curCharacter;
+		final mw = characterData.modelWidth != null ? characterData.modelWidth : 320;
+		final mh = characterData.modelHeight != null ? characterData.modelHeight : 400;
+		final mscale = characterData.modelScale != null ? characterData.modelScale : 1.0;
+		final mCamZ = characterData.modelCamZ != null ? characterData.modelCamZ : 5.0;
+		final offX = characterData.modelOffset != null && characterData.modelOffset.length > 0 ? characterData.modelOffset[0] : 0.0;
+		final offY = characterData.modelOffset != null && characterData.modelOffset.length > 1 ? characterData.modelOffset[1] : 0.0;
 
 		final spr = new funkin.graphics.scene3d.Flx3DSprite(x + offX - mw * 0.5, y + offY - mh * 0.5, mw, mh);
 		spr.scrollFactor.set(scrollFactor.x, scrollFactor.y);
@@ -528,17 +522,17 @@ class Character extends FunkinSprite
 		spr.scene.camera.target.set(0, 0, 0);
 		spr.scene.clearA = 0.0;
 
-		spr.onReady = function()
-		{
+		spr.onReady = function() {
 			final mesh = funkin.graphics.scene3d.Model3DLoader.loadForCharacter(modelName);
-			if (mesh == null)
-			{
+			if (mesh == null) {
 				trace('[Character] Modelo 3D "$modelName" no encontrado — usa un script para cargar el mesh manualmente.');
 				return;
 			}
 			final obj3d = new funkin.graphics.scene3d.Flx3DObject();
 			obj3d.mesh = mesh;
-			obj3d.scaleX = mscale; obj3d.scaleY = mscale; obj3d.scaleZ = mscale;
+			obj3d.scaleX = mscale;
+			obj3d.scaleY = mscale;
+			obj3d.scaleZ = mscale;
 			spr.scene.add(obj3d);
 			trace('[Character] Modelo 3D "$modelName" listo para "$curCharacter" (${mesh.triangleCount} tri).');
 		};
@@ -551,8 +545,7 @@ class Character extends FunkinSprite
 
 	// ── playAnim ──────────────────────────────────────────────────────────────
 
-	override public function playAnim(AnimName:String, Force:Bool = false, Reversed:Bool = false, Frame:Int = 0):Void
-	{
+	override public function playAnim(AnimName:String, Force:Bool = false, Reversed:Bool = false, Frame:Int = 0):Void {
 		// ── Reemplazos de animación ────────────────────────────────────────────
 		// Si hay un reemplazo registrado Y la animación destino existe, redirigir.
 		var _resolved = _animReplacements.get(AnimName);
@@ -561,13 +554,10 @@ class Character extends FunkinSprite
 		super.playAnim(AnimName, Force, Reversed, Frame);
 
 		// la animación en la lista.
-		if (characterData != null)
-		{
+		if (characterData != null) {
 			var _animFlipX:Bool = false; // sin override → usar _baseFlipX
-			for (anim in characterData.animations)
-			{
-				if (anim.name == AnimName)
-				{
+			for (anim in characterData.animations) {
+				if (anim.name == AnimName) {
 					_animFlipX = (anim.flipX == true);
 					break;
 				}
@@ -580,15 +570,14 @@ class Character extends FunkinSprite
 		// Si el flipX actual difiere del base, invertimos offsetX para que el
 		// desplazamiento visual resultante sea siempre el que el autor pretendía.
 		var daOffset = animOffsets.get(AnimName);
-		if (daOffset != null)
-		{
+
+		if (daOffset != null) {
 			var ox:Float = daOffset[0];
 			var oy:Float = daOffset[1];
 			if (this.flipX != _baseFlipX)
 				ox = -ox;
 			offset.set(ox, oy);
-		}
-		else
+		} else
 			offset.set(0, 0);
 
 		#if HSCRIPT_ALLOWED
@@ -608,8 +597,7 @@ class Character extends FunkinSprite
 	public function hasCurAnim():Bool
 		return animName != "";
 
-	public function isPlayingSpecialAnim():Bool
-	{
+	public function isPlayingSpecialAnim():Bool {
 		var name = getCurAnimName();
 		if (name == '' || isCurAnimFinished())
 			return false;
@@ -630,8 +618,7 @@ class Character extends FunkinSprite
 
 	// ── Update ────────────────────────────────────────────────────────────────
 
-	override function update(elapsed:Float)
-	{
+	override function update(elapsed:Float) {
 		super.update(elapsed);
 
 		if (!hasCurAnim())
@@ -649,8 +636,7 @@ class Character extends FunkinSprite
 		// Condición: la animación acaba de terminar (esta frame está done, la anterior no)
 		// O: la animación cambió mientras estaba terminada (animación no-looped completada)
 		#if HSCRIPT_ALLOWED
-		if (curAnimDone && (!_prevAnimDone || curAnimName != _prevAnimName))
-		{
+		if (curAnimDone && (!_prevAnimDone || curAnimName != _prevAnimName)) {
 			funkin.scripting.ScriptHandler._argsAnim[0] = curAnimName;
 			funkin.scripting.ScriptHandler._argsAnim[1] = null;
 			funkin.scripting.ScriptHandler.callOnCharacterScripts(curCharacter, 'onAnimEnd', funkin.scripting.ScriptHandler._argsAnim);
@@ -659,17 +645,15 @@ class Character extends FunkinSprite
 		_prevAnimName = curAnimName;
 		_prevAnimDone = curAnimDone;
 
-		if (!isPlayer)
-		{
-			if (curAnimName.startsWith(_singAnimPrefix))
-			{
+		if (!isPlayer) {
+			if (curAnimName.startsWith(_singAnimPrefix)) {
 				holdTimer += elapsed;
 				var dadVar:Float = (curCharacter == 'dad') ? 6.1 : 4.0;
-				if (holdTimer >= Conductor.stepCrochet * dadVar * 0.001)
-				{
+				if (holdTimer >= Conductor.stepCrochet * dadVar * 0.001) {
 					holdTimer = 0;
 					#if HSCRIPT_ALLOWED
-					if (!funkin.scripting.ScriptHandler.callOnCharacterScriptsReturn(curCharacter, 'overrideSingTimeout', funkin.scripting.ScriptHandler._argsEmpty))
+					if (!funkin.scripting.ScriptHandler.callOnCharacterScriptsReturn(curCharacter, 'overrideSingTimeout',
+						funkin.scripting.ScriptHandler._argsEmpty))
 						returnToIdle();
 					#else
 					returnToIdle();
@@ -680,12 +664,9 @@ class Character extends FunkinSprite
 					funkin.scripting.ScriptHandler.callOnCharacterScripts(curCharacter, 'onSingEnd', funkin.scripting.ScriptHandler._argsAnim);
 					#end
 				}
-			}
-			else
-			{
+			} else {
 				holdTimer = 0;
-				if (curAnimDone)
-				{
+				if (curAnimDone) {
 					// FIX: No llamar dance() cada frame cuando termina danceLeft/danceRight.
 					// danceOnBeat() avanza el ciclo en cada beat. Si llamamos dance() aquí,
 					// el personaje cicla danceLeft↔danceRight a 60 fps ignorando la música.
@@ -694,16 +675,13 @@ class Character extends FunkinSprite
 						dance();
 				}
 			}
-		}
-		else if (!debugMode)
-		{
-			if (curAnimName.startsWith(_singAnimPrefix))
-			{
+		} else if (!debugMode) {
+			if (curAnimName.startsWith(_singAnimPrefix)) {
 				holdTimer += elapsed;
-				if (holdTimer >= Conductor.stepCrochet * 4 * 0.001)
-				{
+				if (holdTimer >= Conductor.stepCrochet * 4 * 0.001) {
 					#if HSCRIPT_ALLOWED
-					if (!funkin.scripting.ScriptHandler.callOnCharacterScriptsReturn(curCharacter, 'overrideSingTimeout', funkin.scripting.ScriptHandler._argsEmpty))
+					if (!funkin.scripting.ScriptHandler.callOnCharacterScriptsReturn(curCharacter, 'overrideSingTimeout',
+						funkin.scripting.ScriptHandler._argsEmpty))
 						returnToIdle();
 					#else
 					returnToIdle();
@@ -715,15 +693,12 @@ class Character extends FunkinSprite
 					funkin.scripting.ScriptHandler.callOnCharacterScripts(curCharacter, 'onSingEnd', funkin.scripting.ScriptHandler._argsAnim);
 					#end
 				}
-			}
-			else
-			{
+			} else {
 				holdTimer = 0;
-				if (curAnimDone)
-				{
+				if (curAnimDone) {
 					if (curAnimName == 'firstDeath')
 						playAnim('deathLoop');
-					// FIX: igual que el branch opponent — no ciclar danceLeft↔danceRight
+						// FIX: igual que el branch opponent — no ciclar danceLeft↔danceRight
 					// a 60fps. Solo llamar returnToIdle() si la anim terminada no es dance.
 					else if (!curAnimName.startsWith('dance'))
 						returnToIdle();
@@ -734,20 +709,16 @@ class Character extends FunkinSprite
 
 	// ── Dance ─────────────────────────────────────────────────────────────────
 
-	public function returnToIdle():Void
-	{
+	public function returnToIdle():Void {
 		#if HSCRIPT_ALLOWED
 		if (funkin.scripting.ScriptHandler.callOnCharacterScriptsReturn(curCharacter, 'overrideDance', funkin.scripting.ScriptHandler._argsEmpty))
 			return;
 		#end
 		var hasDanceAnims = animOffsets.exists('danceLeft') && animOffsets.exists('danceRight');
-		if (hasDanceAnims)
-		{
+		if (hasDanceAnims) {
 			danced = !danced;
 			playAnim(danced ? 'danceRight' : 'danceLeft');
-		}
-		else
-		{
+		} else {
 			playAnim(_idleAnim);
 		}
 		#if HSCRIPT_ALLOWED
@@ -762,16 +733,17 @@ class Character extends FunkinSprite
 	 *
 	 * @param newName  Nombre del personaje a cargar (debe existir en assets/characters/)
 	 */
-	public function reloadCharacter(newName:String):Void
-	{
-		if (newName == null || newName == '') return;
+	public function reloadCharacter(newName:String):Void {
+		if (newName == null || newName == '')
+			return;
 
 		// ── GUARD: skip si ya es el personaje activo ──────────────────────────
 		// Evita destruir y reconstruir animaciones + recargar assets sin motivo.
-		if (newName == curCharacter) return;
+		if (newName == curCharacter)
+			return;
 
-		final savedX      = x;
-		final savedY      = y;
+		final savedX = x;
+		final savedY = y;
 		final savedPlayer = isPlayer;
 
 		// ── Liberar atlases del personaje anterior ANTES de cargar el nuevo ───
@@ -782,16 +754,15 @@ class Character extends FunkinSprite
 		animation.destroyAnimations();
 
 		curCharacter = newName;
-		loadCharacterData(newName);  // hit de _dataCache (O(1))
-		characterLoad(newName);      // hit de _frameCache con bitmap pinned → sin GPU stall
+		loadCharacterData(newName); // hit de _dataCache (O(1))
+		characterLoad(newName); // hit de _frameCache con bitmap pinned → sin GPU stall
 
 		// ── Liberar el dummy del pool DESPUÉS de que 'this' ya tomó los frames ─
 		// El dummy referenciaba los atlases con destroyOnNoUse=false para mantener
 		// el BitmapData en VRAM. Ahora 'this' los referencia a través de
 		// _usedAtlases, así que es seguro destruir el dummy sin perder la textura.
 		final pooled = Character._precachePool.get(newName);
-		if (pooled != null)
-		{
+		if (pooled != null) {
 			Character._precachePool.remove(newName);
 			pooled.destroy();
 		}
@@ -800,10 +771,8 @@ class Character extends FunkinSprite
 		setPosition(savedX, savedY);
 	}
 
-	public function dance():Void
-	{
-		if (!debugMode && !isPlayingSpecialAnim())
-		{
+	public function dance():Void {
+		if (!debugMode && !isPlayingSpecialAnim()) {
 			#if HSCRIPT_ALLOWED
 			if (funkin.scripting.ScriptHandler.callOnCharacterScriptsReturn(curCharacter, 'overrideDance', funkin.scripting.ScriptHandler._argsEmpty))
 				return;
@@ -811,19 +780,14 @@ class Character extends FunkinSprite
 
 			var hasDanceAnims = animOffsets.exists('danceLeft') && animOffsets.exists('danceRight');
 
-			switch (curCharacter)
-			{
+			switch (curCharacter) {
 				default:
-					if (hasDanceAnims)
-					{
-						if (!hasCurAnim() || !getCurAnimName().startsWith(_singAnimPrefix))
-						{
+					if (hasDanceAnims) {
+						if (!hasCurAnim() || !getCurAnimName().startsWith(_singAnimPrefix)) {
 							danced = !danced;
 							playAnim(danced ? 'danceRight' : 'danceLeft');
 						}
-					}
-					else
-					{
+					} else {
 						if (!hasCurAnim() || !getCurAnimName().startsWith(_singAnimPrefix))
 							playAnim(_idleAnim);
 					}
@@ -837,29 +801,24 @@ class Character extends FunkinSprite
 
 	// ── Ajustes específicos ───────────────────────────────────────────────────
 
-	function applyCharacterSpecificAdjustments():Void
-	{
-		switch (curCharacter)
-		{
+	function applyCharacterSpecificAdjustments():Void {
+		switch (curCharacter) {
 			case 'bf-pixel-enemy':
 				width -= 100;
 				height -= 100;
 		}
 	}
 
-	function flipAnimations():Void
-	{
+	function flipAnimations():Void {
 		if (isAnimateAtlas)
 			return;
 
-		if (animation.getByName('singRIGHT') != null && animation.getByName('singLEFT') != null)
-		{
+		if (animation.getByName('singRIGHT') != null && animation.getByName('singLEFT') != null) {
 			var oldRight = animation.getByName('singRIGHT').frames;
 			animation.getByName('singRIGHT').frames = animation.getByName('singLEFT').frames;
 			animation.getByName('singLEFT').frames = oldRight;
 		}
-		if (animation.getByName('singRIGHTmiss') != null && animation.getByName('singLEFTmiss') != null)
-		{
+		if (animation.getByName('singRIGHTmiss') != null && animation.getByName('singLEFTmiss') != null) {
 			var oldMiss = animation.getByName('singRIGHTmiss').frames;
 			animation.getByName('singRIGHTmiss').frames = animation.getByName('singLEFTmiss').frames;
 			animation.getByName('singLEFTmiss').frames = oldMiss;
@@ -871,8 +830,7 @@ class Character extends FunkinSprite
 	public function addOffset(name:String, x:Float = 0, y:Float = 0):Void
 		animOffsets[name] = [x, y];
 
-	public function getAnimationList():Array<String>
-	{
+	public function getAnimationList():Array<String> {
 		var list:Array<String> = [];
 		for (a in animOffsets.keys())
 			list.push(a);
@@ -885,8 +843,7 @@ class Character extends FunkinSprite
 	public function getOffset(name:String):Array<Dynamic>
 		return animOffsets.get(name);
 
-	public function updateOffset(name:String, x:Float, y:Float):Void
-	{
+	public function updateOffset(name:String, x:Float, y:Float):Void {
 		if (animOffsets.exists(name))
 			animOffsets.set(name, [x, y]);
 	}
@@ -926,29 +883,25 @@ class Character extends FunkinSprite
 	 * teniendo en cuenta los reemplazos activos.
 	 * Útil para scripts que quieren saber qué animación va a salir.
 	 */
-	public function resolveAnimName(animName:String):String
-	{
+	public function resolveAnimName(animName:String):String {
 		var _r = _animReplacements.get(animName);
 		return (_r != null && animOffsets.exists(_r)) ? _r : animName;
 	}
 
 	// ── Destruir ──────────────────────────────────────────────────────────────
 
-	override function destroy():Void
-	{
+	override function destroy():Void {
 		// Liberar los atlases cargados con destroyOnNoUse=false (al estilo V-Slice destroy())
 		releaseTrackedAtlases();
 
-		if (animOffsets != null)
-		{
+		if (animOffsets != null) {
 			animOffsets.clear();
 			animOffsets = null;
 		}
 		characterData = null;
 
 		// Destruir el companion 3D si existe
-		if (model3D != null)
-		{
+		if (model3D != null) {
 			model3D.destroy();
 			model3D = null;
 		}
