@@ -14,7 +14,7 @@ import flixel.tweens.FlxTween;
 import flixel.util.FlxColor;
 import flixel.FlxCamera;
 import funkin.gameplay.controls.Controls;
-import funkin.gameplay.controls.Control;
+import funkin.gameplay.controls.Controls.Control;
 import data.PlayerSettings;
 
 /**
@@ -257,7 +257,7 @@ class TouchMenuPlugin extends FlxBasic
 
 	// ── Helpers ──────────────────────────────────────────────────────────
 
-	inline function _isTouchActive(id:Int):Bool
+	function _isTouchActive(id:Int):Bool
 	{
 		for (t in FlxG.touches.list)
 			if (t != null && t.touchPointID == id)
@@ -388,10 +388,10 @@ class GestureInput implements IFlxInput
 	public var justReleased (get, never):Bool;
 	public var released     (get, never):Bool;
 
-	inline function get_justPressed():Bool  return _state == 1;
-	inline function get_pressed():Bool      return _state == 1;
-	inline function get_justReleased():Bool return _state == 2;
-	inline function get_released():Bool     return _state == 2 || _state == 0;
+	function get_justPressed():Bool  return _state == 1;
+	function get_pressed():Bool      return _state == 1;
+	function get_justReleased():Bool return _state == 2;
+	function get_released():Bool     return _state == 2 || _state == 0;
 
 	public function new() {}
 

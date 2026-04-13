@@ -514,7 +514,7 @@ class InputHandler
 	}
 
 	/** Devuelve la dirección (0-3) cuyo strum está dentro del radio de screenX, o -1. */
-	private inline function _getStrumDirFromX(screenX:Float):Int
+	private function _getStrumDirFromX(screenX:Float):Int
 	{
 		for (dir in 0...4)
 			if (Math.abs(screenX - strumTapPositions[dir]) <= strumTapRadius)

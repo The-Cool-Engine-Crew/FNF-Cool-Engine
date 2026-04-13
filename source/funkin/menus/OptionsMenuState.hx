@@ -2952,8 +2952,8 @@ class OptionsData
 		if (SaveData.data.vibration == null)
 			SaveData.data.vibration = true;
 
-		if (SaveData.data.strumTapEnabled == null)
-			SaveData.data.strumTapEnabled = false;
+		if (SaveData.data.strumTap == null)
+			SaveData.data.strumTap = false;
 		#end
 
 		if (SaveData.data.gamepadRumble == null)
