@@ -445,6 +445,11 @@ class Project extends HXProject
     setHaxedef("HXCPP_LARGE_BLOCKS");
     setHaxedef("HXCPP_CHECK_POINTER");
 
+    if (isMac())
+    {
+      setHaxedef("objc");
+    }
+
     if (!debug)
     {
       setHaxedef("FLX_NO_DEBUG");
