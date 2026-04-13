@@ -152,19 +152,20 @@ class InitAPI
 //  macOS  — NSAppearance via AppKit
 // ══════════════════════════════════════════════════════════════════════════════
 #elseif (mac && cpp)
+@:buildXml('
+<target id="haxe">
+    <compilerflag value="-ObjC++" if="mac" />
+    <vflag name="-framework" value="AppKit" if="mac" />
+</target>
+')
 @:cppFileCode('
 #import <AppKit/AppKit.h>
 ')
+@:objc
 class InitAPI
 {
-    /**
-     * En macOS siempre hay acceso a NSApp desde el arranque.
-     */
     public static inline function hasValidWindow():Bool return true;
 
-    /**
-     * Cambia la apariencia global de la app (Dark/Light Aqua).
-     */
     @:functionCode('
         if (@available(macOS 10.14, *)) {
             NSAppearanceName name = enable

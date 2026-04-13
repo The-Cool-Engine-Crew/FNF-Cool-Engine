@@ -96,7 +96,7 @@ using StringTools;
  *   getBFCharacter()                → return String (char id)
  *   getCustomStats()                → return Array<{label, value, color}>
  */
-class ResultScreen extends FlxSubState {
+class ResultScreen extends funkin.states.MusicBeatSubstate {
 	// ─── Visual elements ──────────────────────────────────────────────────────
 	public var bg:FlxSprite;
 	public var bgGradient:FlxSprite;
@@ -167,6 +167,10 @@ class ResultScreen extends FlxSubState {
 		StateScriptHandler.callOnScripts('onCreate', []);
 
 		super.create();
+
+		#if mobileC
+		addTouchMenuControls(true, false);
+		#end
 
 		rankConfig = RankConfig.load(_songId());
 		StateScriptHandler.callOnScripts('onRankConfigLoaded', [rankConfig]);

@@ -159,6 +159,10 @@ class ModSelectorState extends MusicBeatState {
 		funkin.scripting.StateScriptHandler.callOnScripts('onCreate', []);
 		#end
 
+		#if mobileC
+		addTouchMenuControls(true, false);
+		#end
+
 		super.create();
 
 		// Posicionar cursor de lista al mod activo

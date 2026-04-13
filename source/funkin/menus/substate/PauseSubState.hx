@@ -185,6 +185,10 @@ class PauseSubState extends funkin.states.MusicBeatSubstate {
 		FlxTween.tween(helpText, {alpha: 0.85}, 0.4, {ease: FlxEase.quartInOut, startDelay: 0.7});
 
 		switchMode(isCutsceneMode ? Cutscene : Standard);
+
+		#if mobileC
+		addTouchMenuControls(true, false);
+		#end
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────

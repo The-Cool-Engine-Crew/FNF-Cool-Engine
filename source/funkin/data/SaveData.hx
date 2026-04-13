@@ -215,6 +215,15 @@ typedef SaveDataFields =
 	@:optional var mobilePadLayout:Null<String>;
 	@:optional var touchIndicator:Null<Bool>;
 
+	/**
+	 * Strum Tap mode (mobile only).
+	 * If true, the player taps directly on the strum arrows
+	 * to hit the notes instead of using the Hitbox or VirtualPad.
+	 * This only takes effect when the active control scheme is Hitbox (mode 4).
+	 * Default: false.
+	 */
+	@:optional var strumTap:Null<Bool>;
+
 	/** Haptic vibration feedback enabled (mobile only). Default: true. */
 	@:optional var vibration:Null<Bool>;
 

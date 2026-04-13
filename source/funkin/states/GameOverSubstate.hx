@@ -118,7 +118,7 @@ class GameOverSubstate extends MusicBeatSubstate
 		ScriptHandler.callOnScripts('onGameOverCreate', [this]);
 
 		#if mobileC
-		addVirtualPad(NONE, A_B);
+		addTouchMenuControls(true, false);
 		#end
 	}
 

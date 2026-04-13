@@ -8,6 +8,7 @@ import flixel.FlxCamera;
 #if mobileC
 import ui.FlxVirtualPad;
 import flixel.input.actions.FlxActionInput;
+import funkin.util.plugins.mobile.TouchMenuPlugin;
 #end
 import funkin.data.Conductor;
 import data.PlayerSettings;
@@ -43,6 +44,9 @@ class MusicBeatSubstate extends FlxSubState
 
 	var trackedinputs:Array<FlxActionInput> = [];
 
+	/** Plugin de gestos táctiles. Se crea con addTouchMenuControls(). */
+	var _touchPlugin:TouchMenuPlugin = null;
+
 	public function addVirtualPad(?DPad:FlxDPadMode, ?Action:FlxActionMode) {
 		_virtualpad = new FlxVirtualPad(DPad, Action);
 		_virtualpad.alpha = 0.75;
@@ -60,14 +64,36 @@ class MusicBeatSubstate extends FlxSubState
 		controls.addAndroidBack();
 		#end
 	}
+
+	/**
+	 * Registra un TouchMenuPlugin que convierte gestos táctiles en inputs
+	 * de Controls (UP/DOWN/LEFT/RIGHT/ACCEPT/BACK).
+	 * @param includeBack      Si false, no se genera BACK con gestos.
+	 * @param includeLeftRight Si false, los swipes horizontales se ignoran.
+	 */
+	public function addTouchMenuControls(includeBack:Bool = true, includeLeftRight:Bool = true):Void
+	{
+		if (_touchPlugin != null) return;
+		_touchPlugin = new TouchMenuPlugin(includeBack, includeLeftRight);
+		_touchPlugin.bindToControls(controls);
+		add(_touchPlugin);
+	}
 	
 	override function destroy() {
 		controls.removeFlxInput(trackedinputs);
+		if (_touchPlugin != null)
+		{
+			_touchPlugin.destroy();
+			_touchPlugin = null;
+		}
 		_onSubDestroy();
 		super.destroy();
 	}
 	#else
 	public function addVirtualPad(?DPad, ?Action){};
+
+	/** No-op en plataformas no-mobile. */
+	public function addTouchMenuControls(includeBack:Bool = true, includeLeftRight:Bool = true):Void {}
 
 	override function destroy():Void
 	{

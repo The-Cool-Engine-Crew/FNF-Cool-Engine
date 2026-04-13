@@ -51,6 +51,10 @@ class GitarooPause extends funkin.states.MusicBeatState
 		changeThing();
 
 		super.create();
+
+		#if mobileC
+		addTouchMenuControls(true, true);
+		#end
 	}
 
 	override function update(elapsed:Float)

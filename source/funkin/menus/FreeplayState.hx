@@ -474,6 +474,7 @@ class FreeplayState extends funkin.states.MusicBeatState
 
 		#if mobileC
 		addVirtualPad(FULL, A_B);
+		addTouchMenuControls(true, true); // ↑↓←→ swipe + tap=ACCEPT + hold/edge=BACK
 		#end
 
 		super.create();

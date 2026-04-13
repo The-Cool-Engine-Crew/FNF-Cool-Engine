@@ -49,6 +49,8 @@ class MainMenuState extends funkin.states.MusicBeatState
 
 	var versionAPI:String = "0.4.4B";
 
+	var versionMobile:String = "0.0.2B";
+
 	public static var firstStart:Bool = true;
 
 	public static var finishedFunnyMove:Bool = false;
@@ -112,7 +114,7 @@ class MainMenuState extends funkin.states.MusicBeatState
 
 		persistentUpdate = persistentDraw = true;
 
-		bg = new FlxSprite().loadGraphic(Bitmap.fromFile(Paths.image('menu/menuBG')));
+		bg = new FlxSprite().loadGraphic(Paths.getGraphic('menu/menuBG'));
 		var bgScale:Float = Math.max(FlxG.width / bg.width, FlxG.height / bg.height) * 1.1;
 		bg.scale.set(bgScale, bgScale);
 		bg.scrollFactor.set(0.05,0.05);
@@ -176,16 +178,25 @@ class MainMenuState extends funkin.states.MusicBeatState
 		add(versionShit2);
 		
 		#if mobileC
-		// En móvil: texto "[ MODS ]" tappable en lugar de "Press Shift"
 		modShit = new FlxText(5, FlxG.height - 19, 0, '[ MODS ]', 12);
+		modShit.y -= 40;
 		#else
 		modShit = new FlxText(5, FlxG.height - 19, 0, 'Press Shift - Menu Mods - API v'+versionAPI, 12);
+		modShit.y -= 20;
 		#end
 		modShit.scrollFactor.set();
 		modShit.setFormat("VCR OSD Mono", 16, FlxColor.WHITE, LEFT, FlxTextBorderStyle.OUTLINE, FlxColor.BLACK);
 		modShit.antialiasing = SaveData.data.antialiasing;
-		modShit.y -= 20;
 		add(modShit);
+
+		#if mobileC
+		var mobileText:FlxText = new FlxText(5, FlxG.height - 19, 0, 'Mobile Port - v$versionMobile', 12);
+		mobileText.scrollFactor.set();
+		mobileText.setFormat("VCR OSD Mono", 16, FlxColor.WHITE, LEFT, FlxTextBorderStyle.OUTLINE, FlxColor.BLACK);
+		mobileText.antialiasing = SaveData.data.antialiasing;
+		modShit.y -= 20;
+		add(mobileText);
+		#end
 
 		// Etiqueta del mod activo — solo visible si hay uno cargado
 		final _activeMod = mods.ModManager.activeMod;
@@ -206,7 +217,7 @@ class MainMenuState extends funkin.states.MusicBeatState
 		changeItem();
 
 		#if mobileC
-		addVirtualPad(UP_DOWN, A_B);
+		addTouchMenuControls(true, false);
 		#end
 
 		#if HSCRIPT_ALLOWED

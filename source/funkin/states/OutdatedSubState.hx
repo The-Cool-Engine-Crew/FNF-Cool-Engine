@@ -112,6 +112,10 @@ class OutdatedSubState extends funkin.states.MusicBeatState
         // ── Fade in de todos los elementos ────────────────────────────────────
         for (obj in [header, versionInfo, sep, changelogLabel, changelog, controls])
             FlxTween.tween(obj, {alpha: 1}, 0.5, {ease: FlxEase.quadOut, startDelay: 0.15});
+
+        #if mobileC
+		addTouchMenuControls(true, false);
+		#end
     }
 
     override function update(elapsed:Float):Void

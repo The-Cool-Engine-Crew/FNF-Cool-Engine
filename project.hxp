@@ -132,7 +132,7 @@ class Project extends HXProject
   function configureAssets():Void
   {
     // Preload en todas las plataformas excepto web
-    var shouldPreload = !isWeb() && !isMobile();
+    var shouldPreload = !isWeb();
     if (shouldPreload) setHaxedef("PRELOAD_ALL"); else unsetHaxedef("PRELOAD_ALL");
     if (!shouldPreload) setHaxedef("NO_PRELOAD_ALL"); else unsetHaxedef("NO_PRELOAD_ALL");
 

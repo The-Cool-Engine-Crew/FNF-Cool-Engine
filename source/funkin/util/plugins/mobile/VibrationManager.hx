@@ -1,4 +1,4 @@
-package funkin.util;
+package funkin.util.plugins.mobile;
 
 import flixel.FlxG;
 import funkin.data.SaveData;

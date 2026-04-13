@@ -206,6 +206,11 @@ class CharacterSelectorState extends MusicBeatState
 		buildDeletePanel();
 
 		changeSelection();
+
+		#if mobileC
+		addTouchMenuControls(true, false); // ↑↓ swipe + tap=ACCEPT + hold/edge=BACK
+		#end
+
 		super.create();
 
 		#if (HSCRIPT_ALLOWED || (LUA_ALLOWED && linc_luajit))

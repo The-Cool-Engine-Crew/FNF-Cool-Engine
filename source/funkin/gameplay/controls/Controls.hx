@@ -270,7 +270,28 @@ class Controls extends FlxActionSet
 		action.add(input);
 		//action.addInput(button, state);
 	}
-	
+
+	/**
+	 * Vincula un GestureInput (IFlxInput sintético) a todos los
+	 * FlxActionDigitals que corresponden al Control indicado.
+	 *
+	 * Uso desde TouchMenuPlugin:
+	 *   controls.bindGestureInput(Control.UP,     myUpInput);
+	 *   controls.bindGestureInput(Control.ACCEPT, myAcceptInput);
+	 *
+	 * Los inputs quedan registrados en trackedinputs para que
+	 * removeFlxInput() los limpie al destruir el state.
+	 */
+	public function bindGestureInput(control:Control, gestureInput:flixel.input.IFlxInput):Void
+	{
+		inline forEachBound(control, function(action:FlxActionDigital, state:FlxInputState)
+		{
+			var wrapped = new FlxActionInputDigitalIFlxInput(gestureInput, state);
+			trackedinputs.push(wrapped);
+			action.add(wrapped);
+		});
+	}
+
 	public function setHitBox(hitbox:Hitbox) 
 	{
 		inline forEachBound(Control.UP, (action, state) -> addbutton(action, hitbox.buttonUp, state));

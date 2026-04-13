@@ -177,15 +177,18 @@ class TouchPointerPlugin extends FlxTypedSpriteGroup<TouchPointer>
 
 	override public function update(elapsed:Float):Void
 	{
+		if (!exists || !visible || !enabled) return;
+
 		super.update(elapsed);
 
 		for (touch in FlxG.touches.list)
 		{
 			if (touch == null) continue;
 
-			// Nuevo toque: limpiar punteros previos para ese frame
-			if (touch.justPressed)
-				_clearAll(false);
+			// NOTA: NO llamar _clearAll aquí. Antes se llamaba en justPressed,
+			// lo que eliminaba los punteros de otros dedos todavía activos.
+			// La limpieza de punteros huérfanos ya se gestiona al final del
+			// loop mediante el fade-out individual por touchId.
 
 			var pointer = _findById(touch.touchPointID);
 

@@ -147,15 +147,6 @@ class OptionsMenuState extends MusicBeatSubstate
 	var _scrollArrowUp:flixel.text.FlxText;
 	var _scrollArrowDown:flixel.text.FlxText;
 
-	// ── Touch input (only mobileC) ────────────────────────────────────────────
-	#if mobileC
-	var _touchStartX:Float  = 0;
-	var _touchStartY:Float  = 0;
-	var _touchPrevY:Float   = 0;
-	var _touchIsDrag:Bool   = false;
-	var _touchIsScroll:Bool = false;
-	#end
-
 	var warningText:FlxText;
 	var bindingIndicator:FlxText;
 
@@ -433,7 +424,7 @@ class OptionsMenuState extends MusicBeatSubstate
 
 		var helpText = new FlxText(footerBG.x + 20, footerBG.y + 12, footerBG.width - 40,
 			#if mobileC
-			"TAP Section: Change Section  |  TAP: Select  |  TAP 2x: Activate  |  SLIDE UP/DOWN: scroll  |  SLIDE L/R: Section  |  TAP Title/Footage: return",
+			"UP/DOWN Swipe: Navigate | LEFT/RIGHT Swipe: Change section | Tap: Confirm | Hold: Back",
 			#else
 			"LEFT/RIGHT : Tab  |  UP/DOWN : Navigate  |  ENTER : Toggle/Edit  |  A/D : Adjust  |  ESC : Back",
 			#end
@@ -489,159 +480,19 @@ class OptionsMenuState extends MusicBeatSubstate
 
 		super.create();
 
+		#if mobileC
+		// Sustituye handleTouchInput(): gestos → controls.UP_P / DOWN_P / LEFT_P / RIGHT_P / ACCEPT / BACK
+		// includeLeftRight=true para que ←→ cambien de tab igual que con teclado/gamepad.
+		addTouchMenuControls(true, true);
+		#end
+
 		#if HSCRIPT_ALLOWED
 		StateScriptHandler.refreshStateFields(this);
 		StateScriptHandler.callOnScripts('postCreate', []);
 		#end
 	}
 
-	#if mobileC
-	/**
-	 * Manage touch input according to the help prompts:
-	 * TAP section: Change tab | TAP: Select | TAP 2x: Activate
-	 * SWIPE UP/DOWN: Scroll | SWIPE L/R: Change tab | TAP Title/Footage: Back
-	 */
-	function handleTouchInput():Void
-	{
-		for (touch in FlxG.touches.list)
-		{
-			if (touch.justPressed)
-			{
-				_touchStartX = touch.screenX;
-				_touchStartY = touch.screenY;
-				_touchPrevY = touch.screenY;
-				_touchIsScroll = false;
-			}
 
-			if (touch.pressed)
-			{
-				var deltaY = touch.screenY - _touchPrevY;
-				var totalDeltaY = Math.abs(touch.screenY - _touchStartY);
-				var totalDeltaX = Math.abs(touch.screenX - _touchStartX);
-
-				// Detectar inicio de scroll vertical (SLIDE UP/DOWN)
-				if (!_touchIsScroll && totalDeltaY > 20 && totalDeltaY > totalDeltaX)
-					_touchIsScroll = true;
-
-				if (_touchIsScroll)
-				{
-					_optScrollY -= deltaY;
-					// Limitar el scroll para no salirse de la lista
-					var maxScroll = Math.max(0, (currentOptions.length * OPT_SPACING) - OPT_VISIBLE_H);
-					if (_optScrollY < 0) _optScrollY = 0;
-					if (_optScrollY > maxScroll) _optScrollY = maxScroll;
-
-					_updateScroll();
-				}
-				_touchPrevY = touch.screenY;
-			}
-
-			if (touch.justReleased)
-			{
-				var totalDeltaX = touch.screenX - _touchStartX;
-				var totalDeltaY = touch.screenY - _touchStartY;
-
-				if (!_touchIsScroll)
-				{
-					if (Math.abs(totalDeltaX) < 25 && Math.abs(totalDeltaY) < 25)
-					{
-						// 1. TAP Title o Footage (Volver)
-						if (touch.screenY < 80 || touch.screenY > FlxG.height - 100)
-						{
-							if (_editMode) {
-								_editMode = false;
-								_editModeIndicator.visible = false;
-								FlxG.sound.play(Paths.sound('menus/cancelMenu'), 0.7);
-							} else {
-								_exitOptionsMenu();
-							}
-							return;
-						}
-
-						if (touch.screenY > 80 && touch.screenY < 135)
-						{
-							var categoryWidth = (FlxG.width - 120) / categories.length;
-							var tabIdx = Std.int((touch.screenX - 60) / categoryWidth);
-							if (tabIdx >= 0 && tabIdx < categories.length && tabIdx != curCategory)
-							{
-								curCategory = tabIdx;
-								loadCategory(curCategory);
-								FlxG.sound.play(Paths.sound('menus/scrollMenu'), 0.7);
-								return;
-							}
-						}
-
-						if (touch.screenY >= OPT_START_Y && touch.screenY <= OPT_START_Y + OPT_VISIBLE_H)
-						{
-							var relativeY = touch.screenY - OPT_START_Y + _optScrollY;
-							var clickedIdx = Std.int(relativeY / OPT_SPACING);
-
-							if (clickedIdx >= 0 && clickedIdx < currentOptions.length)
-							{
-								if (curSelected == clickedIdx)
-								{
-									_triggerSelectedOption();
-								}
-								else
-								{
-									curSelected = clickedIdx;
-									updateOptionDisplay();
-									FlxG.sound.play(Paths.sound('menus/scrollMenu'), 0.7);
-								}
-							}
-						}
-					}
-					else if (Math.abs(totalDeltaX) > 60 && Math.abs(totalDeltaY) < 50)
-					{
-						if (totalDeltaX > 0)
-							curCategory--;
-						else
-							curCategory++;
-
-						if (curCategory < 0) curCategory = categories.length - 1;
-						if (curCategory >= categories.length) curCategory = 0;
-
-						loadCategory(curCategory);
-						FlxG.sound.play(Paths.sound('menus/scrollMenu'), 0.7);
-					}
-				}
-			}
-		}
-	}
-
-	function _triggerSelectedOption():Void
-	{
-		if (currentOptions.length == 0) return;
-		
-		final opt = currentOptions[curSelected];
-		if (opt.left != null || opt.right != null)
-		{
-			_editMode = true;
-			_editModeIndicator.text = "⟵ A / D ⟶ Adjusting: " + opt.name + "   (TAP Title/Footer to confirm)";
-			_editModeIndicator.visible = true;
-			FlxG.sound.play(Paths.sound('menus/scrollMenu'), 0.7);
-		}
-		else if (opt.toggle != null)
-		{
-			opt.toggle();
-			updateOptionDisplay();
-			FlxG.sound.play(Paths.sound('menus/scrollMenu'), 0.7);
-		}
-	}
-
-	function _exitOptionsMenu():Void
-	{
-		if (bindingState != "select") return;
-
-		FlxG.sound.play(Paths.sound('menus/cancelMenu'), 0.7);
-		if (fromPause) {
-			isOpenOptions = false;
-			close();
-		} else {
-			StateTransition.switchState(funkin.scripting.ScriptBridge.resolveState('MainMenuState') ?? new MainMenuState());
-		}
-	}
-	#end
 
 	#if HSCRIPT_ALLOWED
 	/**
@@ -901,7 +752,7 @@ class OptionsMenuState extends MusicBeatSubstate
 					SaveData.flush();
 					// Preview inmediato al activar
 					if (SaveData.data.gamepadRumble)
-						funkin.util.VibrationManager.vibrateConfirm();
+						funkin.util.plugins.mobile.VibrationManager.vibrateConfirm();
 				}
 			},
 			{
@@ -927,7 +778,7 @@ class OptionsMenuState extends MusicBeatSubstate
 						default:       "medium";
 					};
 					SaveData.flush();
-					funkin.util.VibrationManager.vibrateConfirm();
+					funkin.util.plugins.mobile.VibrationManager.vibrateConfirm();
 				},
 				right: function()
 				{
@@ -940,9 +791,9 @@ class OptionsMenuState extends MusicBeatSubstate
 						default:       "medium";
 					};
 					SaveData.flush();
-					funkin.util.VibrationManager.vibrateConfirm();
+					funkin.util.plugins.mobile.VibrationManager.vibrateConfirm();
 				},
-				toggle: function() { funkin.util.VibrationManager.vibrateConfirm(); }
+				toggle: function() { funkin.util.plugins.mobile.VibrationManager.vibrateConfirm(); }
 			}
 			#end
 		];
@@ -1246,6 +1097,20 @@ class OptionsMenuState extends MusicBeatSubstate
 				}
 			},
 			{
+				name: "Strum Tap",
+				get: function()
+				{
+					var on = SaveData.data.strumTap != null ? SaveData.data.strumTap : false;
+					return on ? "ON" : "OFF";
+				},
+				toggle: function()
+				{
+					var cur = SaveData.data.strumTap != null ? SaveData.data.strumTap : false;
+					SaveData.data.strumTap = !cur;
+					SaveData.flush();
+				}
+			},
+			{
 				name: "Pad Opacity",
 				get: function()
 				{
@@ -1324,7 +1189,7 @@ class OptionsMenuState extends MusicBeatSubstate
 					SaveData.flush();
 					// Feedback inmediato al activar
 					if (SaveData.data.vibration)
-						funkin.util.VibrationManager.vibrateConfirm();
+						funkin.util.plugins.mobile.VibrationManager.vibrateConfirm();
 				}
 			},
 			{
@@ -1381,9 +1246,9 @@ class OptionsMenuState extends MusicBeatSubstate
 		var intensity = SaveData.data.vibrationIntensity != null ? SaveData.data.vibrationIntensity : "medium";
 		switch (intensity)
 		{
-			case "light":  funkin.util.VibrationManager.vibrateTap();
-			case "strong": funkin.util.VibrationManager.vibrateMiss();
-			default:       funkin.util.VibrationManager.vibrateBeat();
+			case "light":  funkin.util.plugins.mobile.VibrationManager.vibrateTap();
+			case "strong": funkin.util.plugins.mobile.VibrationManager.vibrateMiss();
+			default:       funkin.util.plugins.mobile.VibrationManager.vibrateBeat();
 		}
 	}
 	#end
@@ -2087,10 +1952,6 @@ class OptionsMenuState extends MusicBeatSubstate
 			else
 				return;
 		}
-
-		#if mobileC
-		handleTouchInput();
-		#end
 
 		// ── Actualizar shaders de fondo ───────────────────────────────────────
 		if (fromPause && _gridShader != null)
@@ -3087,19 +2948,19 @@ class OptionsData
 		#if mobileC
 		if (SaveData.data.mobileAlpha == null)
 			SaveData.data.mobileAlpha = 0.75;
-		// mobilePadLayout se inicializa como null → Mobilecontrols usará posiciones default
+
 		if (SaveData.data.vibration == null)
 			SaveData.data.vibration = true;
-		if (SaveData.data.vibrationIntensity == null)
-			SaveData.data.vibrationIntensity = "medium";
+
+		if (SaveData.data.strumTapEnabled == null)
+			SaveData.data.strumTapEnabled = false;
 		#end
 
-		// ── Gamepad rumble (todas las plataformas con FLX_GAMEPADS) ──────────
 		if (SaveData.data.gamepadRumble == null)
 			SaveData.data.gamepadRumble = true;
 		// vibrationIntensity es compartida entre móvil y gamepad
 		if (SaveData.data.vibrationIntensity == null)
-			SaveData.data.vibrationIntensity = "medium";
+			SaveData.data.vibrationIntensity = "medium";	
 	}
 }
 

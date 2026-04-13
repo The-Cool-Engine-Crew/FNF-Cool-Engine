@@ -145,6 +145,10 @@ class CustomMenuState extends funkin.states.MusicBeatState
 
 		super.create();
 
+		#if mobileC
+		addTouchMenuControls(true, false);
+		#end
+
 		#if HSCRIPT_ALLOWED
 		StateScriptHandler.callOnScripts('postCreate', []);
 		#end

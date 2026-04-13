@@ -13,6 +13,7 @@ import flixel.FlxCamera;
 #if mobileC
 import ui.FlxVirtualPad;
 import flixel.input.actions.FlxActionInput;
+import funkin.util.plugins.mobile.TouchMenuPlugin;
 #end
 import funkin.gameplay.controls.Controls;
 import funkin.audio.SoundTray;
@@ -63,6 +64,9 @@ class MusicBeatState extends CoolUIState
 	var _virtualpad:FlxVirtualPad;
 	var trackedinputs:Array<FlxActionInput> = [];
 
+	/** Plugin de gestos táctiles. Se crea con addTouchMenuControls(). */
+	var _touchPlugin:TouchMenuPlugin = null;
+
 	public function addVirtualPad(?DPad:FlxDPadMode, ?Action:FlxActionMode)
 	{
 		_virtualpad = new FlxVirtualPad(DPad, Action);
@@ -82,10 +86,43 @@ class MusicBeatState extends CoolUIState
 		#end
 	}
 
+	/**
+	 * Sustituto directo de addVirtualPad para menús.
+	 *
+	 * Registra un TouchMenuPlugin que convierte gestos táctiles en inputs
+	 * de Controls (UP/DOWN/LEFT/RIGHT/ACCEPT/BACK), de modo que todo el
+	 * código de navegación (controls.UP_P, controls.ACCEPT, etc.) funciona
+	 * sin ningún cambio adicional.
+	 *
+	 * Gestos:
+	 *   ↑↓  Swipe vertical    → UP / DOWN
+	 *   ←→  Swipe horizontal  → LEFT / RIGHT  (útil en OptionsMenu: sliders / tabs)
+	 *   ☞   Tap rápido        → ACCEPT
+	 *   ←   Swipe desde borde derecho / hold largo → BACK
+	 *
+	 * @param includeBack      Si false, no se genera BACK con gestos.
+	 * @param includeLeftRight Si false, los swipes horizontales se ignoran.
+	 */
+	public function addTouchMenuControls(includeBack:Bool = true, includeLeftRight:Bool = true):Void
+	{
+		// Evitar dobles registros si el state llama al método más de una vez.
+		if (_touchPlugin != null) return;
+
+		_touchPlugin = new TouchMenuPlugin(includeBack, includeLeftRight);
+		_touchPlugin.bindToControls(controls);
+		add(_touchPlugin);
+	}
+
 	override function destroy()
 	{
 		_onDestroy();
 		controls.removeFlxInput(trackedinputs);
+		// Limpiar el plugin de gestos si existe
+		if (_touchPlugin != null)
+		{
+			_touchPlugin.destroy();
+			_touchPlugin = null;
+		}
 		// NOTE: Paths.clearCache() removed — it was called while the NEW state's
 		// assets were already loaded, destroying graphics that belong to the
 		// incoming state. FunkinCache's postStateSwitch signal handles cleanup.
@@ -93,6 +130,12 @@ class MusicBeatState extends CoolUIState
 	}
 	#else
 	public function addVirtualPad(?DPad, ?Action) {}
+
+	/**
+	 * No-op en plataformas no-mobile. La llamada es segura desde cualquier
+	 * state sin necesidad de un bloque #if mobileC.
+	 */
+	public function addTouchMenuControls(includeBack:Bool = true, includeLeftRight:Bool = true):Void {}
 
 	override function destroy():Void
 	{

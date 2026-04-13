@@ -192,6 +192,43 @@ class InputHandler
 	public var mobileDown:FlxButton  = null;
 	public var mobileUp:FlxButton    = null;
 	public var mobileRight:FlxButton = null;
+
+	/**
+	 * Estado held persistente para botones móviles (hitbox/vpad).
+	 * held[] se resetea cada frame con _rawHeld[] (teclado), por lo que sin
+	 * este array _updateMobileButton() detectaría un "justPressed" en cada
+	 * frame que el botón estuviera pulsado, rompiendo sustains y el buffer.
+	 */
+	private var _mobileHeld:Array<Bool> = [false, false, false, false];
+
+	// ── Strum Tap ─────────────────────────────────────────────────────────────
+
+	/**
+	 * Si true, el jugador toca sobre las flechas del strum para golpear notas
+	 * en lugar de usar los botones del Hitbox / VirtualPad.
+	 * Activado por PlayState cuando SaveData.data.strumTap == true.
+	 */
+	public var strumTapEnabled:Bool = false;
+
+	/**
+	 * Centro X en pantalla de cada strum del jugador (índice = dirección).
+	 * 0=LEFT  1=DOWN  2=UP  3=RIGHT
+	 * Asignado por PlayState.setupControllers() justo después de crear los strums.
+	 */
+	public var strumTapPositions:Array<Float> = [0.0, 0.0, 0.0, 0.0];
+
+	/**
+	 * Semiancho de la zona de toque alrededor del centro de cada strum.
+	 * Default 60 px — ligeramente mayor que el spacing típico (110/2 = 55)
+	 * para que sea cómodo de tocar sin ser impreciso.
+	 */
+	public var strumTapRadius:Float = 60.0;
+
+	/** Estado held persistente por dirección en strum-tap mode. */
+	private var _strumTapHeld:Array<Bool> = [false, false, false, false];
+
+	/** Mapa touchId → dirección para rastrear cada dedo en strum-tap mode. */
+	private var _strumTouchDir:Map<Int, Int> = new Map();
 	#end
 
 	// ── CONSTRUCTOR ───────────────────────────────────────────────────────────
@@ -345,14 +382,21 @@ class InputHandler
 		_updateMobileButton(mobileDown,  1);
 		_updateMobileButton(mobileUp,    2);
 		_updateMobileButton(mobileRight, 3);
+
+		if (strumTapEnabled)
+			_updateStrumTap();
 		#end
 	}
 
 	#if mobileC
 	/**
-	 * Actualiza el estado de un botón móvil, espejando el comportamiento de
-	 * los handlers de teclado (incluye dispatch de señales).
-	 * Inspirado en V-Slice's PreciseInputHandler.initializeHitbox().
+	 * Actualiza el estado de un botón móvil usando _mobileHeld[] como
+	 * referencia persistente entre frames.
+	 *
+	 * BUG ANTERIOR: usaba held[dir], que se resetea a _rawHeld[] (teclado)
+	 * al inicio de update(). Resultado: cada frame con el botón pulsado se
+	 * detectaba como "justPressed" de nuevo → onInputPressed en bucle,
+	 * sustains rotos, pressSongPos siempre sobreescrito.
 	 */
 	private inline function _updateMobileButton(btn:FlxButton, dir:Int):Void
 	{
@@ -360,25 +404,122 @@ class InputHandler
 
 		final isPressed = (btn.status == flixel.ui.FlxButton.PRESSED);
 
-		if (isPressed && !held[dir])
+		if (isPressed && !_mobileHeld[dir])
 		{
-			final tsNs = getCurrentTimestamp();
+			// Botón recién pulsado este frame
+			final tsNs        = getCurrentTimestamp();
+			_mobileHeld[dir]  = true;
 			pressed[dir]      = true;
+			held[dir]         = true;
 			_pressTimeNs[dir] = tsNs;
+			pressSongPos[dir] = Conductor.songPosition;
 			onInputPressed.dispatch({dir: dir, timestamp: tsNs, keyCode: 0});
 		}
-
-		if (isPressed)
-			held[dir] = true;
-
-		if (!isPressed && held[dir] && !_rawHeld[dir])
+		else if (isPressed)
 		{
-			final tsNs = getCurrentTimestamp();
+			// Botón mantenido — held debe seguir a true entre frames
+			held[dir] = true;
+		}
+
+		if (!isPressed && _mobileHeld[dir])
+		{
+			// Botón recién soltado este frame
+			final tsNs          = getCurrentTimestamp();
+			_mobileHeld[dir]    = false;
 			released[dir]       = true;
 			_releaseTimeNs[dir] = tsNs;
 			onInputReleased.dispatch({dir: dir, timestamp: tsNs, keyCode: 0});
 			if (onKeyRelease != null) onKeyRelease(dir);
 		}
+	}
+
+	/**
+	 * Strum Tap — el jugador toca directamente sobre la zona de cada strum.
+	 *
+	 * Cada dedo se registra en _strumTouchDir al hacer justPressed con la
+	 * dirección determinada por su X en pantalla. Mientras el dedo esté
+	 * activo esa dirección se mantiene held. Al soltar, se dispara release.
+	 *
+	 * La asignación de dirección es "lock-on-press": si el dedo baja sobre
+	 * LEFT y luego se desliza fuera de su zona, sigue siendo LEFT hasta
+	 * que se suelte. Esto evita falsos cambios de dirección durante sustains.
+	 */
+	private function _updateStrumTap():Void
+	{
+		var nowHeld:Array<Bool> = [false, false, false, false];
+
+		for (touch in FlxG.touches.list)
+		{
+			if (touch == null) continue;
+			final id = touch.touchPointID;
+
+			if (touch.justPressed)
+			{
+				final dir = _getStrumDirFromX(touch.screenX);
+				if (dir >= 0)
+					_strumTouchDir.set(id, dir);
+				else
+				{
+					_strumTouchDir.remove(id);
+					continue; // toque fuera de cualquier strum → ignorar
+				}
+			}
+
+			if (!_strumTouchDir.exists(id)) continue;
+			nowHeld[_strumTouchDir.get(id)] = true;
+
+			if (touch.justReleased)
+				_strumTouchDir.remove(id);
+		}
+
+		// Limpiar entradas de toques que ya no están activos (p.ej. forzados)
+		for (id in _strumTouchDir.keys())
+		{
+			var alive = false;
+			for (t in FlxG.touches.list)
+				if (t != null && t.touchPointID == id) { alive = true; break; }
+			if (!alive) _strumTouchDir.remove(id);
+		}
+
+		// Propagar a pressed/held/released (idéntico al patrón de _mobileHeld)
+		for (dir in 0...4)
+		{
+			final isPressed = nowHeld[dir];
+
+			if (isPressed && !_strumTapHeld[dir])
+			{
+				final tsNs         = getCurrentTimestamp();
+				_strumTapHeld[dir] = true;
+				pressed[dir]       = true;
+				held[dir]          = true;
+				_pressTimeNs[dir]  = tsNs;
+				pressSongPos[dir]  = Conductor.songPosition;
+				onInputPressed.dispatch({dir: dir, timestamp: tsNs, keyCode: 0});
+			}
+			else if (isPressed)
+			{
+				held[dir] = true;
+			}
+
+			if (!isPressed && _strumTapHeld[dir])
+			{
+				final tsNs           = getCurrentTimestamp();
+				_strumTapHeld[dir]   = false;
+				released[dir]        = true;
+				_releaseTimeNs[dir]  = tsNs;
+				onInputReleased.dispatch({dir: dir, timestamp: tsNs, keyCode: 0});
+				if (onKeyRelease != null) onKeyRelease(dir);
+			}
+		}
+	}
+
+	/** Devuelve la dirección (0-3) cuyo strum está dentro del radio de screenX, o -1. */
+	private inline function _getStrumDirFromX(screenX:Float):Int
+	{
+		for (dir in 0...4)
+			if (Math.abs(screenX - strumTapPositions[dir]) <= strumTapRadius)
+				return dir;
+		return -1;
 	}
 	#end
 

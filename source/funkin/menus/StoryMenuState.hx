@@ -344,6 +344,10 @@ class StoryMenuState extends funkin.states.MusicBeatState
 
 		trace("Line 165");
 
+		#if mobileC
+		addTouchMenuControls(true, true); // ↑↓←→ swipe + tap=ACCEPT + hold/edge=BACK
+		#end
+
 		super.create();
 
 		#if HSCRIPT_ALLOWED
