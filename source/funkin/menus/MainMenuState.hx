@@ -49,7 +49,7 @@ class MainMenuState extends funkin.states.MusicBeatState
 
 	var versionAPI:String = "0.4.4B";
 
-	var versionMobile:String = "0.0.2B";
+	var versionMobile:String = "0.0.3B";
 
 	public static var firstStart:Bool = true;
 
@@ -194,7 +194,7 @@ class MainMenuState extends funkin.states.MusicBeatState
 		mobileText.scrollFactor.set();
 		mobileText.setFormat("VCR OSD Mono", 16, FlxColor.WHITE, LEFT, FlxTextBorderStyle.OUTLINE, FlxColor.BLACK);
 		mobileText.antialiasing = SaveData.data.antialiasing;
-		modShit.y -= 20;
+		mobileText.y -= 20;
 		add(mobileText);
 		#end
 
