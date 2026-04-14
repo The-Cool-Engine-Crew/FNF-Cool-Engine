@@ -513,12 +513,18 @@ class Paths
 			{
 				snd = Sound.fromFile(path);
 			}
-			else
 			#end
-			if (OpenFlAssets.exists(path, SOUND))
-				snd = OpenFlAssets.getSound(path);
-			else if (OpenFlAssets.exists(path, MUSIC))
-				snd = OpenFlAssets.getSound(path);
+			// Bug 1 fix: on Android/iOS, FileSystem.exists() returns true for APK-embedded
+			// assets, but Sound.fromFile() can't open them as real OS paths and returns null.
+			// The old `else` meant the OpenFlAssets fallback was never reached in that case.
+			// Using `if (snd == null)` ensures the fallback always runs when fromFile failed.
+			if (snd == null)
+			{
+				if (OpenFlAssets.exists(path, SOUND))
+					snd = OpenFlAssets.getSound(path);
+				else if (OpenFlAssets.exists(path, MUSIC))
+					snd = OpenFlAssets.getSound(path);
+			}
 		}
 		catch (e:Dynamic)
 		{
@@ -1097,9 +1103,20 @@ class Paths
 			#if sys
 			if (FileSystem.exists(path))
 			{
-				final img = lime.graphics.Image.fromFile(path);
-				if (img != null)
-					return Bitmap.fromImage(img);
+				// Bug 2 fix: on Android/iOS, lime.graphics.Image.fromFile() can throw instead
+				// of returning null for APK-embedded assets that have no real OS path.
+				// Without this inner try-catch the outer catch swallowed the exception and
+				// skipped the OpenFlAssets fallback entirely, leaving the bitmap unloaded.
+				try
+				{
+					final img = lime.graphics.Image.fromFile(path);
+					if (img != null)
+						return Bitmap.fromImage(img);
+				}
+				catch (innerE:Dynamic)
+				{
+					trace('[Paths] _loadBitmapFromDisk fromFile failed "$path": $innerE — trying OpenFlAssets fallback');
+				}
 			}
 			#end
 			// BUGFIX (Bug 2 parte 2): la condición anterior excluía rutas de mod

@@ -55,14 +55,15 @@ import data.PlayerSettings;
 class TouchMenuPlugin extends FlxBasic
 {
 	// ── Configuración pública ───────────────────────────────────────────
-	public static var swipeMinDist:Float  = 55.0;
-	public static var swipeMaxTime:Float  = 0.45;
-	public static var tapMaxDist:Float    = 22.0;
-	public static var tapMaxTime:Float    = 0.32;
-	public static var holdBackTime:Float  = 0.70;
+	public static var swipeMinDist:Float  = 48.0;  // px mínimos usando maxDist (antes 55 del dist final)
+	public static var swipeMaxTime:Float  = 0.50;  // s máximos del swipe (más margen)
+	public static var tapMaxDist:Float    = 28.0;  // px máximos de jitter permitido en un tap (antes 22)
+	public static var tapMaxTime:Float    = 0.36;  // s máximos de un tap
+	public static var holdBackTime:Float  = 1.00;  // s para BACK por mantener (antes 0.70 — demasiado agresivo)
 	public static var backEdgeZone:Float  = 55.0;
 	/** Ratio mínimo para que un eje domine. |dy|/|dx| >= vertBias → vertical.
-	 *  |dx|/|dy| >= vertBias → horizontal. Diagonales ambiguas se ignoran. */
+	 *  Si el swipe no llega al ratio pero maxDist >= swipeMinDist, se resuelve
+	 *  al eje dominante de todas formas (evita swipes diagonales silenciados). */
 	public static var vertBias:Float      = 1.2;
 	public static var showHint:Bool       = true;
 
@@ -173,7 +174,8 @@ class TouchMenuPlugin extends FlxBasic
 				startY:    touch.screenY,
 				duration:  0.0,
 				maxDist:   0.0,
-				backFired: false
+				backFired: false,
+				gestFired: false
 			});
 			return;
 		}
@@ -196,6 +198,7 @@ class TouchMenuPlugin extends FlxBasic
 		 && data.maxDist  <  tapMaxDist)
 		{
 			data.backFired = true;
+			data.gestFired = true;
 			_backInput.fire();
 			_pulseHint("BACK ←");
 		}
@@ -221,21 +224,34 @@ class TouchMenuPlugin extends FlxBasic
 			return;
 		}
 
-		// ── Swipe (cualquier dirección) ────────────────────────────────
-		if (dist >= swipeMinDist && data.duration <= swipeMaxTime)
+		// ── Swipe ──────────────────────────────────────────────────────
+		// BUG ORIGINAL: usaba `dist` (distancia final dx/dy), que es pequeña si
+		// el dedo vuelve un poco al soltar. Ahora usamos `data.maxDist` — la
+		// distancia máxima alcanzada durante el gesto — para el umbral.
+		//
+		// Si hay mucho pull-back (dist < 40 % del máximo), la dirección del
+		// vector final es poco fiable; en ese caso también miramos data.maxDist
+		// para obtener la dirección aproximada (el gesto fue claramente un
+		// swipe aunque el dedo volvió).
+		if (data.maxDist >= swipeMinDist && data.duration <= swipeMaxTime)
 		{
 			var absDx = Math.abs(dx);
 			var absDy = Math.abs(dy);
 
-			// Eje vertical domina → UP / DOWN
+			// Si el dedo volvió mucho atrás, el vector final no refleja la
+			// dirección real del swipe. Descartamos como swipe sin caer en tap.
+			if (dist < swipeMinDist * 0.40)
+				return;
+
+			// Eje vertical domina con claridad → UP / DOWN
 			if (absDy >= absDx * vertBias)
 			{
-				if (dy < 0) { _upInput.fire();   _pulseHint("↑"); }
-				else        { _downInput.fire();  _pulseHint("↓"); }
+				if (dy < 0) { _upInput.fire();  _pulseHint("↑"); }
+				else        { _downInput.fire(); _pulseHint("↓"); }
 				return;
 			}
 
-			// Eje horizontal domina → LEFT / RIGHT
+			// Eje horizontal domina con claridad → LEFT / RIGHT
 			if (_includeLeftRight && absDx >= absDy * vertBias)
 			{
 				if (dx < 0) { _leftInput.fire();  _pulseHint("←"); }
@@ -243,11 +259,31 @@ class TouchMenuPlugin extends FlxBasic
 				return;
 			}
 
-			// Diagonal ambigua — ignorar para no confundir UP con LEFT, etc.
-			return;
+			// ── Diagonal (ningún eje supera el ratio) ─────────────────
+			// ANTES: se ignoraba en silencio → el gesto desaparecía.
+			// AHORA: resolvemos al eje dominante como fallback, para que un
+			// swipe ligeramente diagonal siga funcionando.
+			if (absDy >= absDx)
+			{
+				if (dy < 0) { _upInput.fire();  _pulseHint("↑"); }
+				else        { _downInput.fire(); _pulseHint("↓"); }
+			}
+			else if (_includeLeftRight)
+			{
+				if (dx < 0) { _leftInput.fire();  _pulseHint("←"); }
+				else        { _rightInput.fire(); _pulseHint("→"); }
+			}
+			else
+			{
+				// Sin LEFT/RIGHT disponible y el eje X domina → no hacer nada
+				// (no caer en tap, fue un intento de swipe horizontal)
+			}
+			return; // fue un intento de swipe — no convertir a tap
 		}
 
 		// ── Tap → ACCEPT ───────────────────────────────────────────────
+		// Usamos data.maxDist (no dist) para filtrar el jitter acumulado.
+		// Si el dedo se movió más de tapMaxDist en cualquier momento, no es tap.
 		if (data.maxDist <= tapMaxDist && data.duration <= tapMaxTime)
 		{
 			_acceptInput.fire();
@@ -428,5 +464,8 @@ private typedef TouchData =
 	duration:  Float,
 	maxDist:   Float,
 	backFired: Bool,
+	/** true si ya se clasificó un gesto (swipe o hold-back) — impide que el
+	 *  mismo toque también dispare ACCEPT al soltarse. */
+	gestFired: Bool,
 }
 #end

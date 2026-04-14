@@ -227,7 +227,9 @@ class TouchPointerPlugin extends FlxTypedSpriteGroup<TouchPointer>
 
 	private function _touchActive(id:Int):Bool
 	{
-		for (t in FlxG.touches.list) if (t.touchPointID == id) return true;
+		for (t in FlxG.touches.list)
+			if (t.touchPointID == id && !t.justReleased)
+				return true;
 		return false;
 	}
 
@@ -361,8 +363,8 @@ class TouchPointer extends FlxSprite
 
 	public function updateFromTouch(touch:FlxTouch, cam:FlxCamera):Void
 	{
-		var sx:Float = touch.screenX;
-		var sy:Float = touch.screenY;
+		var sx:Float = touch.x;
+		var sy:Float = touch.y;
 
 		x = sx - width  / 2;
 		y = sy - height / 2;

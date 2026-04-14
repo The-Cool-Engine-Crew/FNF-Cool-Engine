@@ -466,10 +466,16 @@ class InputHandler
 			}
 
 			if (!_strumTouchDir.exists(id)) continue;
-			nowHeld[_strumTouchDir.get(id)] = true;
+			final dir = _strumTouchDir.get(id);
 
 			if (touch.justReleased)
+			{
 				_strumTouchDir.remove(id);
+			}
+			else
+			{
+				nowHeld[dir] = true;
+			}
 		}
 
 		// Limpiar entradas de toques que ya no están activos (p.ej. forzados)

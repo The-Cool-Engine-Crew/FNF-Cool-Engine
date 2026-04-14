@@ -368,6 +368,55 @@ class CoreAudio extends FlxBasic
 	}
 
 	/**
+	 * Restaura el estado completo de audio al volver la app a primer plano.
+	 * Llamar desde Main._onMobileActivate() justo después del ACTIVATE event.
+	 *
+	 * ¿Por qué hace falta?
+	 * ─────────────────────
+	 * En Android/iOS el sistema puede suspender o destruir el contexto OpenAL
+	 * mientras la app está en segundo plano.  Cuando el OS dispara ACTIVATE:
+	 *
+	 *  1. Flixel reanuda FlxG.sound.list (SFX, vocales) vía onFocus().
+	 *  2. Flixel reanuda FlxG.sound.music (inst) directamente.
+	 *  3. PERO FlxG.sound.volume puede haber sido reseteado a 1.0 por el driver
+	 *     o por algún reset interno de Lime, ignorando nuestro masterVolume.
+	 *  4. En algunos dispositivos el resume() de Flixel llega antes de que el
+	 *     contexto OpenAL esté del todo listo → los sounds quedan silenciosos.
+	 *
+	 * Este método corrige los puntos 3 y 4: re-propaga masterVolume a Flixel,
+	 * re-aplica baseVolumes a todos los sounds registrados y, como fallback,
+	 * intenta reanudar la música de menú e inst/vocales si siguen pausados.
+	 */
+	public static function onMobileResume():Void
+	{
+		// ── 1. Re-sincronizar FlxG.sound.volume con masterVolume ─────────────
+		// Algunos drivers Android resetean FlxG.sound.volume a 1.0 al recrear
+		// el contexto OpenAL, ignorando lo que pusimos antes del background.
+		FlxG.sound.volume = muted ? 0.0 : masterVolume;
+		FlxG.sound.muted  = false;
+
+		// ── 2. Re-aplicar baseVolumes a todos los sounds registrados ─────────
+		// _applyTo() llama updateTransform() directamente → fuerza que el
+		// backend OpenAL reciba el valor correcto sin esperar al next frame.
+		_applyAll();
+
+		// ── 3. Fallback: reanudar música de menú ─────────────────────────────
+		// Flixel reanuda FlxG.sound.music vía onFocus(), pero en algunos
+		// dispositivos el resume() llega antes de que el contexto OpenAL esté
+		// listo → el sound queda en pausa silenciosa.  Reintentamos aquí.
+		if (menuTrack != '' && FlxG.sound.music != null && !FlxG.sound.music.playing)
+		{
+			try { FlxG.sound.music.resume(); } catch (_:Dynamic) {}
+		}
+
+		// ── 4. Fallback: reanudar inst + vocales ─────────────────────────────
+		// Flixel reanuda FlxG.sound.list (donde están las vocales) en onFocus().
+		// resumeAll() añade un segundo intento por si el primero llegó demasiado
+		// pronto (race condition contexto OpenAL en Android Vulkan / algunos ARM).
+		resumeAll();
+	}
+
+	/**
 	 * Resync: ajusta el tiempo de vocales al del instrumental.
 	 * Usa pause()+time+resume() → CERO FPS drop (no reinicia el backend).
 	 */

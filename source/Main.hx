@@ -407,7 +407,7 @@ class Main extends Sprite
 
 	#if mobileC
 	/**
-	 * Corrige la pantalla negra al volver a la app en Android/iOS.
+	 * Corrige la pantalla negra y el audio silenciado al volver a la app en Android/iOS.
 	 *
 	 * Cuando el OS destruye la superficie EGL (app en segundo plano) y la
 	 * recrea al volver, OpenFL debe re-enlazar el framebuffer y re-subir
@@ -417,14 +417,15 @@ class Main extends Sprite
 	 */
 	private function _onMobileActivate(_:openfl.events.Event):Void
 	{
-		// Forzar redraw completo para restaurar el framebuffer EGL
 		openfl.Lib.current.stage.invalidate();
-		// Re-asegurar framerate correcto (algunos drivers Android lo resetean)
+
 		setMaxFps(60);
-		// FIX: SDL puede resetear el swap interval al recrear la superficie EGL
-		// (destruccion/recreacion de contexto OpenGL al volver de segundo plano).
-		// Sin esto el VSync queda desactivado aunque el save lo tenga a true.
+
 		Main.applyVSync();
+
+		funkin.audio.CoreAudio.onMobileResume();
+
+		haxe.Timer.delay(function() openfl.Lib.current.stage.invalidate(), 200);
 	}
 	#end
 
