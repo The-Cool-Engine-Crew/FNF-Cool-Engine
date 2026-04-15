@@ -272,28 +272,7 @@ class Paths
 
 	public static function image(key:String):String
 	{
-		final path = resolve('images/$key.png', IMAGE);
-		#if sys
-		// Si el archivo existe en disco pero NO está almacenado realmente en los
-		// mapas internos del caché de OpenFL (ocurre con mods no recompilados,
-		// y también después de Assets.cache.clear() durante cambio de mod),
-		// lo registramos para que loadGraphic() / getSparrowAtlas() lo encuentren.
-		//
-		if (FileSystem.exists(path) && !OpenFlAssets.exists(path, IMAGE))
-		{
-			try
-			{
-				final bmp = _loadBitmapFromDisk(path);
-				if (bmp != null)
-					openfl.utils.Assets.cache.setBitmapData(path, bmp);
-			}
-			catch (e:Dynamic)
-			{
-				trace('[Paths] image() cache register failed for "$path": $e');
-			}
-		}
-		#end
-		return path;
+		return resolve('images/$key.png', IMAGE);
 	}
 
 	public static inline function imageCutscene(key:String):String
@@ -307,77 +286,83 @@ class Paths
 
 	public static function sound(key:String):String
 	{
-		final path = resolve('sounds/$key.$SOUND_EXT', SOUND);
 		#if sys
-		if (FileSystem.exists(path))
-		{
-			// Registrar en el cache de OpenFL si no está ya (mods sin recompilar)
-			if (!OpenFlAssets.exists(path, SOUND) && !OpenFlAssets.exists(path, MUSIC))
-			{
-				try
-				{
-					final snd = openfl.media.Sound.fromFile(path);
-					if (snd != null)
-						openfl.utils.Assets.cache.setSound(path, snd);
-				}
-				catch (e:Dynamic)
-				{
-				}
-			}
-			return path;
-		}
-		// Fallback: buscar directamente en assets/ para builds sin recompilar
-		final direct = 'assets/sounds/$key.$SOUND_EXT';
-		if (FileSystem.exists(direct))
-			return direct;
+		final modPath = ModManager.resolveInMod('sounds/$key.$SOUND_EXT');
+		if (modPath != null && FileSystem.exists(modPath))
+			return modPath;
+		final assetsPath = 'assets/sounds/$key.$SOUND_EXT';
+		if (FileSystem.exists(assetsPath))
+			return assetsPath;
 		#end
-		return path;
+		return resolve('sounds/$key.$SOUND_EXT', SOUND);
 	}
 
+	/**
+	 * Resuelve el path de un sonido de stage buscando en:
+	 *   1. Mod activo   → mods/{active}/stages/{key}.ogg
+	 *   2. Mods habilitados → mods/{mod}/stages/{key}.ogg  (por orden de instalación)
+	 *   3. Assets base  → assets/stages/{key}.ogg
+	 *
+	 * BUGFIX: usaba resolveWrite() que devuelve SIEMPRE la ruta del mod activo sin
+	 * comprobar si el archivo existe, por lo que el fallback a assets/ nunca ocurría.
+	 * Esto causaba que soundRandomStage() devolviera una ruta inexistente cuando el
+	 * sonido estaba en assets/ y no en el mod activo → silencio sin error.
+	 */
 	public static function soundStage(key:String):String
 	{
-		final path = resolveWrite('stages/$key.$SOUND_EXT');
 		#if sys
-		// Devolver el path si existe en disco aunque no esté en el manifest de OpenFL
-		if (FileSystem.exists(path))
-			return path;
+		// 1. Mod activo primero
+		if (ModManager.isActive())
+		{
+			final p = '${ModManager.modRoot()}/stages/$key.$SOUND_EXT';
+			if (FileSystem.exists(p))
+				return p;
+		}
+		// 2. Todos los mods habilitados
+		for (mod in ModManager.installedMods)
+		{
+			if (!ModManager.isEnabled(mod.id))
+				continue;
+			final p = '${ModManager.MODS_FOLDER}/${mod.id}/stages/$key.$SOUND_EXT';
+			if (FileSystem.exists(p))
+				return p;
+		}
+		// 3. Assets base
+		final assetsPath = 'assets/stages/$key.$SOUND_EXT';
+		if (FileSystem.exists(assetsPath))
+			return assetsPath;
 		#end
-		return path;
+		return 'assets/stages/$key.$SOUND_EXT';
 	}
 
-	public static inline function soundRandom(key:String, min:Int, max:Int):String
-		return sound(key + FlxG.random.int(min, max));
+	public static inline function soundRandom(key:String, min:Int, max:Int):Null<Sound>
+		return getSound(key + FlxG.random.int(min, max));
 
+	/**
+	 * Devuelve el path de un sonido aleatorio del stage actual.
+	 *
+	 * BUGFIX: ahora soundStage() resuelve correctamente con fallback a assets/,
+	 * por lo que este método funciona aunque el sonido esté en assets/ y no en el
+	 * mod activo — sin necesidad de recompilar.
+	 *
+	 * Uso: Paths.getSound(Paths.soundRandomStage("key", 1, 5))
+	 */
 	public static inline function soundRandomStage(key:String, min:Int, max:Int):String
 		return soundStage('${funkin.gameplay.PlayState.curStage}/sounds/' + key + FlxG.random.int(min, max));
 
 	public static function music(key:String):String
 	{
-		final path = resolve('music/$key.$SOUND_EXT', MUSIC);
+		// Igual que sound(): solo resuelve el path fisico sin registrar en Lime.
+		// getSound() / loadMusic() cargan con Sound.fromFile() que bypasea OpenFL.
 		#if sys
-		if (FileSystem.exists(path))
-		{
-			// Registrar en el cache de OpenFL si no está ya (mods sin recompilar)
-			if (!OpenFlAssets.exists(path, SOUND) && !OpenFlAssets.exists(path, MUSIC))
-			{
-				try
-				{
-					final snd = openfl.media.Sound.fromFile(path);
-					if (snd != null)
-						openfl.utils.Assets.cache.setSound(path, snd);
-				}
-				catch (e:Dynamic)
-				{
-				}
-			}
-			return path;
-		}
-		// Fallback: assets/ base
-		final direct = 'assets/music/$key.$SOUND_EXT';
-		if (FileSystem.exists(direct))
-			return direct;
+		final modPath = ModManager.resolveInMod('music/$key.$SOUND_EXT');
+		if (modPath != null && FileSystem.exists(modPath))
+			return modPath;
+		final assetsPath = 'assets/music/$key.$SOUND_EXT';
+		if (FileSystem.exists(assetsPath))
+			return assetsPath;
 		#end
-		return path;
+		return resolve('music/$key.$SOUND_EXT', MUSIC);
 	}
 
 	public static inline function font(key:String):String
@@ -423,8 +408,6 @@ class Paths
 	 * Loads and caches an FlxGraphic for the given key.
 	 *
 	 * • First searches PathsCache (cache hit → O(1), no I/O).
-	 * • On miss: loads from disk via Lime → creates FlxGraphic → uploads to GPU if
-	 * gpuCaching=true → releases image to RAM → caches in PathsCache.
 	 * • The resulting FlxGraphic has persist=true + destroyOnNoUse=false.
 	 *
 	 * @param key       Logical key of the asset (without the "images/" prefix, without ".png").
@@ -584,19 +567,6 @@ class Paths
 			if (FileSystem.exists(path))
 			{
 				snd.loadStream(path);
-				FlxG.sound.list.add(snd);
-				return snd;
-			}
-
-			// Asset embebido → volcar a tmp para hacer stream
-			final bytes = lime.utils.Assets.getBytes(path);
-			if (bytes != null)
-			{
-				final tmpDir = Sys.getEnv('TEMP') ?? Sys.getEnv('TMPDIR') ?? '/tmp';
-				final tmpFile = '$tmpDir/funkin_stream_${path.split('/').pop() ?? "audio"}';
-				if (!FileSystem.exists(tmpFile))
-					File.saveBytes(tmpFile, bytes);
-				snd.loadStream(tmpFile);
 				FlxG.sound.list.add(snd);
 				return snd;
 			}
@@ -1022,13 +992,30 @@ class Paths
 	}
 
 	/**
-	 * Limpia TODO: atlas + PathsCache.forceFullClear() + Flixel.
-	 * Sólo para cambio de mod o reinicio.
+	 * Clears EVERYTHING: atlas + PathsCache.forceFullClear() + Flixel + Lime cache.
+	 * Always call this when changing mods or restarting.
 	 */
 	public static function clearAllCaches():Void
 	{
 		clearCache();
-		cache.forceFullClear(); // incluye _modPathCache.clear() (fix mod-switch)
+		cache.forceFullClear();
+
+		try
+		{
+			final oflCache:openfl.utils.AssetCache = cast openfl.utils.Assets.cache;
+			@:privateAccess
+			{
+				if (oflCache.bitmapData != null)
+					for (k in oflCache.bitmapData.keys())
+						oflCache.removeBitmapData(k);
+				if (oflCache.sound != null)
+					for (k in oflCache.sound.keys())
+						oflCache.removeSound(k);
+			}
+			oflCache.clear();
+		}
+		catch (_:Dynamic) {}
+
 		clearFlxBitmapCache();
 		cache.clearModPathCache();
 	}
@@ -1103,15 +1090,11 @@ class Paths
 			#if sys
 			if (FileSystem.exists(path))
 			{
-				// Bug 2 fix: on Android/iOS, lime.graphics.Image.fromFile() can throw instead
-				// of returning null for APK-embedded assets that have no real OS path.
-				// Without this inner try-catch the outer catch swallowed the exception and
-				// skipped the OpenFlAssets fallback entirely, leaving the bitmap unloaded.
 				try
 				{
-					final img = lime.graphics.Image.fromFile(path);
-					if (img != null)
-						return Bitmap.fromImage(img);
+					final bmp = Bitmap.fromFile(path);
+					if (bmp != null)
+						return bmp;
 				}
 				catch (innerE:Dynamic)
 				{
@@ -1119,11 +1102,6 @@ class Paths
 				}
 			}
 			#end
-			// BUGFIX (Bug 2 parte 2): la condición anterior excluía rutas de mod
-			// (`mods/...`) del fallback OpenFlAssets, dejando sin registro en
-			// FunkinCache los assets cuya carga Lime falló silenciosamente.
-			// FunkinCache.getBitmapData() tiene su propio loader de disco que
-			// funciona para cualquier path literal → quitar la exclusión `mods/`.
 			if (!path.startsWith('/') && OpenFlAssets.exists(path, IMAGE))
 				return OpenFlAssets.getBitmapData(path);
 		}

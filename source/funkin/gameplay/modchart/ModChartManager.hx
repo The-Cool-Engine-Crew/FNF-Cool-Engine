@@ -1084,9 +1084,17 @@ class ModChartManager
 
 			data.events.sort((a, b) -> a.beat < b.beat ? -1 : (a.beat > b.beat ? 1 : 0));
 			pending = data.events.copy();
-			// Detectar si el script define onNotePosition para evitar overhead innecesario
+
+			// Detectar hooks opcionales
 			if (interp.variables.exists('onNotePosition'))
 				hasNotePositionHook = true;
+
+			// ── Aplicar eventos en beat 0 y estado actual inmediatamente ──────
+			// Esto garantiza que cualquier llamada a set() o addEventSimple(0,…)
+			// dentro de onCreate() se vea YA en el primer frame de PlayState,
+			// sin esperar al primer update().
+			fireReadyEvents(0.0);
+			applyAllStates();
 			trace('[ModChartManager] HScript cargado: "$path"');
 			return true;
 		}
@@ -1132,6 +1140,10 @@ class ModChartManager
 			// Con Lua activo habilitamos el hook: _callLua falla silenciosamente
 			// si onNotePosition no está definida, así que el overhead es mínimo.
 			hasNotePositionHook = true;
+
+			// ── Aplicar beat-0 inmediatamente (igual que en HScript) ──────────
+			fireReadyEvents(0.0);
+			applyAllStates();
 			trace('[ModChartManager] Lua cargado: "$path"');
 			return true;
 		}
@@ -1237,6 +1249,11 @@ class ModChartManager
 		s('WIN_ANCHOR_Y', ModEventType.WIN_ANCHOR_Y);
 		s('WIN_ANCHOR_MX', ModEventType.WIN_ANCHOR_MX);
 		s('WIN_ANCHOR_MY', ModEventType.WIN_ANCHOR_MY);
+		// Funciones de acceso directo (sin cola de eventos, sin beats)
+		var _self = this;
+		s('set', function(groupId:String, strumIdx:Int, type:String, value:Float):Void _self.setVal(groupId, strumIdx, type, value));
+		s('get', function(groupId:String, strumIdx:Int, type:String):Float return _self.getVal(groupId, strumIdx, type));
+		s('applyNow', function():Void _self.applyNow());
 		// Eases
 		s('LINEAR', ModEase.LINEAR);
 		s('QUAD_IN', ModEase.QUAD_IN);
@@ -1410,6 +1427,10 @@ class ModChartManager
 		s('Conductor', funkin.data.Conductor);
 		s('FlxG', flixel.FlxG);
 		s('Math', Math);
+		// Funciones de acceso directo (sin cola de eventos, sin beats)
+		s('set', function(groupId:String, strumIdx:Int, type:String, value:Float):Void self.setVal(groupId, strumIdx, type, value));
+		s('get', function(groupId:String, strumIdx:Int, type:String):Float return self.getVal(groupId, strumIdx, type));
+		s('applyNow', function():Void self.applyNow());
 	}
 
 	private inline function _callLua(func:String, args:Array<Dynamic>):Void
@@ -1747,6 +1768,57 @@ class ModChartManager
 				winState._beatPulse = 0;
 		}
 	}
+
+	// ─── API de escritura/lectura directa (sin cola de eventos) ──────────────
+
+	/**
+	 * Establece un valor de estado INMEDIATAMENTE, sin pasar por la cola de
+	 * eventos ni esperar ningún beat/step.  Ideal para usar en `onCreate`
+	 * cuando quieres que la flecha esté ya en cierta posición desde el primer
+	 * frame de PlayState.
+	 *
+	 * Uso HScript:
+	 *   function onCreate() {
+	 *       set("player", 0, SET_ABS_X, 640);   // flecha 0 centrada en X
+	 *       set("player", -1, SET_ABS_Y, 400);  // todos los strums, Y=400
+	 *   }
+	 *
+	 * Uso Lua:
+	 *   function onCreate()
+	 *       set("player", 0, SET_ABS_X, 640)
+	 *   end
+	 */
+	public function setVal(groupId:String, strumIdx:Int, type:ModEventType, value:Float):Void
+	{
+		if (ModChartHelpers.isWindowType(type))
+		{
+			setWindowValue(type, value);
+			return;
+		}
+		if (strumIdx == -1)
+		{
+			// -1 = todos los strums del grupo
+			for (i in 0...4)
+				setStateValue(groupId, i, type, value);
+		}
+		else
+		{
+			setStateValue(groupId, strumIdx, type, value);
+		}
+	}
+
+	/** Devuelve el valor actual de un parámetro de estado, sin depender de beats. */
+	public function getVal(groupId:String, strumIdx:Int, type:ModEventType):Float
+	{
+		if (ModChartHelpers.isWindowType(type))
+			return getWindowValue(type);
+		return getStateValue(groupId, strumIdx, type);
+	}
+
+	/** Fuerza la aplicación inmediata de todos los estados a los sprites.
+	 *  Útil al final de `onCreate` si has usado `set()` directamente. */
+	public function applyNow():Void
+		applyAllStates();
 
 	// ── Apply sprites ─────────────────────────────────────────────────────────
 
@@ -2197,6 +2269,69 @@ class ModChartManager
 	{
 		#if HSCRIPT_ALLOWED _callHScript('onStepHit', [step]); #end
 		#if (LUA_ALLOWED && linc_luajit) _callLua('onStepHit', [step]); #end
+	}
+
+	// ── Hooks adicionales del ciclo de vida ───────────────────────────────────
+
+	/**
+	 * Se llama cuando empieza el countdown (antes de que aparezcan los números).
+	 * Ideal para posicionar cosas ANTES de que el jugador vea la pantalla.
+	 *
+	 * Uso HScript:
+	 *   function onCountdownStart() {
+	 *       set("player", -1, SET_ABS_X, 640);
+	 *   }
+	 */
+	public function onCountdownStart():Void
+	{
+		#if HSCRIPT_ALLOWED _callHScript('onCountdownStart', []); #end
+		#if (LUA_ALLOWED && linc_luajit) _callLua('onCountdownStart', []); #end
+	}
+
+	/**
+	 * Se llama en cada tick del countdown (step = 0, 1, 2, 3 → 4 = "GO!").
+	 * Útil para efectos que reaccionen a "3-2-1-GO".
+	 */
+	public function onCountdownTick(step:Int):Void
+	{
+		#if HSCRIPT_ALLOWED _callHScript('onCountdownTick', [step]); #end
+		#if (LUA_ALLOWED && linc_luajit) _callLua('onCountdownTick', [step]); #end
+	}
+
+	/**
+	 * Se llama justo cuando la música arranca (después del countdown).
+	 */
+	public function onSongStart():Void
+	{
+		#if HSCRIPT_ALLOWED _callHScript('onSongStart', []); #end
+		#if (LUA_ALLOWED && linc_luajit) _callLua('onSongStart', []); #end
+	}
+
+	/**
+	 * Se llama cuando el jugador falla una nota.
+	 */
+	public function onNoteMiss(note:Dynamic):Void
+	{
+		#if HSCRIPT_ALLOWED _callHScript('onNoteMiss', [note]); #end
+		#if (LUA_ALLOWED && linc_luajit) _callLua('onNoteMiss', [note]); #end
+	}
+
+	/**
+	 * Se llama cuando el jugador pausa el juego.
+	 */
+	public function onPause():Void
+	{
+		#if HSCRIPT_ALLOWED _callHScript('onPause', []); #end
+		#if (LUA_ALLOWED && linc_luajit) _callLua('onPause', []); #end
+	}
+
+	/**
+	 * Se llama cuando el jugador reanuda el juego tras una pausa.
+	 */
+	public function onResume():Void
+	{
+		#if HSCRIPT_ALLOWED _callHScript('onResume', []); #end
+		#if (LUA_ALLOWED && linc_luajit) _callLua('onResume', []); #end
 	}
 
 	// ─── Destructor ───────────────────────────────────────────────────────────

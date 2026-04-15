@@ -1380,6 +1380,7 @@ class PlayState extends funkin.states.MusicBeatState {
 					cast(s, funkin.gameplay.notes.StrumNote).playAnim('static', true);
 			});
 
+		modChartManager?.onCountdownStart();
 		countdown.start(function() {});
 	}
 
@@ -1580,6 +1581,8 @@ class PlayState extends funkin.states.MusicBeatState {
 
 		if (scriptsEnabled)
 			ScriptHandler.callOnScripts('onSongStart', ScriptHandler._argsEmpty);
+
+		modChartManager?.onSongStart();
 	}
 
 	private function updatePlayerStrums():Void {
@@ -1783,6 +1786,7 @@ class PlayState extends funkin.states.MusicBeatState {
 			}
 		}
 		NoteSkinSystem.callSkinHook('onNoteMiss', [missedNote, direction]);
+		modChartManager?.onNoteMiss(missedNote);
 	}
 
 	private function onCPUNoteHit(note:Note):Void {
@@ -1909,6 +1913,8 @@ class PlayState extends funkin.states.MusicBeatState {
 					return;
 			}
 
+			modChartManager?.onPause();
+
 			if (FlxG.sound.music != null) {
 				FlxG.sound.music.pause();
 				_pauseAllVocals();
@@ -1941,6 +1947,8 @@ class PlayState extends funkin.states.MusicBeatState {
 
 			if (scriptsEnabled)
 				ScriptHandler.callOnScripts('onResume', ScriptHandler._argsEmpty);
+
+			modChartManager?.onResume();
 		}
 
 		super.closeSubState();
@@ -1956,6 +1964,10 @@ class PlayState extends funkin.states.MusicBeatState {
 			hook(curBeat);
 		currentStage?.beatHit(curBeat);
 		modChartManager?.onBeatHit(curBeat);
+
+		// ── Countdown tick (beats -4…-1 → step 0-3; beat 0 = "GO!" = step 4) ──
+		if (startingSong && curBeat >= -4 && curBeat <= 0)
+			modChartManager?.onCountdownTick(curBeat + 4);
 
 		if (scriptsEnabled)
 			ScriptHandler._argsBeat[0] = curBeat;

@@ -215,9 +215,11 @@ class TouchMenuPlugin extends FlxBasic
 	function _classifyGesture(data:TouchData, dx:Float, dy:Float, dist:Float):Void
 	{
 		// ── BACK desde borde derecho ───────────────────────────────────
+		var screenW:Float = FlxG.stage != null ? FlxG.stage.stageWidth : FlxG.width;
 		if (_includeBack
-		 && data.startX > FlxG.width - backEdgeZone
-		 && dx < -45)
+		 && data.startX > screenW - backEdgeZone
+		 && dx < -45
+		 && Math.abs(dx) > Math.abs(dy))
 		{
 			_backInput.fire();
 			_pulseHint("BACK ←");
