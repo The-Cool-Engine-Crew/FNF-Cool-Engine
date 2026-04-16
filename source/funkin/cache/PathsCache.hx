@@ -920,6 +920,27 @@ class PathsCache
 	function _loadSound(key:String, permanent:Bool):Null<Sound>
 	{
 		var sound:Sound = null;
+
+		// ── AssetOptimizer: disk-side OGG optimization ────────────────────────
+		// Equivalente al hook de optimizeBitmapData en _loadGraphic.
+		// Strippea el Vorbis Comment del .ogg antes de que OpenFL lo cargue en
+		// memoria → el audio decodificado ocupa lo mismo, pero el archivo en disco
+		// (y la copia interna del AssetCache) es más pequeño.
+		// Solo en targets nativos (#if sys); en HTML5 OpenFL nunca tiene una ruta
+		// física real accesible, así que no hacemos nada allí.
+		// La operación es idempotente: si el archivo ya no tiene metadatos,
+		// _optimizeOGG detecta que el resultado tiene el mismo tamaño y sale sin
+		// reescribir. El coste es O(file_size) lectura de disco, una sola vez.
+		#if sys
+		try
+		{
+			final physPath = openfl.utils.Assets.getPath(key);
+			if (physPath != null && physPath.endsWith('.ogg') && sys.FileSystem.exists(physPath))
+				funkin.assets.AssetOptimizer.optimizeOGG(physPath);
+		}
+		catch (_:Dynamic) {} // nunca bloquear la carga por un error de optimización
+		#end
+
 		try
 		{
 			if (OpenFLAssets.exists(key, openfl.utils.AssetType.SOUND)

@@ -172,6 +172,65 @@ class AssetOptimizer
 		#end
 	}
 
+	/**
+	 * Optimiza un único OGG in-place (strip Vorbis Comment).
+	 * @return Bytes ahorrados (positivo = redujo tamaño, 0 = ya óptimo o error).
+	 */
+	public static function optimizeOGG(path:String):Int
+	{
+		#if sys
+		if (!FileSystem.exists(path))
+			return 0;
+		return _optimizeOGG(path);
+		#else
+		return 0;
+		#end
+	}
+
+	/**
+	 * Optimiza todos los OGG de un directorio de sonidos (SFX).
+	 * Equivalente a `optimizeImages` pero para la carpeta `sounds/`.
+	 * @param dirPath   Carpeta a procesar (ej: "mods/mi_mod/sounds").
+	 * @param recursive Buscar en subcarpetas.
+	 */
+	public static function optimizeSounds(dirPath:String, recursive:Bool = true):OptimizerStats
+	{
+		#if sys
+		lastStats = new OptimizerStats();
+		lastStats.rootPath = dirPath;
+		if (FileSystem.exists(dirPath))
+			_walkDirectory(dirPath, function(p:String)
+			{
+				if (p.endsWith('.ogg'))
+					_optimizeOGG(p);
+			}, recursive);
+		trace('[AssetOptimizer] Sounds: ${lastStats.summary()}');
+		#end
+		return lastStats;
+	}
+
+	/**
+	 * Optimiza todos los OGG de un directorio de música.
+	 * Equivalente a `optimizeSounds` pero semánticamente apunta a la carpeta `music/`.
+	 * @param dirPath   Carpeta a procesar (ej: "mods/mi_mod/music").
+	 * @param recursive Buscar en subcarpetas.
+	 */
+	public static function optimizeMusic(dirPath:String, recursive:Bool = true):OptimizerStats
+	{
+		#if sys
+		lastStats = new OptimizerStats();
+		lastStats.rootPath = dirPath;
+		if (FileSystem.exists(dirPath))
+			_walkDirectory(dirPath, function(p:String)
+			{
+				if (p.endsWith('.ogg'))
+					_optimizeOGG(p);
+			}, recursive);
+		trace('[AssetOptimizer] Music: ${lastStats.summary()}');
+		#end
+		return lastStats;
+	}
+
 	// ── Runtime ───────────────────────────────────────────────────────────────
 
 	/**
@@ -1099,7 +1158,9 @@ class OptimizerStats
 	public var pngOptimized:Int = 0;
 	public var pngSkipped:Int = 0;
 	public var xmlOptimized:Int = 0;
+	/** OGGs optimizados (sounds + music combinados). */
 	public var oggOptimized:Int = 0;
+	/** OGGs saltados porque ya eran óptimos. */
 	public var oggSkipped:Int = 0;
 	public var bytesSaved:Int = 0;
 	public var errors:Int = 0;

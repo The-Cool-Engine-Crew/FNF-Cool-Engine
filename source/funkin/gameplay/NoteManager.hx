@@ -187,6 +187,26 @@ class NoteManager
 	 */
 	public var modManager:Null<ModChartManager> = null;
 
+	/**
+	 * Callback invocado al FINAL de update(), después de que NoteManager procesó todas
+	 * las notas (incluyendo restaurar note.visible para las que están en rango).
+	 *
+	 * FIX (doble render + sustains que no siguen notas):
+	 *   ModchartHoldMesh necesita ocultar sprites DESPUÉS de que NoteManager restaure
+	 *   note.visible=true, no antes. Si el mesh usaba su propio update() de Flixel para
+	 *   poner note.visible=false, y NoteManager se llamaba manualmente después de
+	 *   super.update() en PlayState, NoteManager restauraba visible=true y el sprite
+	 *   se dibujaba junto al mesh (doble render). Además, el check
+	 *   `if (!note.visible && !note.wasGoodHit) continue` en el mesh evaluaba el
+	 *   visible del frame anterior → notas temporalmente off-screen se saltaban y
+	 *   se renderizaban solo como sprite recto (sin curva de modchart).
+	 *
+	 *   Asignado por ModchartHoldMesh al establecer su propiedad noteManager.
+	 *   Llamado justo antes de renderer.updateBatcher() para que el pre-hide
+	 *   ocurra con note.visible ya actualizado este frame.
+	 */
+	public var onAfterUpdate:Null<Void->Void> = null;
+
 	/** Píxeles de margen más allá del borde de la pantalla que se usan como
 	 *  ventana de spawn y como base del cull distance. */
 	private static inline final SPAWN_PAD_PX:Float  = 300.0;
@@ -657,6 +677,14 @@ class NoteManager
 		if (renderer != null)
 			_updateHoldCoverPositions();
 
+		// FIX (doble render + sustains que no siguen notas con ModchartHoldMesh):
+		// Disparar DESPUÉS de que updateActiveNotes() restauró note.visible y ANTES
+		// de que el renderer haga el batch. ModchartHoldMesh registra aquí su
+		// _syncAfterNoteUpdate() para ocultar sprites curvados con el note.visible
+		// correcto de ESTE frame, eliminando la condición de carrera de orden.
+		if (onAfterUpdate != null)
+			onAfterUpdate();
+
 		if (renderer != null)
 		{
 			renderer.updateBatcher();
@@ -999,7 +1027,7 @@ class NoteManager
 								{
 									_sustainChainMissed[dir] = true;
 									// Marcar en un pase todas las piezas vivas de esta dirección
-									_markSustainChainMissed(dir);
+									_markSustainChainMissed(dir, note.strumsGroupIndex, note.mustPress);
 									if (onNoteMiss != null)
 										onNoteMiss(note);
 								}
@@ -1930,7 +1958,7 @@ class NoteManager
 	 *      no marque born-dead piezas que pertenezcan a cadenas posteriores.
 	 *   4. Marcar solo las piezas cuyo strumTime <= chainEnd.
 	 */
-	private function _markSustainChainMissed(dir:Int):Void
+	private function _markSustainChainMissed(dir:Int, strumsGroupIndex:Int, mustPress:Bool):Void
 	{
 		final smembers = sustainNotes.members;
 		final slen = smembers.length;
@@ -1940,11 +1968,15 @@ class NoteManager
 		// ANTES: paso 2 era un while/found que reescaneaba n veces → O(n²).
 		// AHORA: ordenar una vez O(k log k) y extender en un único paso lineal O(k),
 		// con k = piezas elegibles de esta dirección (típicamente ≪ n total).
+		// FIX (Bug Alpha CPU): filtrar también por mustPress y strumsGroupIndex para
+		// no marcar cadenas del oponente (u otros grupos) cuando el jugador falla.
 		var eligible:Array<Float> = [];
 		for (i in 0...slen)
 		{
 			final n = smembers[i];
 			if (n == null || !n.alive || !n.isSustainNote || n.noteData != dir || n.wasGoodHit || n.tooLate)
+				continue;
+			if (n.mustPress != mustPress || n.strumsGroupIndex != strumsGroupIndex)
 				continue;
 			eligible.push(n.strumTime);
 		}
@@ -1981,6 +2013,8 @@ class NoteManager
 			final n = smembers[i];
 			if (n == null || !n.alive || !n.isSustainNote || n.noteData != dir || n.wasGoodHit || n.tooLate)
 				continue;
+			if (n.mustPress != mustPress || n.strumsGroupIndex != strumsGroupIndex)
+				continue; // cadena de otro grupo/lado — no tocar
 			if (n.strumTime > chainEnd + gapThresh)
 				continue; // cadena futura — no tocar
 			n.tooLate = true;

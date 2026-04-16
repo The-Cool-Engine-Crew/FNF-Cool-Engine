@@ -1,7 +1,7 @@
 package funkin.gameplay.notes;
 
 /**
- * ModchartHoldMesh — v2
+ * ModchartHoldMesh — v2.3
  *
  * MEJORAS RESPECTO A v1:
  *
@@ -91,8 +91,43 @@ class ModchartHoldMesh extends FlxBasic {
 
 	// ── Estado ───────────────────────────────────────────────────────────────
 
-	/** Referencia al NoteManager activo. Asignar después de crear el NoteManager. */
-	public var noteManager:NoteManager;
+	/** Referencia al NoteManager activo. Asignar después de crear el NoteManager.
+	 *  Al asignar, registra automáticamente _syncAfterNoteUpdate en
+	 *  NoteManager.onAfterUpdate para garantizar el orden correcto de ejecución. */
+	public var noteManager(get, set):NoteManager;
+	var _noteManager:NoteManager = null;
+	inline function get_noteManager():NoteManager return _noteManager;
+	function set_noteManager(nm:NoteManager):NoteManager {
+		// Desregistrar del NoteManager anterior si era nuestro callback
+		if (_noteManager != null && _noteManager.onAfterUpdate == _syncAfterNoteUpdate)
+			_noteManager.onAfterUpdate = null;
+		_noteManager = nm;
+		// Registrar en el nuevo NoteManager para que nos llame al final de su update()
+		if (nm != null)
+			nm.onAfterUpdate = _syncAfterNoteUpdate;
+		return nm;
+	}
+
+	/**
+	 * Notas que este mesh renderiza este frame. Poblado en _syncAfterNoteUpdate()
+	 * (llamado desde NoteManager.onAfterUpdate al final de NoteManager.update()),
+	 * consumido en draw().
+	 *
+	 * FIX (Bug invisible v2.2): draw() itera _meshNotes directamente, independiente
+	 * de note.visible, para que las notas curvadas (ocultas con visible=false para
+	 * evitar doble render) sigan siendo procesadas por el mesh.
+	 *
+	 * FIX (doble render + sustains que no siguen — v2.3):
+	 *   La lógica de poblar _meshNotes y poner note.visible=false se ejecuta ahora
+	 *   en _syncAfterNoteUpdate(), disparado por NoteManager.onAfterUpdate DESPUÉS
+	 *   de que NoteManager restaure note.visible para las notas en rango.
+	 *   Antes estaba en update() de Flixel, que podía correr ANTES de
+	 *   NoteManager.update() si PlayState llamaba al NoteManager manualmente tras
+	 *   super.update() — causando que NoteManager volviera a poner visible=true y
+	 *   el sprite se dibujara junto al mesh (doble render), o que el check
+	 *   `!note.visible && !note.wasGoodHit` saltara notas válidas (sustains sin curva).
+	 */
+	var _meshNotes:Array<Note> = [];
 
 	// Buffers preallocados de camino (HOLD_SUBS+1 puntos)
 	var _ptsX:Array<Float>;
@@ -110,7 +145,7 @@ class ModchartHoldMesh extends FlxBasic {
 
 	public function new(?nm:NoteManager, ?cam:FlxCamera) {
 		super();
-		noteManager = nm;
+		noteManager = nm; // usa el setter que registra onAfterUpdate
 		if (cam != null)
 			cameras = [cam];
 
@@ -231,30 +266,48 @@ class ModchartHoldMesh extends FlxBasic {
 		return (-dist) / CLIP_FADE_PX;                        // gradiente lineal
 	}
 
-	// ── Update: pre-ocultar sprites curvados ─────────────────────────────────
+	// ── Update / Sync ─────────────────────────────────────────────────────────
 
 	/**
-	 * FIX v2.1 — Pre-ocultación de sprites en la fase de UPDATE.
+	 * FIX v2.3 — update() ya NO hace el pre-hide de sprites.
 	 *
-	 * Problema raíz:
-	 *   NoteManager.update() establece note.visible=true para sustains en rango.
-	 *   En la fase de draw() posterior, FlxGroup de sustainNotes renderiza el
-	 *   sprite CON shader + clipRect ANTES de que holdMesh.draw() lo oculte,
-	 *   produciendo el "clip zone con RGB pero el resto sin RGB".
+	 * Razón del cambio:
+	 *   En v2.2, update() ponía note.visible=false y llenaba _meshNotes. Esto funcionaba
+	 *   solo si update() corría DESPUÉS de NoteManager.update(). Cuando PlayState llama a
+	 *   NoteManager.update() manualmente después de super.update(), el orden era:
+	 *     1. ModchartHoldMesh.update() → visible=false, llena _meshNotes
+	 *     2. NoteManager.update()      → visible=true  (restaura notas en rango)
+	 *     3. FlxGroup.draw()           → dibuja sprite (visible=true) → doble render ✗
+	 *     4. ModchartHoldMesh.draw()   → dibuja mesh                  → doble render ✗
 	 *
-	 * Solución:
-	 *   Recorrer los sustains en update() (DESPUÉS de NoteManager.update()) y
-	 *   poner visible=false en los que irán al mesh. Cuando FlxGroup.draw()
-	 *   llegue, el sprite ya está oculto → un solo render via mesh (con shader ✓).
-	 *
-	 * Coste: ~0 (misma iteración que draw() pero sin GPU work). La lista
-	 * _curvedThisFrame se rellena aquí y se lee en draw() para no duplicar
-	 * la lógica de detección de curva.
+	 *   La lógica se movió a _syncAfterNoteUpdate(), registrado en
+	 *   NoteManager.onAfterUpdate y disparado al FINAL de NoteManager.update(),
+	 *   garantizando siempre el orden correcto independientemente de cómo PlayState
+	 *   organice sus llamadas.
 	 */
 	override public function update(elapsed:Float):Void {
 		super.update(elapsed);
+		// _meshNotes se reconstruye en _syncAfterNoteUpdate(), llamado desde
+		// NoteManager.onAfterUpdate. Limpiar aquí solo si el NoteManager no está
+		// asignado (sin manager, sin notas que procesar).
+		if (_noteManager == null)
+			_meshNotes.resize(0);
+	}
 
-		var nm = noteManager;
+	/**
+	 * Puebla _meshNotes y oculta sprites curvados.
+	 *
+	 * Llamado desde NoteManager.onAfterUpdate al final de NoteManager.update(),
+	 * DESPUÉS de que NoteManager haya restaurado note.visible para notas en rango.
+	 * Esto garantiza que:
+	 *   - note.visible refleja el estado real de ESTE frame (no el anterior).
+	 *   - Los sprites que el mesh va a renderizar están ocultos ANTES de FlxGroup.draw().
+	 *   - No hay doble render (sprite + mesh) ni sustains que ignoran la curva.
+	 */
+	function _syncAfterNoteUpdate():Void {
+		_meshNotes.resize(0);
+
+		var nm = _noteManager;
 		if (nm == null) return;
 
 		var mm = nm.modManager;
@@ -266,7 +319,13 @@ class ModchartHoldMesh extends FlxBasic {
 			if (note == null || !note.alive || !note.isSustainNote || note.tooLate)
 				continue;
 
-			// Solo notas actualmente visibles (o wasGoodHit que bypasean culling)
+			// CPU en middlescroll: NoteManager las oculta permanentemente; no entrar al mesh.
+			if (nm.middlescroll && !note.mustPress)
+				continue;
+
+			// Notas fuera del rango de culling de NoteManager (visible=false, no wasGoodHit):
+			// ahora este check usa el note.visible que NoteManager acaba de actualizar este
+			// frame (correcto), no el del frame anterior (que causaba saltar notas válidas).
 			if (!note.visible && !note.wasGoodHit)
 				continue;
 
@@ -280,28 +339,30 @@ class ModchartHoldMesh extends FlxBasic {
 			var strum:FlxSprite = nm.getStrumForDir(note.noteData, note.strumsGroupIndex, note.mustPress);
 			if (strum == null) continue;
 
-			// Solo pre-ocultar si habrá curva (= el mesh la va a renderizar)
+			// Solo procesar si hay curva activa
 			if (!_hasCurve(st, strum.angle)) continue;
 
-			// Ocultar sprite ANTES de que FlxGroup.draw() lo renderice.
-			// draw() ya lo volverá a poner visible=false igualmente; esto solo
-			// adelanta el ocultamiento para que el sprite no pinte encima del mesh.
+			// Ocultar sprite AHORA (después de que NoteManager actualizó visible este frame)
+			// para que FlxGroup.draw() no lo renderice. draw() usará _meshNotes, no note.visible.
 			note.visible = false;
+			_meshNotes.push(note);
 		}
 	}
 
 	// ── Draw loop ────────────────────────────────────────────────────────────
 
 	override public function draw():Void {
-		var nm = noteManager;
+		var nm = _noteManager;
 		if (nm == null) return;
 
 		var mm = nm.modManager;
 		if (mm == null || !mm.enabled) return;
 
+		// Sin notas con curva este frame → nada que hacer
+		if (_meshNotes.length == 0) return;
+
 		var songPos:Float   = Conductor.songPosition;
 		var stepC:Float     = Conductor.stepCrochet;
-		var allGroups       = nm.strumsGroups;
 		var baseDown:Bool   = nm.downscroll;
 		var baseSpeed:Float = nm.scrollSpeed;
 
@@ -309,31 +370,15 @@ class ModchartHoldMesh extends FlxBasic {
 		final halfStrum:Float = funkin.gameplay.notes.Note.swagWidth * 0.5;
 
 		for (cam in cameras) {
-			for (note in nm.sustainNotes.members) {
-				// ── Guards por nota ───────────────────────────────────────────
-
-				if (note == null || !note.alive)
-					continue;
-
-				if (!note.isSustainNote)
-					continue;
-
-				// tooLate: el sprite con alpha reducido da el feedback visual de fallo.
-				// No entrar al mesh para estos — conservar comportamiento v1.
-				if (note.tooLate)
-					continue;
-
-				// Culling de NoteManager — respetarlo solo si NO es wasGoodHit.
-				// Para wasGoodHit: NoteManager pone clipRect pero no pone visible=false
-				// (los mata cuando clipH<=0, que el guard alive ya cubre).
-				// Sin este bypass, las piezas activas perdían el mesh tan pronto
-				// NoteManager las marcaba "fuera de rango de culling extra".
-				if (!note.visible && !note.wasGoodHit)
+			for (note in _meshNotes) {
+				// Guards de seguridad: la nota puede haber muerto entre update() y draw()
+				if (!note.alive || note.tooLate)
 					continue;
 
 				// ── Resolver StrumState ───────────────────────────────────────
 
 				var groupId:String = note.mustPress ? "player" : "cpu";
+				var allGroups = nm.strumsGroups;
 				if (allGroups != null && note.strumsGroupIndex >= 2 && note.strumsGroupIndex < allGroups.length)
 					groupId = allGroups[note.strumsGroupIndex].id;
 
@@ -345,9 +390,12 @@ class ModchartHoldMesh extends FlxBasic {
 				if (strum == null)
 					continue;
 
-				// Guard: sin curva activa, dejar al sprite+clipRect (correcto para holds rectos)
-				if (!_hasCurve(st, strum.angle))
+				// Curva comprobada en update(); re-comprobar por si el mod cambió en este frame.
+				if (!_hasCurve(st, strum.angle)) {
+					// El mod se desactivó entre update() y draw(): restaurar sprite.
+					note.visible = true;
 					continue;
+				}
 
 				// ── Parámetros de scroll ──────────────────────────────────────
 
@@ -422,16 +470,17 @@ class ModchartHoldMesh extends FlxBasic {
 						continue;
 				}
 
-				// ── Ocultar sprite original ───────────────────────────────────
-				// Tanto para wasGoodHit (que ahora el mesh maneja) como para el resto.
-				// clipRect se queda (NoteManager lo setea) pero como visible=false
-				// el sprite no se renderiza → sin doble imagen.
-				note.visible = false;
+				// note.visible ya es false (update() lo puso antes de FlxGroup.draw()).
+				// No es necesario repetirlo aquí.
 
 				// ── Textura ───────────────────────────────────────────────────
 
 				var graphic = note.graphic;
 				if (graphic == null)
+					continue;
+
+				// Guard: frame puede ser null si la animación aún no está cargada
+				if (note.frame == null)
 					continue;
 
 				// UV normalizadas (frame.uv es lo que usa el renderer interno de FlxSprite)
@@ -485,8 +534,11 @@ class ModchartHoldMesh extends FlxBasic {
 					_uvVCen = (vT + vB) * 0.5;
 				}
 
-				// Ancho real en texels (sin padding transparente del sourceSize)
-				var halfW:Float = note.frame.frame.width * note.scale.x * 0.5;
+				// Ancho real renderizado (incluye padding sourceSize de TexturePacker si lo hay).
+				// ANTES: note.frame.frame.width * scale — ignoraba el sourceSize del atlas,
+				// causando quads más estrechos que el sprite real cuando había padding transparente.
+				// AHORA: note.width ya tiene width = frame.sourceSize.width * scale aplicado por Flixel.
+				var halfW:Float = note.width * 0.5;
 
 				// ── Color por vértice (NUEVO en v2) ───────────────────────────
 				//

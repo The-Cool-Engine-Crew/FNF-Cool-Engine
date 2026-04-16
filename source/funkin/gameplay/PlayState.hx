@@ -1391,7 +1391,11 @@ class PlayState extends funkin.states.MusicBeatState {
 	override public function update(elapsed:Float) {
 		if (scriptsEnabled) {
 			ScriptHandler._argsUpdate[0] = elapsed;
-			ScriptHandler.callOnScripts('onUpdate', ScriptHandler._argsUpdate);
+			// Use callOnNonStageScripts here — Stage.update is the sole owner of
+			// dispatching onUpdate/onUpdatePost to stage scripts (via
+			// callOnStageScripts). Calling the full callOnScripts here would
+			// cause stage scripts to receive the event twice per frame.
+			ScriptHandler.callOnNonStageScripts('onUpdate', ScriptHandler._argsUpdate);
 		}
 
 		if (elapsed > 0.2)
@@ -1504,7 +1508,8 @@ class PlayState extends funkin.states.MusicBeatState {
 		if (scriptsEnabled && !paused) {
 			EventManager.update(Conductor.songPosition);
 			ScriptHandler._argsUpdatePost[0] = elapsed;
-			ScriptHandler.callOnScripts('onUpdatePost', ScriptHandler._argsUpdatePost);
+			// Same rationale as onUpdate above — stage scripts handled by Stage.update.
+			ScriptHandler.callOnNonStageScripts('onUpdatePost', ScriptHandler._argsUpdatePost);
 		}
 	}
 

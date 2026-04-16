@@ -1585,7 +1585,23 @@ class Stage extends FlxTypedGroup<FlxBasic>
 	override public function update(elapsed:Float):Void
 	{
 		if (scriptsLoaded)
+		{
+			// ── Bug-fix: primitive PlayState vars were snapshot once at script-load time.
+			// Bool/Int/Float copies in HScript never reflect later state changes, so the
+			// shortcut names (paused, inCutscene, health…) would silently lie to scripts.
+			// Sync them here, just before firing onUpdate, so stage scripts always see the
+			// live values for the current frame.  The `playState` object reference is
+			// already live — this only affects the primitive shortcuts.
+			final ps = funkin.gameplay.PlayState.instance;
+			if (ps != null)
+			{
+				ScriptHandler.setOnStageScripts('paused',     ps.paused);
+				ScriptHandler.setOnStageScripts('inCutscene', ps.inCutscene);
+				ScriptHandler.setOnStageScripts('health',     ps.health);
+				ScriptHandler.setOnStageScripts('canPause',   ps.canPause);
+			}
 			ScriptHandler.callOnStageScripts('onUpdate', [elapsed]);
+		}
 
 		super.update(elapsed);
 
