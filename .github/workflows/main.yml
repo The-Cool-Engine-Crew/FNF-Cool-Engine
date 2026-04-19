@@ -11,7 +11,7 @@ on:
 env:
   HAXE_VERSION:   "4.3.6"
   LIME_VERSION:   "8.3.1"
-  OPENFL_VERSION: "9.3.0"
+  OPENFL_VERSION: "9.5.1"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
@@ -57,6 +57,8 @@ jobs:
           haxelib git discord_rpc    https://github.com/Aidan63/linc_discord-rpc       --never
           haxelib git flixel-animate https://github.com/MaybeMaru/flixel-animate  main --never
           haxelib git funkin.vis     https://github.com/FunkinCrew/funkVis             --never
+          haxelib install tink_core --quiet --never
+          haxelib git grig.audio     https://github.com/FunkinCrew/grig.audio          --never
           haxelib git hxvlc          https://github.com/MAJigsaw77/hxvlc.git           --never
 
       - &lock-versions
@@ -136,6 +138,8 @@ jobs:
           haxelib git discord_rpc    https://github.com/Aidan63/linc_discord-rpc       --never
           haxelib git flixel-animate https://github.com/MaybeMaru/flixel-animate  main --never
           haxelib git funkin.vis     https://github.com/FunkinCrew/funkVis             --never
+          haxelib install tink_core --quiet --never
+          haxelib git grig.audio     https://github.com/FunkinCrew/grig.audio          --never
           haxelib git hxvlc          https://github.com/MAJigsaw77/hxvlc.git           --never
 
       - *lock-versions
@@ -196,6 +200,8 @@ jobs:
           haxelib git discord_rpc    https://github.com/Aidan63/linc_discord-rpc       --never
           haxelib git flixel-animate https://github.com/MaybeMaru/flixel-animate  main --never
           haxelib git funkin.vis     https://github.com/FunkinCrew/funkVis             --never
+          haxelib install tink_core --quiet --never
+          haxelib git grig.audio     https://github.com/FunkinCrew/grig.audio          --never
           haxelib git hxvlc          https://github.com/MAJigsaw77/hxvlc.git           --never
 
       - *lock-versions
@@ -257,6 +263,8 @@ jobs:
           haxelib install linc_luajit           --quiet --never
           haxelib git flixel-animate https://github.com/MaybeMaru/flixel-animate  main --never
           haxelib git funkin.vis     https://github.com/FunkinCrew/funkVis             --never
+          haxelib git grig.audio     https://github.com/FunkinCrew/grig.audio          --never
+          haxelib install tink_core --quiet --never
           haxelib git hxvlc          https://github.com/MAJigsaw77/hxvlc.git           --never
           # discord_rpc omitido: no compatible con Android
 

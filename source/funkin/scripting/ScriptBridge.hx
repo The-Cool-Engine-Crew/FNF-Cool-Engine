@@ -276,8 +276,53 @@ class ScriptBridge
 			case 'play'      | 'playstate':        new funkin.gameplay.PlayState();
 			case 'charselector' | 'characterselectorstate': new funkin.menus.CharacterSelectorState();
 			case 'modselector'  | 'modselectorstate':       new funkin.menus.ModSelectorState();
-			default: null;
+			default: _buildScriptableState(name);
 		};
+	}
+
+	/**
+	 * Fallback: si el nombre no coincide con ningún state nativo,
+	 * busca una carpeta de scripts con ese nombre y crea un ScriptableState.
+	 *
+	 * Rutas buscadas (en orden):
+	 *   mods/{mod}/states/{name}/      ← primero el mod activo
+	 *   assets/states/{name}/          ← luego assets globales
+	 *
+	 * Devuelve null si ninguna carpeta existe, para no crear states vacíos
+	 * por errores de tipeo y mantener el trace de error original.
+	 */
+	static function _buildScriptableState(name:String):Null<FlxState>
+	{
+		#if sys
+		final folder = name.toLowerCase();
+
+		// Buscar en el mod activo primero
+		if (mods.ModManager.isActive())
+		{
+			final modRoot = mods.ModManager.modRoot();
+			if (modRoot != null)
+			{
+				for (candidate in ['$modRoot/states/$folder', '$modRoot/assets/states/$folder'])
+				{
+					if (sys.FileSystem.exists(candidate) && sys.FileSystem.isDirectory(candidate))
+					{
+						trace('[ScriptBridge] ScriptableState encontrado en mod: "$candidate"');
+						return new ScriptableState(name);
+					}
+				}
+			}
+		}
+
+		// Buscar en assets globales
+		final globalCandidate = 'assets/states/$folder';
+		if (sys.FileSystem.exists(globalCandidate) && sys.FileSystem.isDirectory(globalCandidate))
+		{
+			trace('[ScriptBridge] ScriptableState encontrado en assets: "$globalCandidate"');
+			return new ScriptableState(name);
+		}
+		#end
+
+		return null;
 	}
 
 	static function _resolveEase(name:String):Float->Float

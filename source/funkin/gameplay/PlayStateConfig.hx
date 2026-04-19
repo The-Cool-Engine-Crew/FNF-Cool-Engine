@@ -57,6 +57,23 @@ class PlayStateConfig
 	public static inline var NOTESPLASH_ENABLED:Bool = true;
 	public static inline var DOWNSCROLL_ENABLED:Bool = false;
 	public static inline var MIDDLESCROLL_ENABLED:Bool = false;
+
+	/**
+	 * MINIMAL MODE (modo osu-like)
+	 *
+	 * Cuando es `true`, el PlayState omite completamente el stage y los personajes
+	 * y sólo inicializa lo mínimo necesario para jugar: strums, notas, HUD y audio.
+	 * Útil para un modo rhythm-game puro sin escenario ni animaciones.
+	 *
+	 * Cómo activarlo antes de entrar al PlayState:
+	 *   PlayStateConfig.minimalMode = true;
+	 *   // ... asignar SONG, dificultad, etc. como de costumbre ...
+	 *   StateTransition.switchState(new PlayState());
+	 *
+	 * Se reinicia automáticamente a `false` cuando el PlayState hace destroy(),
+	 * así que no hace falta limpiarlo manualmente.
+	 */
+	public static var minimalMode:Bool = false;
 	
 	// === ANIMATION ===
 	public static inline var SING_DURATION:Float = 0.6;

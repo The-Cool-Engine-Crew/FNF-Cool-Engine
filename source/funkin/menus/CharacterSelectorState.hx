@@ -10,7 +10,6 @@ import flixel.text.FlxText;
 import flixel.tweens.FlxEase;
 import flixel.tweens.FlxTween;
 import flixel.util.FlxColor;
-
 import funkin.gameplay.objects.character.Character.CharacterData;
 import funkin.gameplay.objects.character.Character.AnimData;
 import funkin.gameplay.objects.character.CharacterList;
@@ -22,7 +21,6 @@ import funkin.transitions.StateTransition;
 import funkin.menus.MainMenuState;
 import ui.Alphabet;
 import haxe.Json;
-
 #if sys
 import sys.FileSystem;
 import sys.io.File;
@@ -390,9 +388,19 @@ class CharacterSelectorState extends MusicBeatState
 
 		nameHint.text  = "";
 		nameInput.text = "my-character";
+
+		// Handle ENTER/ESC via native callbacks (FlxG.keys is disabled while the
+		// native TextField has focus; _onFocusIn sets keys.enabled = false).
+		nameInput.onEnterPressed  = function() { confirmName(); };
+		nameInput.onEscapePressed = function() { closeWizard(); };
+		// Auto re-focus if the user clicks outside the input while still on step 1.
+		nameInput.onFocusLost = function() { if (wizardStep == 1) nameInput.hasFocus = true; };
+
+		// setWizVisible BEFORE hasFocus so FlxSpriteGroup.set_visible() doesn't
+		// un-hide the Flixel sprites after _onFocusIn already hid them.
+		setWizVisible(true);
 		nameInput.hasFocus = true;
 
-		setWizVisible(true);
 		wizardPanel.alpha = 0;
 		wizardBorder.alpha = 0;
 		FlxTween.cancelTweensOf(wizardPanel);
@@ -405,6 +413,10 @@ class CharacterSelectorState extends MusicBeatState
 	function goToStep2():Void
 	{
 		wizardStep = 2;
+		// Clear callbacks BEFORE hasFocus=false so onFocusLost doesn't re-focus.
+		nameInput.onFocusLost     = null;
+		nameInput.onEnterPressed  = null;
+		nameInput.onEscapePressed = null;
 		nameInput.hasFocus = false;
 		statusLine.text  = "No assets imported yet  (you can import later in the editor)";
 		statusLine.color = 0xFF888888;
@@ -414,6 +426,10 @@ class CharacterSelectorState extends MusicBeatState
 
 	function closeWizard():Void
 	{
+		// Clear callbacks BEFORE hasFocus=false so onFocusLost doesn't re-focus.
+		nameInput.onFocusLost     = null;
+		nameInput.onEnterPressed  = null;
+		nameInput.onEscapePressed = null;
 		nameInput.hasFocus = false;
 		wizardStep = 0;
 		FlxTween.cancelTweensOf(wizardPanel);
@@ -873,7 +889,15 @@ class CharacterSelectorState extends MusicBeatState
 			else // paso 2
 			{
 				if (FlxG.keys.justPressed.ENTER)     finishWizard();
-				if (FlxG.keys.justPressed.BACKSPACE) { wizardStep = 1; nameInput.hasFocus = true; setWizVisible(true); helpText.text = "ENTER: Continue  |  ESC: Cancel"; }
+				if (FlxG.keys.justPressed.BACKSPACE) {
+					wizardStep = 1;
+					nameInput.onEnterPressed  = function() { confirmName(); };
+					nameInput.onEscapePressed = function() { closeWizard(); };
+					nameInput.onFocusLost     = function() { if (wizardStep == 1) nameInput.hasFocus = true; };
+					setWizVisible(true);
+					nameInput.hasFocus = true;
+					helpText.text = "ENTER: Continue  |  ESC: Cancel";
+				}
 				if (FlxG.keys.justPressed.ESCAPE)    closeWizard();
 			}
 			return; // bloquear navegación

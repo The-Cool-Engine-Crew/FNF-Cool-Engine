@@ -127,11 +127,27 @@ class NoteTypeManager
 	public static function clearCache():Void
 	{
 		_types = null;
+
+		// FIX Bug 6: _scripts and _luaScripts were cleared with map.clear()
+		// without calling destroy() on each instance first.
+		// HScriptInstance.destroy() releases the hscript Interp and all its
+		// variable bindings (closures over Note, PlayState, etc.).
+		// RuleScriptInstance.destroy() closes the Lua VM.
+		// Without these calls, every note-type script loaded during a song
+		// kept its interpreter alive, holding strong references to gameplay
+		// objects (NoteManager, PlayState, StrumNote…) that the GC could
+		// never reclaim after the song ended.
+		for (_ => s in _scripts)
+			if (s != null) try s.destroy() catch (_:Dynamic) {}
 		_scripts.clear();
+
 		_frames.clear();
 		_holdFrames.clear();
 		_configs.clear();
+
 		#if (LUA_ALLOWED && linc_luajit)
+		for (_ => s in _luaScripts)
+			if (s != null) try s.destroy() catch (_:Dynamic) {}
 		_luaScripts.clear();
 		#end
 	}

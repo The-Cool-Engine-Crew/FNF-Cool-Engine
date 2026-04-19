@@ -56,6 +56,33 @@ typedef StrumState =
 	var _beatPulse:Float;
 	var stealth:Float;
 	var noteAlpha:Float;
+	/** Rotación 3D eje X en grados — comprime scaleY con cos(rotX); efecto "página que se voltea" */
+	var rotX:Float;
+	/** Rotación 3D eje Y en grados — comprime scaleX con cos(rotY); efecto "moneda girando de lado" */
+	var rotY:Float;
+	// ── Deformación / baile ───────────────────────────────────────────────────
+	/** Inclinación horizontal del strum en grados (shear X). */
+	var skewX:Float;
+	/** Inclinación vertical del strum en grados (shear Y). */
+	var skewY:Float;
+	/** Amplitud del salto parabólico Y por beat (px). 0 = desactivado. */
+	var jumpY:Float;
+	/** Período del salto en beats (default 1). */
+	var jumpPeriod:Float;
+	/** Amplitud del temblor en X (px). 0 = desactivado. */
+	var shakeX:Float;
+	/** Amplitud del temblor en Y (px). 0 = desactivado. */
+	var shakeY:Float;
+	/** Velocidad del temblor en oscilaciones/seg (default 20). */
+	var shakeSpeed:Float;
+	/** Amplitud del pulso de escala X por beat. */
+	var beatScaleX:Float;
+	/** Amplitud del pulso de escala Y por beat. */
+	var beatScaleY:Float;
+	/** Estado interno del pulso X (decae en applySpins). */
+	var _beatPulseX:Float;
+	/** Estado interno del pulso Y (decae en applySpins). */
+	var _beatPulseY:Float;
 }
 
 // ─── Contexto de posición de nota (hook onNotePosition) ──────────────────────
@@ -119,6 +146,21 @@ typedef NotePositionContext =
 	 *     El body piece nunca necesita flipY (textura repetitiva simétrica).
 	 */
 	var flipY:Bool;
+	/**
+	 * Escala X de la nota — MODIFICAR para cambiar el ancho.
+	 * Se inicializa con el scaleX efectivo ya calculado (incluyendo rotY si está activo).
+	 */
+	var scaleX:Float;
+	/**
+	 * Rotación 3D eje X (deg) — MODIFICAR para efecto de perspectiva vertical.
+	 * Comprime scaleY con cos(rotX); cara trasera automática cuando cos < 0.
+	 */
+	var rotX:Float;
+	/**
+	 * Rotación 3D eje Y (deg) — MODIFICAR para efecto de perspectiva horizontal.
+	 * Comprime scaleX con cos(rotY); cara trasera automática cuando cos < 0.
+	 */
+	var rotY:Float;
 }
 
 // ─── Estado de cámara ─────────────────────────────────────────────────────────
@@ -308,8 +350,8 @@ class ModChartManager
 	public var noteCtx:NotePositionContext = {
 		noteData: 0, strumTime: 0.0, songPosition: 0.0, beat: 0.0,
 		isPlayer: true, isSustain: false, groupId: '',
-		scrollMult: 1.0, x: 0.0, y: 0.0, angle: 0.0, alpha: 1.0, scaleY: 1.0,
-		flipX: false, flipY: false
+		scrollMult: 1.0, x: 0.0, y: 0.0, angle: 0.0, alpha: 1.0, scaleY: 1.0, scaleX: 1.0,
+		flipX: false, flipY: false, rotX: 0.0, rotY: 0.0
 	};
 
 	/**
@@ -913,7 +955,20 @@ class ModChartManager
 					beatScale: 0,
 					_beatPulse: 0,
 					stealth: 0,
-					noteAlpha: 1.0
+					noteAlpha: 1.0,
+					rotX: 0,
+					rotY: 0,
+					skewX: 0,
+					skewY: 0,
+					jumpY: 0,
+					jumpPeriod: 1.0,
+					shakeX: 0,
+					shakeY: 0,
+					shakeSpeed: 20.0,
+					beatScaleX: 0,
+					beatScaleY: 0,
+					_beatPulseX: 0,
+					_beatPulseY: 0
 				});
 			}
 			states.set(group.id, arr);
@@ -957,7 +1012,20 @@ class ModChartManager
 			beatScale: 0,
 			_beatPulse: 0,
 			stealth: 0,
-			noteAlpha: 1.0
+			noteAlpha: 1.0,
+			rotX: 0,
+			rotY: 0,
+			skewX: 0,
+			skewY: 0,
+			jumpY: 0,
+			jumpPeriod: 1.0,
+			shakeX: 0,
+			shakeY: 0,
+			shakeSpeed: 20.0,
+			beatScaleX: 0,
+			beatScaleY: 0,
+			_beatPulseX: 0,
+			_beatPulseY: 0
 		};
 	}
 
@@ -1199,6 +1267,8 @@ class ModChartManager
 		s('BEAT_SCALE', ModEventType.BEAT_SCALE);
 		s('STEALTH', ModEventType.STEALTH);
 		s('NOTE_ALPHA', ModEventType.NOTE_ALPHA);
+		s('ROT_X', ModEventType.ROT_X);
+		s('ROT_Y', ModEventType.ROT_Y);
 		// Camera
 		s('CAM_ZOOM', ModEventType.CAM_ZOOM);
 		s('CAM_MOVE_X', ModEventType.CAM_MOVE_X);
@@ -1332,6 +1402,8 @@ class ModChartManager
 		s('BEAT_SCALE', ModEventType.BEAT_SCALE);
 		s('STEALTH', ModEventType.STEALTH);
 		s('NOTE_ALPHA', ModEventType.NOTE_ALPHA);
+		s('ROT_X', ModEventType.ROT_X);
+		s('ROT_Y', ModEventType.ROT_Y);
 		// Camera
 		s('CAM_ZOOM', ModEventType.CAM_ZOOM);
 		s('CAM_MOVE_X', ModEventType.CAM_MOVE_X);
@@ -1517,6 +1589,17 @@ class ModChartManager
 				st._beatPulse = 0;
 				st.stealth = 0;
 				st.noteAlpha = 1.0;
+				st.skewX = 0;
+				st.skewY = 0;
+				st.jumpY = 0;
+				st.jumpPeriod = 1.0;
+				st.shakeX = 0;
+				st.shakeY = 0;
+				st.shakeSpeed = 20.0;
+				st.beatScaleX = 0;
+				st.beatScaleY = 0;
+				st._beatPulseX = 0;
+				st._beatPulseY = 0;
 			}
 		}
 
@@ -1572,6 +1655,17 @@ class ModChartManager
 				st._beatPulse = 0;
 				st.stealth = 0;
 				st.noteAlpha = 1.0;
+				st.skewX = 0;
+				st.skewY = 0;
+				st.jumpY = 0;
+				st.jumpPeriod = 1.0;
+				st.shakeX = 0;
+				st.shakeY = 0;
+				st.shakeSpeed = 20.0;
+				st.beatScaleX = 0;
+				st.beatScaleY = 0;
+				st._beatPulseX = 0;
+				st._beatPulseY = 0;
 			}
 		}
 		winState = _makeDefaultWinState();
@@ -1757,6 +1851,16 @@ class ModChartManager
 					if (st._beatPulse < 0)
 						st._beatPulse = 0;
 				}
+				if (st._beatPulseX > 0)
+				{
+					st._beatPulseX -= elapsed * 8.0;
+					if (st._beatPulseX < 0) st._beatPulseX = 0;
+				}
+				if (st._beatPulseY > 0)
+				{
+					st._beatPulseY -= elapsed * 8.0;
+					if (st._beatPulseY < 0) st._beatPulseY = 0;
+				}
 			}
 		}
 
@@ -1863,6 +1967,20 @@ class ModChartManager
 				spr.scale.set(st.scaleX, st.scaleY);
 				spr.visible = st.visible;
 
+				// ── Rotación 3D simulada ──────────────────────────────────────────
+				// rotY → comprime scaleX (gira como una moneda de lado, eje vertical)
+				// rotX → comprime scaleY (gira como una página, eje horizontal)
+				// Cuando cos < 0 el sprite superó los 90° → se muestra la "cara trasera" con flip.
+				if (st.rotX != 0 || st.rotY != 0)
+				{
+					final cosX:Float = Math.cos(st.rotX * Math.PI / 180.0);
+					final cosY:Float = Math.cos(st.rotY * Math.PI / 180.0);
+					spr.scale.x = st.scaleX * Math.abs(cosY);
+					spr.scale.y = st.scaleY * Math.abs(cosX);
+					spr.flipX = cosY < 0;
+					spr.flipY = cosX < 0;
+				}
+
 				// ── Modificadores visuales del carril ─────────────────────────
 				// Se aplican DESPUÉS de guardar logicalX/Y.  Replica la misma
 				// fórmula que NoteManager.updateNotePosition() evaluada en
@@ -1907,6 +2025,46 @@ class ModChartManager
 				// Tornado — ángulo senoidal evaluado en t=sp
 				if (st.tornado != 0)
 					spr.angle += st.tornado * Math.sin(sp * 0.001 * st.drunkFreq);
+
+				// ── Deformación / baile ──────────────────────────────────────
+				// Beat Scale X/Y — pulso de escala por eje independiente
+				if (st._beatPulseX != 0)
+					spr.scale.x += st._beatPulseX;
+				if (st._beatPulseY != 0)
+					spr.scale.y += st._beatPulseY;
+
+				// Jump Y — salto parabólico sincronizado con el beat
+				if (st.jumpY != 0)
+				{
+					final period:Float = (st.jumpPeriod > 0) ? st.jumpPeriod : 1.0;
+					final t01:Float = (currentBeat / period) % 1.0;
+					final parab:Float = 4.0 * t01 * (1.0 - t01);
+					spr.y -= st.jumpY * parab;
+				}
+
+				// Shake X/Y — vibración rápida determinista (sin GC)
+				if (st.shakeX != 0)
+				{
+					final freq:Float = (st.shakeSpeed > 0) ? st.shakeSpeed : 20.0;
+					spr.x += st.shakeX * Math.sin(sp * 0.001 * freq * Math.PI * 2.0);
+				}
+				if (st.shakeY != 0)
+				{
+					final freq:Float = (st.shakeSpeed > 0) ? st.shakeSpeed : 20.0;
+					spr.y += st.shakeY * Math.sin(sp * 0.001 * freq * Math.PI * 2.0 + Math.PI * 0.5);
+				}
+
+				// Skew X/Y — inclinación del strum (requiere StrumNote)
+				if (sn != null && (st.skewX != 0 || st.skewY != 0))
+				{
+					sn.skewX = st.skewX;
+					sn.skewY = st.skewY;
+				}
+				else if (sn != null)
+				{
+					sn.skewX = 0;
+					sn.skewY = 0;
+				}
 			}
 		}
 	}
@@ -1998,6 +2156,17 @@ class ModChartManager
 			case BEAT_SCALE: st.beatScale;
 			case STEALTH: st.stealth;
 			case NOTE_ALPHA: st.noteAlpha;
+			case ROT_X: st.rotX;
+			case ROT_Y: st.rotY;
+			case SKEW_X: st.skewX;
+			case SKEW_Y: st.skewY;
+			case JUMP_Y: st.jumpY;
+			case JUMP_PERIOD: st.jumpPeriod;
+			case SHAKE_X: st.shakeX;
+			case SHAKE_Y: st.shakeY;
+			case SHAKE_SPEED: st.shakeSpeed;
+			case BEAT_SCALE_X: st.beatScaleX;
+			case BEAT_SCALE_Y: st.beatScaleY;
 			default: 0;
 		};
 	}
@@ -2094,6 +2263,28 @@ class ModChartManager
 				st.stealth = value;
 			case NOTE_ALPHA:
 				st.noteAlpha = value;
+			case ROT_X:
+				st.rotX = value;
+			case ROT_Y:
+				st.rotY = value;
+			case SKEW_X:
+				st.skewX = value;
+			case SKEW_Y:
+				st.skewY = value;
+			case JUMP_Y:
+				st.jumpY = value;
+			case JUMP_PERIOD:
+				st.jumpPeriod = value;
+			case SHAKE_X:
+				st.shakeX = value;
+			case SHAKE_Y:
+				st.shakeY = value;
+			case SHAKE_SPEED:
+				st.shakeSpeed = value;
+			case BEAT_SCALE_X:
+				st.beatScaleX = value;
+			case BEAT_SCALE_Y:
+				st.beatScaleY = value;
 			case RESET:
 			case CAM_ZOOM | CAM_MOVE_X | CAM_MOVE_Y | CAM_ANGLE:
 			default:
@@ -2161,6 +2352,19 @@ class ModChartManager
 			st._beatPulse = 0;
 			st.stealth = 0;
 			st.noteAlpha = 1.0;
+			st.rotX = 0;
+			st.rotY = 0;
+			st.skewX = 0;
+			st.skewY = 0;
+			st.jumpY = 0;
+			st.jumpPeriod = 1.0;
+			st.shakeX = 0;
+			st.shakeY = 0;
+			st.shakeSpeed = 20.0;
+			st.beatScaleX = 0;
+			st.beatScaleY = 0;
+			st._beatPulseX = 0;
+			st._beatPulseY = 0;
 		}
 	}
 
@@ -2247,8 +2451,14 @@ class ModChartManager
 			if (arr == null)
 				continue;
 			for (st in arr)
+			{
 				if (st.beatScale > 0)
 					st._beatPulse = st.beatScale;
+				if (st.beatScaleX > 0)
+					st._beatPulseX = st.beatScaleX;
+				if (st.beatScaleY > 0)
+					st._beatPulseY = st.beatScaleY;
+			}
 		}
 
 		// Window beat scale pulse

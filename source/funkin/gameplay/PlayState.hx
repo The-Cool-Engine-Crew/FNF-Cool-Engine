@@ -233,6 +233,14 @@ class PlayState extends funkin.states.MusicBeatState {
 	/** Callback al terminar la canción en cinematicMode. */
 	public var onCinematicEnd:Void->Void = null;
 
+	/**
+	 * Alias de conveniencia — lee PlayStateConfig.minimalMode.
+	 * true = modo osu-like: sin stage ni personajes, sólo strums + notas + HUD.
+	 */
+	public static var minimalMode(get, set):Bool;
+	static inline function get_minimalMode():Bool return PlayStateConfig.minimalMode;
+	static inline function set_minimalMode(v:Bool):Bool { PlayStateConfig.minimalMode = v; return v; }
+
 	public var canPause:Bool = true;
 	public var paused:Bool = false;
 
@@ -325,6 +333,12 @@ class PlayState extends funkin.states.MusicBeatState {
 		#end
 
 		Paths.clearPreviousSession();
+
+		// FIX: setGameplayMode(true) debe llamarse ANTES de cargar cualquier asset.
+		// Si se llama al final de create() (como estaba antes), el LRU ya tiene 35-50
+		// texturas cargadas y el límite reducido (32 desktop) dispara evictions sobre
+		// assets de personaje/stage que siguen activos durante la canción.
+		funkin.cache.PathsCache.setGameplayMode(true);
 
 		if (scriptsEnabled) {
 			ScriptHandler.init();
@@ -423,8 +437,6 @@ class PlayState extends funkin.states.MusicBeatState {
 
 		FlxG.signals.focusLost.add(_onGlobalFocusLost);
 
-		funkin.cache.PathsCache.setGameplayMode(true);
-
 		#if (!flash && !html5)
 		var _flushFrameCount:Int = 0;
 		final _flushFramesNeeded:Int = 1;
@@ -483,7 +495,7 @@ class PlayState extends funkin.states.MusicBeatState {
 		else if (_dadData?.healthIcon != null && _dadData.healthIcon != '')
 			iconRPC = _dadData.healthIcon;
 		else
-			iconRPC = SONG.player2;
+			iconRPC = SONG.player2 ?? 'dad';
 
 		detailsText = isStoryMode ? "Story Mode: Week " + storyWeek : "Freeplay";
 		detailsPausedText = "Paused - " + detailsText;
@@ -506,7 +518,7 @@ class PlayState extends funkin.states.MusicBeatState {
 		camCountdown = new FlxCamera();
 		camCountdown.bgColor.alpha = 0;
 
-		final _sd = funkin.gameplay.objects.stages.Stage.getStageData(curStage);
+		final _sd = PlayStateConfig.minimalMode ? null : funkin.gameplay.objects.stages.Stage.getStageData(curStage);
 		final isPixelStage = (_sd != null && _sd.isPixelStage == true);
 
 		countdown = new Countdown(this, camCountdown, isPixelStage);
@@ -524,6 +536,14 @@ class PlayState extends funkin.states.MusicBeatState {
 	// ──────────────────────────────────────────────────────────────────────
 
 	private function loadStageAndCharacters():Void {
+		// ── MINIMAL MODE: sin stage ni personajes ─────────────────────────────
+		if (PlayStateConfig.minimalMode) {
+			trace('[PlayState] minimalMode: loadStageAndCharacters omitido');
+			// Fondo negro limpio (igual que osu! / Quaver)
+			camGame.bgColor = flixel.util.FlxColor.BLACK;
+			return;
+		}
+		// ─────────────────────────────────────────────────────────────────────
 		currentStage = new Stage(curStage);
 		currentStage.cameras = [camGame];
 		_assignStageCameras(currentStage, [camGame]);
@@ -840,40 +860,50 @@ class PlayState extends funkin.states.MusicBeatState {
 	// ──────────────────────────────────────────────────────────────────────
 
 	private function setupControllers():Void {
-		if (boyfriend == null || dad == null) {
-			#if debug
-			if (boyfriend == null) {
-				boyfriend = new Character(100, 100, 'bf');
-				add(boyfriend);
+		if (!PlayStateConfig.minimalMode) {
+			// ── Modo normal: requiere personajes y stage ──────────────────
+			if (boyfriend == null || dad == null) {
+				#if debug
+				if (boyfriend == null) {
+					boyfriend = new Character(100, 100, 'bf');
+					add(boyfriend);
+				}
+				if (dad == null) {
+					dad = new Character(100, 100, 'dad');
+					add(dad);
+				}
+				#else
+				StateTransition.switchState(new funkin.menus.MainMenuState());
+				return;
+				#end
 			}
-			if (dad == null) {
-				dad = new Character(100, 100, 'dad');
-				add(dad);
-			}
-			#else
-			StateTransition.switchState(new funkin.menus.MainMenuState());
-			return;
-			#end
+
+			cameraController = new CameraController(camGame, camHUD, boyfriend, dad, gf);
+
+			if (currentStage != null && currentStage.defaultCamZoom > 0)
+				cameraController.defaultZoom = currentStage.defaultCamZoom;
+
+			final sd = currentStage?.stageData;
+			if (sd?.cameraBoyfriend != null)
+				cameraController.stageOffsetBf.add(currentStage.cameraBoyfriend.x, currentStage.cameraBoyfriend.y);
+			if (sd?.cameraDad != null)
+				cameraController.stageOffsetDad.add(currentStage.cameraDad.x, currentStage.cameraDad.y);
+			if (sd?.cameraGirlfriend != null)
+				cameraController.stageOffsetGf.add(currentStage.cameraGirlfriend.x, currentStage.cameraGirlfriend.y);
+
+			cameraController.lerpSpeed = CameraController.BASE_LERP_SPEED * (currentStage?.cameraSpeed ?? 1.0);
+			cameraController.snapshotInitialState();
+
+			characterController = new CharacterController();
+			characterController.initFromSlots(characterSlots);
+		} else {
+			// ── MINIMAL MODE: cámara estática, sin CharacterController ────
+			trace('[PlayState] minimalMode: CameraController y CharacterController omitidos');
+			// Centrar camGame en el origen (el HUD no depende de esto)
+			camGame.focusOn(flixel.math.FlxPoint.get(FlxG.width / 2, FlxG.height / 2));
 		}
 
-		cameraController = new CameraController(camGame, camHUD, boyfriend, dad, gf);
-
-		if (currentStage.defaultCamZoom > 0)
-			cameraController.defaultZoom = currentStage.defaultCamZoom;
-
-		final sd = currentStage.stageData;
-		if (sd?.cameraBoyfriend != null)
-			cameraController.stageOffsetBf.add(currentStage.cameraBoyfriend.x, currentStage.cameraBoyfriend.y);
-		if (sd?.cameraDad != null)
-			cameraController.stageOffsetDad.add(currentStage.cameraDad.x, currentStage.cameraDad.y);
-		if (sd?.cameraGirlfriend != null)
-			cameraController.stageOffsetGf.add(currentStage.cameraGirlfriend.x, currentStage.cameraGirlfriend.y);
-
-		cameraController.lerpSpeed = CameraController.BASE_LERP_SPEED * currentStage.cameraSpeed;
-		cameraController.snapshotInitialState();
-
-		characterController = new CharacterController();
-		characterController.initFromSlots(characterSlots);
+		// ── Lo siguiente es idéntico en ambos modos ───────────────────────
 
 		inputHandler = new InputHandler();
 		inputHandler.ghostTapping = SaveData.data.ghosttap;
@@ -931,6 +961,7 @@ class PlayState extends funkin.states.MusicBeatState {
 		noteManager.middlescroll = SaveData.data.middlescroll;
 		noteManager.onCPUNoteHit = onCPUNoteHit;
 		noteManager.onNoteHit = null;
+		noteManager.onBotNoteHit = onPlayerNoteHit;
 		noteManager.onNoteMiss = onPlayerNoteMiss;
 	}
 
@@ -952,7 +983,7 @@ class PlayState extends funkin.states.MusicBeatState {
 			return;
 		}
 
-		var icons:Array<String> = [SONG.player1, SONG.player2];
+		var icons:Array<String> = [SONG.player1 ?? 'bf', SONG.player2 ?? 'dad'];
 		if (boyfriend?.healthIcon != null && dad?.healthIcon != null)
 			icons = [boyfriend.healthIcon, dad.healthIcon];
 
@@ -1007,15 +1038,21 @@ class PlayState extends funkin.states.MusicBeatState {
 		funkin.audio.MusicManager.invalidate();
 
 		final _rawInst = Paths.loadInst(SONG.song, _diffSuffix);
-		if (_rawInst != null) {
-			_rawInst.volume = 0;
-			_rawInst.pause();
-		} else
+		if (_rawInst == null)
 			trace('[PlayState] WARNING: Paths.loadInst returned null for "${SONG.song}" — audio will be silent.');
 
 		funkin.audio.CoreAudio.setInst(_rawInst);
 		if (_rawInst != null)
 			FlxG.sound.music = _rawInst;
+
+		// FIX inst audible al cargar: CoreAudio.setInst() llama register() -> _applyTo()
+		// que sobreescribe snd.volume con baseVolume (1.0), deshaciendo el volume=0
+		// puesto antes. Silenciar DESPUES de setInst garantiza que el inst quede mudo
+		// hasta que startSong() lo active explicitamente via CoreAudio.play().
+		if (_rawInst != null) {
+			_rawInst.volume = 0;
+			_rawInst.pause();
+		}
 
 		_clearVocals();
 		_reloadVocals(_diffSuffix);
@@ -1295,13 +1332,14 @@ class PlayState extends funkin.states.MusicBeatState {
 
 		if (FlxG.sound.music == null || !FlxG.sound.music.active) {
 			final _reloadedInst = Paths.loadInst(SONG.song, _diffSuffix);
+			funkin.audio.CoreAudio.setInst(_reloadedInst);
+			if (_reloadedInst != null)
+				FlxG.sound.music = _reloadedInst;
+			// FIX: mismo bug que generateSong -- silenciar DESPUES de setInst
 			if (_reloadedInst != null) {
 				_reloadedInst.volume = 0;
 				_reloadedInst.pause();
 			}
-			funkin.audio.CoreAudio.setInst(_reloadedInst);
-			if (_reloadedInst != null)
-				FlxG.sound.music = _reloadedInst;
 		} else if (funkin.audio.CoreAudio.inst == null) {
 			funkin.audio.CoreAudio.setInst(FlxG.sound.music);
 		}
@@ -1438,8 +1476,8 @@ class PlayState extends funkin.states.MusicBeatState {
 			hook(elapsed);
 
 		if (!paused && !inCutscene) {
-			characterController.update(elapsed);
-			cameraController.update(elapsed);
+			characterController?.update(elapsed);
+			cameraController?.update(elapsed);
 
 			if (generatedMusic) {
 				if (inputHandler != null && noteManager != null) {
@@ -1562,6 +1600,7 @@ class PlayState extends funkin.states.MusicBeatState {
 
 		if (FlxG.sound.music != null && !inCutscene) {
 			FlxG.sound.music.time = 0;
+			funkin.audio.CoreAudio.setInstVolume(1.0); // FIX: restablecer volumen silenciado al cargar
 			funkin.audio.CoreAudio.play(FlxG.sound.music);
 			FlxG.sound.music.onComplete = endSong;
 		}
@@ -1650,7 +1689,8 @@ class PlayState extends funkin.states.MusicBeatState {
 
 	#if android
 	private function _onAndroidKeyDown(keyCode:Int, modifier:Int):Void {
-		if (keyCode == 27 && !paused && !inCutscene)
+		final BACK_KEY = #if (openfl >= "8.0.0") 0x4000010E #else 27 #end;
+		if (keyCode == BACK_KEY && !paused && !inCutscene)
 			openSubState(new PauseSubState(false));
 	}
 	#end
@@ -1682,7 +1722,10 @@ class PlayState extends funkin.states.MusicBeatState {
 
 	private function onPlayerNoteHit(note:Note):Void {
 		var _pressedAt:Float = inputHandler.pressSongPos[note.noteData];
-		var noteDiff:Float = Math.abs(note.strumTime - (_pressedAt >= 0 ? _pressedAt : Conductor.songPosition));
+		// FIX bot: el bot siempre golpea perfecto → noteDiff = 0 garantiza SICK
+		var noteDiff:Float = funkin.gameplay.PlayState.isBotPlay
+			? 0.0
+			: Math.abs(note.strumTime - (_pressedAt >= 0 ? _pressedAt : Conductor.songPosition));
 		inputHandler.pressSongPos[note.noteData] = -1;
 
 		var rating:String = gameState.processNoteHit(noteDiff, note.isSustainNote);
@@ -1736,6 +1779,8 @@ class PlayState extends funkin.states.MusicBeatState {
 	}
 
 	private function onPlayerNoteMiss(missedNote:funkin.gameplay.notes.Note):Void {
+		// FIX bot: el bot nunca falla — segunda línea de defensa además del continue en NoteManager
+		if (funkin.gameplay.PlayState.isBotPlay) return;
 		if (scriptsEnabled) {
 			ScriptHandler._argsNote[0] = missedNote;
 			ScriptHandler._argsNote[1] = null;
@@ -2423,6 +2468,16 @@ class PlayState extends funkin.states.MusicBeatState {
 	// ──────────────────────────────────────────────────────────────────────
 
 	override function destroy() {
+		// Auto-reset del modo osu-like para no contaminar la siguiente sesión
+		PlayStateConfig.minimalMode = false;
+
+		// FIX Bug 3: EventManager.clear() (which calls releasePrecachePool()) was
+		// only reached inside the `if (scriptsEnabled)` block below. On restart or
+		// switchState paths that bypass destroy(), dummy Characters in _precachePool
+		// were never freed. Calling it unconditionally here — with a guard — ensures
+		// the pool is always released regardless of the scriptsEnabled flag.
+		try { funkin.scripting.events.EventManager.clear(); } catch (_:Dynamic) {}
+
 		funkin.audio.CoreAudio.stopAll();
 
 		FlxG.signals.focusLost.remove(_onGlobalFocusLost);

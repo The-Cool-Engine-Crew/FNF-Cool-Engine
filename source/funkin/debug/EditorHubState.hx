@@ -119,7 +119,7 @@ class EditorHubState extends MusicBeatState
 	/** Unicode icon shown as placeholder when no preview image is provided. */
 	static var EDITOR_ICONS:Array<String> = ["✦", "☰", "⊞", "⬡", "♩", "✎", "⬚"];
 
-	static var EDITOR_NAMES:Array<String> = ["Character Editor", "Story Menu Editor", "Menu Editor", "Sprite Editor", "Note Skin Editor"];
+	static var EDITOR_NAMES:Array<String> = ["Character Editor", "Story Menu Editor", "Menu Editor", "Sprite Editor", "Note Skin Editor", "Script Console", "Node Menu Editor"];
 
 	static var EDITOR_DESCS:Array<String> = [
 		"Edit characters, animations, and offsets",
@@ -127,6 +127,8 @@ class EditorHubState extends MusicBeatState
 		"Design custom menus with objects and scripts",
 		"Edit sprite sheets, create XML atlases, view frame data and hitboxes",
 		"Create and edit note skins with visual preview",
+		"Console for test things",
+		"Edit your access to Menus, etc",
 	];
 
 	/**
@@ -145,6 +147,8 @@ class EditorHubState extends MusicBeatState
 		null, // Menu Editor
 		null, // Sprite Editor
 		null, // Note Skin Editor
+		null, // Script Console
+		null, // Node Menu Editor
 	];
 
 	// ── Internal state ────────────────────────────────────────────────────────
@@ -519,6 +523,10 @@ class EditorHubState extends MusicBeatState
 				case 4:
 					//trace('Note Skin Editor not implemented yet!');
 					StateTransition.switchState(new funkin.debug.editors.NoteSkinEditorState());
+				case 5:
+					StateTransition.switchState(new funkin.debug.ScriptConsoleState());
+				case 6:
+					StateTransition.switchState(new funkin.debug.editors.NodeMenuEditor());
 				default:
 					StateTransition.switchState(new funkin.menus.MainMenuState());
 			}

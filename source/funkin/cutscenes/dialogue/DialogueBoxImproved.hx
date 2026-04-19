@@ -351,8 +351,9 @@ class DialogueBoxImproved extends FlxSpriteGroup
 	{
 		controlsText = new FlxText(0, 0, 'Press ENTER to continue | SHIFT to skip');
 		controlsText.size = 20;
-		controlsText.x = FlxG.width - controlsText.width - 20;
-		controlsText.y = FlxG.height - 50;
+		controlsText.x = FlxG.width - controlsText.width - 60;
+		controlsText.y = FlxG.height - 100;
+		controlsText.font = Paths.font('Funkin.otf');
 		controlsText.setBorderStyle(FlxTextBorderStyle.OUTLINE, FlxColor.BLACK, 2, 1);
 		controlsText.color = FlxColor.WHITE;
 		controlsText.scrollFactor.set();
@@ -735,5 +736,25 @@ class DialogueBoxImproved extends FlxSpriteGroup
 		{
 			kill();
 		});
+	}
+
+	// FIX Bug 7: portraitCache and boxCache held strong FlxSprite references
+	// (and thus their BitmapData textures) forever — DialogueBoxImproved had
+	// no destroy() override at all.  Each time a cutscene was replayed the old
+	// portrait and box sprites accumulated in RAM because nothing ever called
+	// sprite.destroy() on them.
+	override public function destroy():Void
+	{
+		// Destroy every cached portrait sprite so its BitmapData is freed.
+		for (_ => portrait in portraitCache)
+			if (portrait != null) try portrait.destroy() catch (_:Dynamic) {}
+		portraitCache.clear();
+
+		// Destroy every cached dialogue-box sprite.
+		for (_ => boxSpr in boxCache)
+			if (boxSpr != null) try boxSpr.destroy() catch (_:Dynamic) {}
+		boxCache.clear();
+
+		super.destroy();
 	}
 }

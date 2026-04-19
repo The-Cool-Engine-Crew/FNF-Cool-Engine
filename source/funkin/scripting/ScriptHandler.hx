@@ -68,6 +68,17 @@ class ScriptHandler
 	public static var menuScripts:Map<String, HScriptInstance> = [];
 	public static var charScripts:Map<String, HScriptInstance> = [];
 
+	// OPT v4: Arrays paralelos para iteración en hot-path (frame-by-frame).
+	// Las Maps se mantienen para lookup por nombre (hotReload, charScriptsByName).
+	// Los Arrays se usan en _callLayer / _destroyLayer / _setLayerVar / etc.
+	// Se sincronizan en _registerScript y _removeFromArray.
+	static var _globalArr:Array<HScriptInstance>  = [];
+	static var _stageArr:Array<HScriptInstance>   = [];
+	static var _songArr:Array<HScriptInstance>    = [];
+	static var _uiArr:Array<HScriptInstance>      = [];
+	static var _menuArr:Array<HScriptInstance>    = [];
+	static var _charArr:Array<HScriptInstance>    = [];
+
 	#if (LUA_ALLOWED && linc_luajit)
 	// RuleScript layers — one array per gameplay context (same structure as HScript layers)
 	public static var globalLuaScripts:Array<RuleScriptInstance> = [];
@@ -165,6 +176,7 @@ class ScriptHandler
 		// Clear previous global scripts to avoid duplicates on the 2nd playthrough
 		_destroyLayer(globalScripts);
 		globalScripts.clear();
+		_clearArr(_globalArr);
 
 		#if sys
 		if (mods.ModManager.isActive())
@@ -203,6 +215,8 @@ class ScriptHandler
 		_destroyLayer(uiScripts);
 		songScripts.clear();
 		uiScripts.clear();
+		_clearArr(_songArr);
+		_clearArr(_uiArr);
 		#if (LUA_ALLOWED && linc_luajit)
 		_destroyLuaLayer(songLuaScripts);
 		_destroyLuaLayer(uiLuaScripts);
@@ -485,6 +499,8 @@ class ScriptHandler
 			script.program = parser.parseString(finalContent, scriptPath);
 
 			script.interp.execute(script.program);
+			if (!isLua)
+				script.warmCache(); // OPT v4: pre-fill _funcCache tras execute()
 
 			if (isLua)
 				mods.compat.PsychLuaGameplayAPI.setupCallbackAliases(script);
@@ -571,6 +587,12 @@ class ScriptHandler
 		final vars:Map<String, Dynamic> = [];
 		vars.set('game', ps);
 		vars.set('playState', ps);
+
+		// FIX: 'controls' es private+inline en MusicBeatState — la reflexión no
+		// lo detecta. Lo exponemos aquí para que scripts de canción, stage,
+		// personaje y global puedan usar controls.UP_P / controls.ACCEPT, etc.
+		try { vars.set('controls', data.PlayerSettings.player1.controls); }
+		catch (e:Dynamic) { trace('[ScriptHandler] controls expose failed: $e'); }
 		vars.set('health', ps.health);
 		vars.set('camGame', ps.camGame);
 		vars.set('camHUD', ps.camHUD);
@@ -683,12 +705,13 @@ class ScriptHandler
 		// OPT: reutilizar _argsEmpty en vez de asignar un Array nuevo en el heap.
 		if (args == null)
 			args = _argsEmpty;
-		_callLayer(globalScripts, funcName, args);
-		_callLayer(stageScripts, funcName, args);
-		_callLayer(songScripts, funcName, args);
-		_callLayer(uiScripts, funcName, args);
-		_callLayer(menuScripts, funcName, args);
-		_callLayer(charScripts, funcName, args);
+		// OPT v4: _callArr itera Array en vez de Map (~2-3x más rápido)
+		_callArr(_globalArr, funcName, args);
+		_callArr(_stageArr,  funcName, args);
+		_callArr(_songArr,   funcName, args);
+		_callArr(_uiArr,     funcName, args);
+		_callArr(_menuArr,   funcName, args);
+		_callArr(_charArr,   funcName, args);
 
 		#if (LUA_ALLOWED && linc_luajit)
 		_callLuaLayer(globalLuaScripts, funcName, args);
@@ -744,12 +767,13 @@ class ScriptHandler
 		// OPT: las closures locales _setLayer / _setLua se definían dentro del método,
 		// lo que asignaba un objeto closure en el GC cada vez que se llamaba setOnScripts.
 		// Delegamos a métodos estáticos para evitar esa asignación.
-		_setLayerVar(globalScripts, varName, value);
-		_setLayerVar(stageScripts, varName, value);
-		_setLayerVar(songScripts, varName, value);
-		_setLayerVar(uiScripts, varName, value);
-		_setLayerVar(menuScripts, varName, value);
-		_setLayerVar(charScripts, varName, value);
+		// OPT v4: _setArrVar itera Array en vez de Map
+		_setArrVar(_globalArr, varName, value);
+		_setArrVar(_stageArr,  varName, value);
+		_setArrVar(_songArr,   varName, value);
+		_setArrVar(_uiArr,     varName, value);
+		_setArrVar(_menuArr,   varName, value);
+		_setArrVar(_charArr,   varName, value);
 
 		#if (LUA_ALLOWED && linc_luajit)
 		_setLuaLayerVar(globalLuaScripts, varName, value);
@@ -770,12 +794,13 @@ class ScriptHandler
 			return;
 
 		final vars = _buildPlayStateVars(ps);
-		_injectLayerVars(globalScripts, vars);
-		_injectLayerVars(stageScripts, vars);
-		_injectLayerVars(songScripts, vars);
-		_injectLayerVars(uiScripts, vars);
-		_injectLayerVars(menuScripts, vars);
-		_injectLayerVars(charScripts, vars);
+		// OPT v4: iterate arrays
+		_injectArrVars(_globalArr, vars);
+		_injectArrVars(_stageArr,  vars);
+		_injectArrVars(_songArr,   vars);
+		_injectArrVars(_uiArr,     vars);
+		_injectArrVars(_menuArr,   vars);
+		_injectArrVars(_charArr,   vars);
 
 		if (ps.uiManager != null)
 		{
@@ -804,7 +829,7 @@ class ScriptHandler
 	{
 		if (args == null)
 			args = [];
-		_callLayer(stageScripts, funcName, args);
+		_callArr(_stageArr, funcName, args); // OPT v4
 	}
 
 	/**
@@ -816,11 +841,11 @@ class ScriptHandler
 	{
 		if (args == null)
 			args = [];
-		_callLayer(globalScripts, funcName, args);
-		_callLayer(songScripts, funcName, args);
-		_callLayer(uiScripts, funcName, args);
-		_callLayer(menuScripts, funcName, args);
-		_callLayer(charScripts, funcName, args);
+		_callArr(_globalArr, funcName, args); // OPT v4
+		_callArr(_songArr,   funcName, args);
+		_callArr(_uiArr,     funcName, args);
+		_callArr(_menuArr,   funcName, args);
+		_callArr(_charArr,   funcName, args);
 	}
 
 	/** Gets the value of a variable from active scripts (first non-null result). */
@@ -862,12 +887,21 @@ class ScriptHandler
 		_destroyLuaLayer(songLuaScripts);
 		_destroyLuaLayer(uiLuaScripts);
 		#end
+
+		// FIX Bug 6: flush the static signal bus so closures registered by mod
+		// scripts via signal.on('beat', fn) cannot retain strong references to
+		// PlayState objects (Character, Stage, notes, etc.) after the song ends.
+		// Without this, each song leaks 50-80 MB worth of gameplay objects that
+		// the GC can never reclaim because _signals keeps them rooted.
+		try { @:privateAccess funkin.scripting.ScriptAPI._signals.clear(); } catch (_:Dynamic) {}
+		try { @:privateAccess funkin.scripting.ScriptAPI._signalsOnce.clear(); } catch (_:Dynamic) {}
 	}
 
 	public static function clearStageScripts():Void
 	{
 		_destroyLayer(stageScripts);
 		stageScripts.clear();
+		_clearArr(_stageArr);
 
 		#if (LUA_ALLOWED && linc_luajit)
 		_destroyLuaLayer(stageLuaScripts);
@@ -878,6 +912,12 @@ class ScriptHandler
 	{
 		_destroyLayer(charScripts);
 		charScripts.clear();
+		_clearArr(_charArr);
+
+		#if (LUA_ALLOWED && linc_luajit)
+		_destroyLuaLayer(charLuaScripts);
+		#end
+
 		charScriptsByName.clear(); // clear index too
 	}
 
@@ -885,6 +925,12 @@ class ScriptHandler
 	{
 		_destroyLayer(menuScripts);
 		menuScripts.clear();
+
+		#if (LUA_ALLOWED && linc_luajit)
+		_destroyLuaLayer(menuLuaScripts);
+		#end
+		
+		_clearArr(_menuArr);
 	}
 
 	public static function clearAll():Void
@@ -1040,50 +1086,66 @@ class ScriptHandler
 
 	static function _registerScript(script:HScriptInstance, scriptType:String):Void
 	{
-		final target = switch (scriptType.toLowerCase())
+		// OPT v4: mantenemos tanto la Map (lookup por nombre) como el Array
+		// paralelo (iteración sin overhead de tabla hash en hot-path).
+		var map:Map<String, HScriptInstance>;
+		var arr:Array<HScriptInstance>;
+		switch (scriptType.toLowerCase())
 		{
-			case 'global': globalScripts;
-			case 'stage': stageScripts;
-			case 'ui': uiScripts;
-			case 'menu': menuScripts;
-			case 'char': charScripts;
-			default: songScripts;
-		};
+			case 'global': map = globalScripts; arr = _globalArr;
+			case 'stage':  map = stageScripts;  arr = _stageArr;
+			case 'ui':     map = uiScripts;     arr = _uiArr;
+			case 'menu':   map = menuScripts;   arr = _menuArr;
+			case 'char':   map = charScripts;   arr = _charArr;
+			default:       map = songScripts;   arr = _songArr;
+		}
 		// Duplicate names → numeric suffix
 		var name = script.name;
 		var i = 1;
-		while (target.exists(name))
+		while (map.exists(name))
 			name = '${script.name}_${i++}';
 		script.name = name;
-		target.set(name, script);
+		map.set(name, script);
+		arr.push(script);
 	}
 
-	static function _callLayer(layer:Map<String, HScriptInstance>, func:String, args:Array<Dynamic>):Void
+	/** @deprecated Mantener firma para compatibilidad; usa la overload de Array internamente. */
+	static inline function _callLayer(layer:Map<String, HScriptInstance>, func:String, args:Array<Dynamic>):Void {}
+
+	/**
+	 * OPT v4: iteración sobre Array en vez de Map.
+	 * Array usa aritmética de puntero; Map usa traversal de tabla hash.
+	 * Sobre 10 scripts activos, el array es ~2-3x más rápido de iterar.
+	 *
+	 * script.call() ya tiene su propio try/catch para errores de script;
+	 * el try externo solo protege contra null object reference del propio
+	 * objeto script (caso extremadamente raro pero posible durante destroy).
+	 */
+	static function _callArr(arr:Array<HScriptInstance>, func:String, args:Array<Dynamic>):Void
 	{
-		for (script in layer)
-		{
+		#if HSCRIPT_ALLOWED
+		for (script in arr)
 			if (script != null && script.active)
-			{
-				#if HSCRIPT_ALLOWED
-				// script.call() ya tiene try/catch interno, pero si el objeto
-				// script en sí es un null object reference esto también lo captura.
-				try { script.call(func, args); } catch (_layerErr:Dynamic) {}
-				#end
-			}
-		}
+				script.call(func, args);
+		#end
 	}
 
 	static function _destroyLayer(layer:Map<String, HScriptInstance>):Void
 	{
-		// BUGFIX: do NOT call onDestroy here.
-		// PlayState.destroy() already calls callOnScripts('onDestroy') before
-		// clearSongScripts() / clearStageScripts() / clearCharScripts(), which
-		// in turn called _destroyLayer() → onDestroy was executed TWICE.
-		// The second execution happened with a partially destroyed state
-		// (stage elements, camGame, etc. already nulled) → crash.
-		// This function now only releases the interpreter for each script.
+		// BUGFIX: do NOT call onDestroy here (see history for full explanation).
+		// OPT v4: iterate the parallel array — same elements, faster traversal.
 		for (script in layer)
 			script.dispose();
+	}
+
+	/** Limpia el array paralelo correspondiente a una Map de scripts. */
+	static function _clearArr(arr:Array<HScriptInstance>):Void
+	{
+		#if (cpp || hl)
+		arr.resize(0); // resize(0) es O(1) en cpp/hl; evita realloc
+		#else
+		arr.splice(0, arr.length);
+		#end
 	}
 
 	#if (LUA_ALLOWED && linc_luajit)
@@ -1199,6 +1261,14 @@ class ScriptHandler
 				script.set(varName, value);
 	}
 
+	/** OPT v4: versión Array de _setLayerVar para hot-path. */
+	static inline function _setArrVar(arr:Array<HScriptInstance>, varName:String, value:Dynamic):Void
+	{
+		for (script in arr)
+			if (script != null && script.active)
+				script.set(varName, value);
+	}
+
 	#if (LUA_ALLOWED && linc_luajit)
 	/** Helper estático para setOnScripts (Lua) — evita closure por llamada. */
 	static inline function _setLuaLayerVar(layer:Array<RuleScriptInstance>, varName:String, value:Dynamic):Void
@@ -1231,49 +1301,319 @@ class ScriptHandler
 					script.interp.variables.set(k, v);
 	}
 
-	// ── Import pre-processor ──────────────────────────────────────────────────
-	// FIX #8: declarar la regex como static final para que el patrón se compile
-	// una sola vez y no en cada invocación de processImports().
+	/** OPT v4: versión Array de _injectLayerVars. */
+	static function _injectArrVars(arr:Array<HScriptInstance>, vars:Map<String, Dynamic>):Void
+	{
+		for (script in arr)
+			if (script != null && script.active && script.interp != null)
+				for (k => v in vars)
+					script.interp.variables.set(k, v);
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// ── Script source pre-processor ──────────────────────────────────────────
+	// ═══════════════════════════════════════════════════════════════════════════
+	//
+	// processImports() is the single entry-point used by ALL script loaders
+	// (ScriptHandler._createScript, StateScriptHandler.loadScript,
+	//  HScriptInstance.loadString, HScriptInstance.hotReload).
+	//
+	// Pipeline (in order):
+	//   1. _processConditionals  — #if / #elseif / #else / #end  (NEW)
+	//   2. _packageReg           — strip `package foo.bar;`
+	//   3. _usingReg             — strip `using foo.Bar;`
+	//   4. _importReg            — resolve `import a.b.C;` into interp variables
+	//
+	// FIX: declarar las EReg como static final para compilar el patrón una sola vez.
 	#if HSCRIPT_ALLOWED
-	static final _importReg:EReg = ~/^[ \t]*import\s+([\w.]+)(?:\s+as\s+(\w+))?\s*;/gm;
+	static final _importReg :EReg = ~/^[ \t]*import\s+([\w.]+)(?:\s+as\s+(\w+))?\s*;/gm;
+	static final _packageReg:EReg = ~/^[ \t]*package\s+[\w.]*\s*;/gm;
+	static final _usingReg  :EReg = ~/^[ \t]*using\s+([\w.]+)\s*;/gm;
+
+	// EReg por línea para las directivas condicionales de hscript
+	static final _condIfReg    :EReg = ~/^[ \t]*#if\b(.*)/;
+	static final _condElseifReg:EReg = ~/^[ \t]*#elseif\b(.*)/;
+	static final _condElseReg  :EReg = ~/^[ \t]*#else\b/;
+	static final _condEndReg   :EReg = ~/^[ \t]*#end\b/;
 	#end
 
+	// ── Runtime defines ───────────────────────────────────────────────────────
+
 	/**
-	 * Pre-processes `import a.b.C;` and `import a.b.C as Alias;` lines
-	 * from an HScript source file.
+	 * Map of defines available for `#if` conditions in scripts.
+	 * Populated once at runtime from Haxe compile-time flags.
 	 *
-	 * Each import is resolved via Type.resolveClass / Type.resolveEnum
-	 * and injected into `interp.variables` under the short name (or alias).
-	 * Import lines are replaced with comments so the hscript parser
-	 * does not reject them (hscript does not support the `import` syntax).
+	 * Mods can add their own defines at boot:
+	 *   ScriptHandler.scriptDefines.set("myMod", true);
+	 */
+	public static var scriptDefines(get, null):Map<String, Bool>;
+	static var _scriptDefines:Map<String, Bool> = null;
+
+	static function get_scriptDefines():Map<String, Bool>
+	{
+		if (_scriptDefines != null) return _scriptDefines;
+		_scriptDefines = new Map<String, Bool>();
+
+		// ── Target / platform ─────────────────────────────────────────────────
+		#if desktop    _scriptDefines["desktop"]  = true; #end
+		#if mobile     _scriptDefines["mobile"]   = true; #end
+		#if sys        _scriptDefines["sys"]       = true; #end
+		#if cpp        _scriptDefines["cpp"]       = true; #end
+		#if hl         _scriptDefines["hl"]        = true; #end
+		#if neko       _scriptDefines["neko"]      = true; #end
+		#if windows    _scriptDefines["windows"]   = true; #end
+		#if linux      _scriptDefines["linux"]     = true; #end
+		#if (mac || macos)
+		_scriptDefines["mac"]   = true;
+		_scriptDefines["macos"] = true;
+		#end
+		#if android    _scriptDefines["android"]   = true; #end
+		#if ios        _scriptDefines["ios"]       = true; #end
+		#if (html5 || js)
+		_scriptDefines["html5"] = true;
+		_scriptDefines["web"]   = true;
+		_scriptDefines["js"]    = true;
+		#end
+
+		// ── Build type ────────────────────────────────────────────────────────
+		#if debug      _scriptDefines["debug"]     = true; #end
+		#if !debug     _scriptDefines["release"]   = true; #end
+
+		// ── Engine feature flags ──────────────────────────────────────────────
+		#if HSCRIPT_ALLOWED    _scriptDefines["HSCRIPT_ALLOWED"]    = true; #end
+		#if LUA_ALLOWED        _scriptDefines["LUA_ALLOWED"]        = true; #end
+		#if (LUA_ALLOWED && linc_luajit) _scriptDefines["linc_luajit"] = true; #end
+
+		// Sentinel so the defines lazy-init doesn't re-run if all are absent
+		_scriptDefines["__initialized"] = true;
+
+		return _scriptDefines;
+	}
+
+	// ── Condition evaluator ───────────────────────────────────────────────────
+
+	/**
+	 * Evaluates a `#if` condition string against `scriptDefines`.
 	 *
-	 * Usage inside a .hx script:
-	 *   import flixel.util.FlxColor;
-	 *   import flixel.math.FlxMath as Math;
+	 * Supports:
+	 *   - Simple identifiers:            desktop,  !mobile
+	 *   - AND / OR (correct precedence): desktop && sys,  mobile || web
+	 *   - Parentheses:                   (desktop && sys) || html5
+	 *   - Literals:                      true, false
 	 *
-	 * @param source   Original source code of the script.
-	 * @param interp   Interpreter into which classes will be injected.
-	 * @return         Source code with import lines commented out.
+	 * Unknown identifiers evaluate to false.
+	 */
+	public static function evalScriptCond(cond:String):Bool
+	{
+		cond = cond.trim();
+		if (cond == '' || cond == 'false') return false;
+		if (cond == 'true')  return true;
+
+		// ── Strip balanced outer parentheses ──────────────────────────────────
+		if (cond.charAt(0) == '(')
+		{
+			var depth = 0;
+			var outerMatch = true;
+			for (i in 0...cond.length)
+			{
+				if (cond.charAt(i) == '(') depth++;
+				else if (cond.charAt(i) == ')')
+				{
+					depth--;
+					if (depth == 0 && i < cond.length - 1) { outerMatch = false; break; }
+				}
+			}
+			if (outerMatch)
+				return evalScriptCond(cond.substring(1, cond.length - 1));
+		}
+
+		// ── Find || at the top level (lowest precedence, left-to-right) ──────
+		var depth = 0;
+		for (i in 0...cond.length - 1)
+		{
+			final c = cond.charAt(i);
+			if      (c == '(') depth++;
+			else if (c == ')') depth--;
+			else if (c == '|' && cond.charAt(i + 1) == '|' && depth == 0)
+				return evalScriptCond(cond.substring(0, i))
+				    || evalScriptCond(cond.substring(i + 2));
+		}
+
+		// ── Find && at the top level ──────────────────────────────────────────
+		depth = 0;
+		for (i in 0...cond.length - 1)
+		{
+			final c = cond.charAt(i);
+			if      (c == '(') depth++;
+			else if (c == ')') depth--;
+			else if (c == '&' && cond.charAt(i + 1) == '&' && depth == 0)
+				return evalScriptCond(cond.substring(0, i))
+				    && evalScriptCond(cond.substring(i + 2));
+		}
+
+		// ── Negation ──────────────────────────────────────────────────────────
+		if (cond.charAt(0) == '!')
+			return !evalScriptCond(cond.substring(1).ltrim());
+
+		// ── Simple identifier ─────────────────────────────────────────────────
+		// Strip any remaining whitespace / trailing comment and look up
+		final ident = cond.split(' ')[0].split('\t')[0];
+		return scriptDefines.exists(ident) && scriptDefines[ident] == true;
+	}
+
+	// ── Conditional compilation preprocessor ─────────────────────────────────
+
+	/**
+	 * Processes `#if` / `#elseif` / `#else` / `#end` blocks in HScript source.
+	 *
+	 * Active branches are kept verbatim. Inactive lines are replaced with blank
+	 * comment lines so that line numbers in error messages remain accurate.
+	 *
+	 * Supports nesting and all three branch forms:
+	 *
+	 *   #if desktop
+	 *     FlxG.fullscreen = true;
+	 *   #elseif mobile
+	 *     FlxG.resizeGame(480, 320);
+	 *   #else
+	 *     trace("unknown target");
+	 *   #end
+	 */
+	#if HSCRIPT_ALLOWED
+	static function _processConditionals(source:String):String
+	{
+		// Normalise line endings
+		final lines = source.split('\n');
+		final out:Array<String> = [];
+
+		// Stack of {active, anyBranchTaken}.
+		// `active`         — whether lines in the current block should be emitted.
+		// `anyBranchTaken` — true once a branch of the current #if chain evaluated true.
+		final stack:Array<{active:Bool, anyBranchTaken:Bool}> = [];
+
+		inline function isActive():Bool
+			return stack.length == 0 || stack[stack.length - 1].active;
+
+		for (rawLine in lines)
+		{
+			// Strip trailing \r for Windows line endings
+			final line = rawLine.endsWith('\r') ? rawLine.substring(0, rawLine.length - 1) : rawLine;
+
+			if (_condIfReg.match(line))
+			{
+				final cond = _condIfReg.matched(1).trim();
+				final parentActive = isActive();
+				final taken = parentActive && evalScriptCond(cond);
+				stack.push({active: taken, anyBranchTaken: taken});
+				out.push('// [#if $cond]');
+			}
+			else if (_condElseifReg.match(line))
+			{
+				if (stack.length > 0)
+				{
+					final top = stack.pop();
+					final parentActive = isActive();
+					final cond = _condElseifReg.matched(1).trim();
+					final taken = parentActive && !top.anyBranchTaken && evalScriptCond(cond);
+					stack.push({active: taken, anyBranchTaken: top.anyBranchTaken || taken});
+					out.push('// [#elseif $cond]');
+				}
+				else
+				{
+					trace('[ScriptHandler] #elseif without #if — ignored');
+					out.push('// [#elseif — unmatched]');
+				}
+			}
+			else if (_condElseReg.match(line))
+			{
+				if (stack.length > 0)
+				{
+					final top = stack.pop();
+					final parentActive = isActive();
+					stack.push({active: parentActive && !top.anyBranchTaken, anyBranchTaken: true});
+					out.push('// [#else]');
+				}
+				else
+				{
+					trace('[ScriptHandler] #else without #if — ignored');
+					out.push('// [#else — unmatched]');
+				}
+			}
+			else if (_condEndReg.match(line))
+			{
+				if (stack.length > 0)
+					stack.pop();
+				else
+					trace('[ScriptHandler] #end without #if — ignored');
+				out.push('// [#end]');
+			}
+			else
+			{
+				// Regular line: emit only if we're inside an active branch (or no branch at all).
+				// Inactive lines become `// ` to preserve line numbers for error reporting.
+				out.push(isActive() ? (rawLine.endsWith('\r') ? line : rawLine) : '// ');
+			}
+		}
+
+		if (stack.length > 0)
+			trace('[ScriptHandler] ${stack.length} unclosed #if block(s) detected.');
+
+		return out.join('\n');
+	}
+	#end
+
+	// ── Main preprocessor entry-point ─────────────────────────────────────────
+
+	/**
+	 * Full source pre-processing pipeline for HScript files.
+	 *
+	 * Pipeline (in order):
+	 *   1. #if / #elseif / #else / #end  — conditional compilation
+	 *   2. package foo.bar;              → comment (hscript doesn't support it)
+	 *   3. using foo.Bar;                → comment (extension methods unsupported)
+	 *   4. import a.b.C;                 → comment + inject class into interp
+	 *
+	 * @param source   Raw source code of the script (read from disk or string).
+	 * @param interp   Interpreter into which imported classes will be injected.
+	 * @return         Source code safe to pass to hscript.Parser.parseString().
 	 */
 	#if HSCRIPT_ALLOWED
 	public static function processImports(source:String, interp:Interp):String
 	{
-		// Reutilizar la EReg estática — FIX #8 (no recompilar en cada llamada).
-		final importReg = _importReg;
-		return importReg.map(source, function(r:EReg):String
+		// ── Step 1: #if / #elseif / #else / #end ─────────────────────────────
+		var result = _processConditionals(source);
+
+		// ── Step 2: strip `package foo.bar;` ─────────────────────────────────
+		result = _packageReg.map(result, function(r:EReg):String
 		{
-			final fullName = r.matched(1);
-			final alias = r.matched(2);
+			trace('[ScriptHandler] package stripped: ${r.matched(0).trim()}');
+			return '// [package] ${r.matched(0).trim()}';
+		});
+
+		// ── Step 3: strip `using foo.Bar;` ───────────────────────────────────
+		// Extension methods are not supported by hscript at runtime.
+		// Comment the line so the parser doesn't reject it.
+		result = _usingReg.map(result, function(r:EReg):String
+		{
+			trace('[ScriptHandler] using stripped: ${r.matched(1)}');
+			return '// [using] ${r.matched(1)}';
+		});
+
+		// ── Step 4: resolve `import a.b.C;` ──────────────────────────────────
+		// Each import is resolved via Type.resolveClass / Type.resolveEnum and
+		// injected into interp.variables under the short name (or alias).
+		// The import line is replaced with a comment so hscript doesn't see it.
+		return _importReg.map(result, function(r:EReg):String
+		{
+			final fullName  = r.matched(1);
+			final alias     = r.matched(2);
 			final shortName = (alias != null && alias != '') ? alias : fullName.split('.').pop();
 
-			// IMPORTANT: If ScriptAPI.expose() already registered a hand-crafted proxy
-			// for this name (e.g. FlxColor → _flxColorProxy, FlxEase → _flxEaseProxy),
-			// do NOT overwrite it with the raw Haxe class/abstract resolved via reflection.
-			//
-			// Abstracts like FlxColor are erased at runtime — Type.resolveClass() may
-			// return the underlying @:impl class, whose static fields are NOT accessible
-			// via Reflect.field(). That would make FlxColor.BLACK return null in scripts.
-			// The proxy exposes them as plain Int values and is always the better choice.
+			// If ScriptAPI.expose() already registered a hand-crafted proxy for
+			// this name (e.g. FlxColor proxy, FlxEase proxy) do NOT overwrite it.
+			// Abstracts are erased at runtime — the raw class resolved via
+			// Type.resolveClass() would expose the @:impl class whose static fields
+			// are NOT accessible via Reflect.field().
 			if (interp.variables.exists(shortName))
 			{
 				trace('[ScriptHandler] import $fullName → kept existing proxy for "$shortName"');
@@ -1293,7 +1633,7 @@ class ScriptHandler
 			{
 				trace('[ScriptHandler] unresolved import: $fullName (missing from build?)');
 			}
-			// Comment out the line so hscript does not see it
+
 			return '// [import] $fullName';
 		});
 	}

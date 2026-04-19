@@ -337,6 +337,13 @@ class SoundTray extends FlxBasic
     {
         if (SoundTray.instance == this)
             SoundTray.instance = null;
+        // FIX Bug 5: dispose the persistent OpenFL container so its
+        // gameResized and preUpdate signal handlers are properly removed.
+        if (_container != null)
+        {
+            _container.dispose();
+            _container = null;
+        }
         super.destroy();
     }
 }
@@ -363,6 +370,12 @@ class SoundTrayContainer extends openfl.display.Sprite
 
     private var _updateConnected:Bool = false;
 
+    // FIX Bug 5: same leak as StickerTransitionContainer — anonymous lambda
+    // passed to gameResized.add() was never removable, keeping `this` rooted
+    // in the signal for the lifetime of the game even if the container were
+    // ever destroyed.  Store the reference so dispose() can clean it up.
+    private var _onResizeHandler:(Int, Int)->Void;
+
     public function new():Void
     {
         super();
@@ -372,9 +385,27 @@ class SoundTrayContainer extends openfl.display.Sprite
         trayCamera.bgColor = 0x00000000;
         addChild(trayCamera.flashSprite);
 
-        FlxG.signals.gameResized.add((_, _) -> onResize());
+        _onResizeHandler = (_, _) -> onResize();
+        FlxG.signals.gameResized.add(_onResizeHandler);
         scrollRect = new openfl.geom.Rectangle();
         onResize();
+    }
+
+    /** Desconecta todos los signals y libera recursos nativos. */
+    public function dispose():Void
+    {
+        if (_onResizeHandler != null)
+        {
+            FlxG.signals.gameResized.remove(_onResizeHandler);
+            _onResizeHandler = null;
+        }
+        if (_updateConnected)
+        {
+            FlxG.signals.preUpdate.remove(_manualUpdate);
+            _updateConnected = false;
+        }
+        trayCamera?.clearDrawStack();
+        trayCamera?.canvas?.graphics.clear();
     }
 
     /** Asigna los tres sprites del tray y los apunta a nuestra cámara. */

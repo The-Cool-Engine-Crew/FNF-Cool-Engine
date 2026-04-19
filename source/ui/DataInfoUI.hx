@@ -12,6 +12,8 @@ import funkin.system.SystemInfo;
 import funkin.system.WindowManager;
 import funkin.audio.AudioConfig;
 
+using StringTools;
+
 /**
  * DataInfoUI — overlay de debug/stats superpuesto sobre el juego.
  *
@@ -486,9 +488,36 @@ class GameplayDebugOverlay extends Sprite
 	{
 		var lines:Array<String> = [];
 
-		// VRAM
-		var vram = SystemInfo.initialized && SystemInfo.vRAM != 'Unknown' ? SystemInfo.vRAM : 'N/A';
-		lines.push('VRAM: $vram');
+		// VRAM — usada / total + barra ASCII de progreso
+		var vramLine:String;
+		if (SystemInfo.initialized && SystemInfo.vRAMTotalKB > 0)
+		{
+			var totalKB  = SystemInfo.vRAMTotalKB;
+			var usedKB   = SystemInfo.getVRAMUsedKB();
+			var totalMB  = Math.round(totalKB  / 1024);
+			if (usedKB >= 0)
+			{
+				var usedMB  = Math.round(usedKB  / 1024);
+				var pct     = Math.min(1.0, usedKB / totalKB);
+				var pctInt  = Math.round(pct * 100);
+				var filled  = Math.round(pct * 10);
+				var bar     = '[' + StringTools.rpad('', '█', filled)
+				            + StringTools.rpad('', '░', 10 - filled) + ']';
+				var warn    = pct >= 0.90 ? ' !!' : (pct >= 0.75 ? ' !' : '');
+				vramLine = 'VRAM: ${usedMB} / ${totalMB} MB  (${pctInt}%) $bar$warn';
+			}
+			else
+			{
+				vramLine = 'VRAM: ${totalMB} MB total  (live use N/A)';
+			}
+		}
+		else
+		{
+			var fallback = (SystemInfo.initialized && SystemInfo.vRAM != 'Unknown')
+				? SystemInfo.vRAM : 'N/A';
+			vramLine = 'VRAM: $fallback';
+		}
+		lines.push(vramLine);
 
 		// Texturas en caché
 		if (funkin.cache.FunkinCache.instance != null)
@@ -658,7 +687,7 @@ class DebugPanel extends Sprite
  */
 class SystemPanel extends TextField
 {
-	public static inline var HEIGHT:Int = 64;
+	public static inline var HEIGHT:Int = 76;
 
 	public function new(x:Float, y:Float)
 	{
@@ -706,10 +735,18 @@ class SystemPanel extends TextField
 		var gpuLine = '';
 		if (SystemInfo.gpuName != "Unknown")
 			gpuLine += 'GPU: ${SystemInfo.gpuName}';
-		if (SystemInfo.vRAM != "Unknown")
-			gpuLine += '  VRAM: ${SystemInfo.vRAM}';
 		if (gpuLine.length > 0)
 			lines.push(gpuLine);
+		// VRAM total (estático, detectado al inicio)
+		if (SystemInfo.vRAMTotalKB > 0)
+		{
+			var totalMB = Math.round(SystemInfo.vRAMTotalKB / 1024);
+			lines.push('    VRAM: ${totalMB} MB total  (F1 for live use)');
+		}
+		else if (SystemInfo.vRAM != "Unknown")
+		{
+			lines.push('    VRAM: ${SystemInfo.vRAM}');
+		}
 
 		if (SystemInfo.gpuMaxTextureSize != "Unknown")
 			lines.push('    Max tex: ${SystemInfo.gpuMaxTextureSize}');

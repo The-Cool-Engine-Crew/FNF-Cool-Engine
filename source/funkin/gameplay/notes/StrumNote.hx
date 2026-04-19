@@ -2,6 +2,8 @@ package funkin.gameplay.notes;
 
 import flixel.FlxSprite;
 import flixel.FlxG;
+import flixel.FlxCamera;
+import flixel.graphics.frames.FlxFrame.FlxFrameAngle;
 import funkin.gameplay.PlayState;
 import lime.utils.Assets;
 import funkin.gameplay.PlayStateConfig;
@@ -27,6 +29,21 @@ class StrumNote extends FlxSprite
 	public var logicalY:Float = 0.0;
 
 	var animArrow:Array<String> = ['LEFT', 'DOWN', 'UP', 'RIGHT'];
+
+	// ── Deformación (skew / inclinación) ──────────────────────────────────────
+
+	/**
+	 * Inclinación horizontal en grados (shear X).
+	 * Positivo = lean hacia la derecha. Asignado por ModChartManager.applyAllStates().
+	 * Se aplica via matrix en drawComplex() sin afectar hitbox ni posición lógica.
+	 */
+	public var skewX:Float = 0.0;
+
+	/**
+	 * Inclinación vertical en grados (shear Y).
+	 * Positivo = lean hacia abajo. Asignado por ModChartManager.applyAllStates().
+	 */
+	public var skewY:Float = 0.0;
 
 	// ── Estado de skin ────────────────────────────────────────────────────
 
@@ -316,5 +333,60 @@ class StrumNote extends FlxSprite
 		{
 			playAnim('static');
 		}
+	}
+
+	// ==================== DEFORMACIÓN (SKEW) ====================
+
+	/**
+	 * Override de drawComplex para inyectar skewX/skewY via matrix 2D.
+	 *
+	 * Cuando ambos valores son 0 delega directamente a super (cero overhead).
+	 * Con valores != 0 replica el pipeline de FlxSprite.drawComplex() e inserta
+	 * el shear ANTES de la rotación, igual que FlxSkewedSprite de flixel-addons.
+	 *
+	 * Fórmula de shear:
+	 *   matrix.c += tan(skewX * π/180)  → desplaza X en función de Y (lean horizontal)
+	 *   matrix.b += tan(skewY * π/180)  → desplaza Y en función de X (lean vertical)
+	 *
+	 * El eje de inclinación es el origin del sprite (centro por defecto en StrumNote
+	 * gracias al centerOffsets() de playAnim()), por lo que el strum "baila" alrededor
+	 * de su propio centro sin desplazarse en pantalla.
+	 */
+	override function drawComplex(camera:FlxCamera):Void
+	{
+		if (skewX == 0.0 && skewY == 0.0)
+		{
+			super.drawComplex(camera);
+			return;
+		}
+
+		// Preparar la matrix base idéntica a FlxSprite.drawComplex()
+		_frame.prepareMatrix(_matrix, FlxFrameAngle.ANGLE_0, checkFlipX(), checkFlipY());
+		_matrix.translate(-origin.x, -origin.y);
+		_matrix.scale(scale.x, scale.y);
+
+		// ── Inyectar shear ANTES de la rotación ────────────────────────────
+		// tan() de ángulos pequeños (~30°) produce valores razonables;
+		// valores extremos (>89°) se clampean para evitar artefactos.
+		final clampDeg = 89.0;
+		final skXc:Float = Math.max(-clampDeg, Math.min(clampDeg, skewX));
+		final skYc:Float = Math.max(-clampDeg, Math.min(clampDeg, skewY));
+		if (skXc != 0.0) _matrix.c += Math.tan(skXc * (Math.PI / 180.0));
+		if (skYc != 0.0) _matrix.b += Math.tan(skYc * (Math.PI / 180.0));
+
+		// Rotación (idéntico a FlxSprite)
+		if (bakedRotationAngle <= 0)
+		{
+			updateTrig();
+			if (angle != 0)
+				_matrix.rotateWithTrig(_cosAngle, _sinAngle);
+		}
+
+		// Translación a posición en pantalla
+		getScreenPosition(_point, camera).subtract(scrollFactor.x, scrollFactor.y);
+		_point.add(origin.x, origin.y);
+		_matrix.translate(_point.x, _point.y);
+
+		camera.drawPixels(_frame, _matrix, colorTransform, blend, antialiasing, shader);
 	}
 }

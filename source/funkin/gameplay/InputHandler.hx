@@ -535,24 +535,10 @@ class InputHandler
 	{
 		if (funkin.gameplay.PlayState.isBotPlay)
 		{
+			// FIX: NoteManager maneja el bot en su propio update con timing exacto del CPU
 			pressed[0]  = pressed[1]  = pressed[2]  = pressed[3]  = false;
 			held[0]     = held[1]     = held[2]     = held[3]     = false;
 			released[0] = released[1] = released[2] = released[3] = false;
-
-			final members = notes.members;
-			final len = members.length;
-			for (i in 0...len)
-			{
-				final note = members[i];
-				if (note == null || !note.alive) continue;
-				if (note.canBeHit && note.mustPress && !note.tooLate
-					&& !note.wasGoodHit && !note.isSustainNote)
-				{
-					if (onNoteHit != null) onNoteHit(note);
-					pressed[note.noteData] = true;
-					if (onKeyPress != null) onKeyPress(note.noteData);
-				}
-			}
 			return;
 		}
 
@@ -690,21 +676,9 @@ class InputHandler
 		final members = notes.members;
 		final len = members.length;
 
+		// FIX: en bot mode NoteManager maneja los sustains igual que el CPU
 		if (funkin.gameplay.PlayState.isBotPlay)
-		{
-			for (i in 0...len)
-			{
-				final note = members[i];
-				if (note == null || !note.alive) continue;
-				if (note.mustPress && note.isSustainNote && !note.wasGoodHit
-					&& note.canBeHit && !note.tooLate)
-				{
-					held[note.noteData] = true;
-					if (onNoteHit != null) onNoteHit(note);
-				}
-			}
 			return;
-		}
 
 		for (i in 0...len)
 		{

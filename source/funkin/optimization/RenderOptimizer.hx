@@ -89,6 +89,10 @@ class RenderOptimizer
 	 * Aplica cacheAsBitmap a sprites de stage que son completamente estáticos.
 	 * Llamar después de crear el Stage.
 	 *
+	 * Con `cacheAsBitmap = true`, OpenFL rasteriza el contenido a una textura
+	 * interna (subida a VRAM una sola vez) y la reutiliza cada frame sin pasar
+	 * por el rasterizador de CPU — ideal para fondos y props que no cambian.
+	 *
 	 * @param sprites  Array de FlxSprites que no tendrán cambios de contenido.
 	 */
 	public static function cacheStaticSprites(sprites:Array<FlxSprite>):Void
@@ -103,12 +107,65 @@ class RenderOptimizer
 				if (spr.animation == null || spr.animation.numFrames <= 1)
 				{
 					spr.active = false; // No necesita update()
-					// cacheAsBitmap sube la textura a VRAM una sola vez
-					// cacheAsBitmap is not directly accessible on FlxSprite;
-					// setting active = false above already prevents unnecessary updates.
+
+					// Acceder al DisplayObject subyacente de OpenFL para
+					// activar cacheAsBitmap. FlxSprite no expone esta propiedad
+					// directamente, pero hereda de openfl.display.Sprite.
+					@:privateAccess
+					final dobj:openfl.display.DisplayObject = cast spr;
+					if (dobj != null)
+					{
+						dobj.cacheAsBitmap = true;
+						// cacheAsBitmapMatrix con la matriz identidad indica que
+						// la textura está en espacio local → OpenFL la reutiliza
+						// aunque el sprite se mueva, sin re-rasterizar.
+						dobj.cacheAsBitmapMatrix = new openfl.geom.Matrix();
+					}
 				}
 			}
 			catch (_:Dynamic) {}
+		}
+	}
+
+	/**
+	 * Reduce la resolución de un sprite en un factor dado para ahorrar VRAM.
+	 * Útil para props de fondo o personajes lejanos que no requieren full-res.
+	 *
+	 * Ejemplo: factor=0.5 → 512×512 RGBA se convierte en 256×256 RGBA (−75% VRAM)
+	 *
+	 * PRECAUCIÓN: Modifica el BitmapData del sprite de forma IRREVERSIBLE.
+	 * Llamar solo en sprites que no comparten textura con otros.
+	 *
+	 * @param sprite  FlxSprite a reducir.
+	 * @param factor  Factor de escala (0.0–1.0). 0.5 = mitad de resolución.
+	 */
+	public static function downsampleSprite(sprite:FlxSprite, factor:Float = 0.5):Void
+	{
+		if (sprite == null || sprite.pixels == null) return;
+		if (factor <= 0 || factor >= 1.0) return;
+
+		try
+		{
+			final src  = sprite.pixels;
+			final newW = Std.int(Math.max(1, Math.round(src.width  * factor)));
+			final newH = Std.int(Math.max(1, Math.round(src.height * factor)));
+
+			final dst = new openfl.display.BitmapData(newW, newH, src.transparent, 0);
+			final mtx = new openfl.geom.Matrix();
+			mtx.scale(factor, factor);
+			dst.draw(src, mtx, null, null, null, true);
+
+			sprite.loadGraphic(dst);
+			// Escalar el sprite de vuelta a tamaño original para que ocupe el mismo
+			// espacio en pantalla, pero use la textura de menor resolución.
+			sprite.scale.set(1.0 / factor, 1.0 / factor);
+			sprite.updateHitbox();
+
+			trace('[RenderOptimizer] downsampleSprite: ${src.width}×${src.height} → ${newW}×${newH} (factor=${factor})');
+		}
+		catch (e:Dynamic)
+		{
+			trace('[RenderOptimizer] downsampleSprite error: $e');
 		}
 	}
 

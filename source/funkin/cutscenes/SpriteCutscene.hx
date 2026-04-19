@@ -102,6 +102,13 @@ class SpriteCutscene
 	// Se registran vía el paso interno '_registerCleanup'.
 	var _cleanupCallbacks:Array<Dynamic> = [];
 
+	// ── Seguimiento del estado de pausa del juego ─────────────────────────────
+	// FlxTimerManager y FlxTweenManager son PLUGINS globales de Flixel, no
+	// miembros del estado. Siguen actualizándose aunque el estado esté pausado
+	// por un substate (ej. PauseSubState). Hay que pausarlos/reanudarlos
+	// manualmente detectando cuándo el juego entra/sale de pausa.
+	var _wasGamePaused:Bool = false;
+
 	// ── constructor ───────────────────────────────────────────────────────────
 
 	/**
@@ -985,7 +992,8 @@ class SpriteCutscene
 	static function _parseColor(s:String):FlxColor
 	{
 		if (s == null) return FlxColor.BLACK;
-		return switch (s.toUpperCase())
+		var upper = s.toUpperCase();
+		return switch (upper)
 		{
 			case 'BLACK':       FlxColor.BLACK;
 			case 'WHITE':       FlxColor.WHITE;
@@ -997,6 +1005,17 @@ class SpriteCutscene
 			case 'MAGENTA':     FlxColor.MAGENTA;
 			case 'TRANSPARENT': FlxColor.TRANSPARENT;
 			default:
+				// FIX color negro → blanco: FlxColor.fromString() solo acepta el prefijo '#',
+				// NO '0x'. Cuando recibe '0xFF000000' devuelve TRANSPARENT (sin lanzar
+				// excepción), y makeGraphic con transparente muestra el bitmap blanco subyacente.
+				// Solución: detectar el prefijo '0x'/'0X' y parsear con Std.parseInt, que sí
+				// entiende el formato 0xRRGGBB / 0xAARRGGBB correctamente.
+				if (upper.startsWith('0X'))
+				{
+					var val = Std.parseInt(s);
+					if (val != null) return (val : FlxColor);
+				}
+				// Para strings con '#' dejamos fromString (acepta #RGB, #RRGGBB, #AARRGGBB)
 				try   { return FlxColor.fromString(s); }
 				catch (_) { return FlxColor.BLACK; }
 		};
@@ -1240,6 +1259,25 @@ class SpriteCutscene
 	/** Tick de seguimiento de cámara — se conecta a FlxG.signals.preUpdate. */
 	function _onPreUpdate():Void
 	{
+		// ── Detección de pausa del juego ─────────────────────────────────────
+		// Un substate abierto (PauseSubState, etc.) significa que el juego está
+		// en pausa. FlxTimerManager y FlxTweenManager son plugins globales y NO
+		// se detienen solos → hay que gestionarlos manualmente aquí.
+		var isGamePaused:Bool = (FlxG.state != null && FlxG.state.subState != null);
+
+		if (isGamePaused && !_wasGamePaused)
+		{
+			_pauseCutscene();
+		}
+		else if (!isGamePaused && _wasGamePaused)
+		{
+			_resumeCutscene();
+		}
+		_wasGamePaused = isGamePaused;
+
+		// No actualizar lógica de cámara mientras el juego esté pausado
+		if (isGamePaused) return;
+
 		// Sincronizar _camCutscene con FlxG.camera en cada frame para que
 		// los sprites con scrollFactor=1 aparezcan correctamente sobre el stage.
 		if (_camCutscene != null)
@@ -1253,6 +1291,67 @@ class SpriteCutscene
 	}
 
 	/**
+	 * Pausa la cutscene cuando el juego entra en pausa (substate abierto).
+	 * Pausa manualmente timers, tweens, sonidos y animaciones de sprites propios
+	 * porque FlxTimerManager/FlxTweenManager son plugins globales que no respetan
+	 * el active=false del estado padre.
+	 */
+	function _pauseCutscene():Void
+	{
+		// Pausar timers de la cutscene
+		for (t in _timers)
+			t.active = false;
+
+		// Pausar tweens de la cutscene
+		for (tw in _tweens)
+			tw.active = false;
+
+		// Pausar sonidos propios de la cutscene
+		for (snd in _sounds)
+			if (snd != null && snd.playing) snd.pause();
+
+		// Pausar animaciones de los sprites propios de la cutscene
+		for (spr in _sprites)
+		{
+			if (spr == null) continue;
+			if (spr.animation != null && spr.animation.curAnim != null)
+				spr.animation.curAnim.paused = true;
+			// FlxAnimate
+			if (Reflect.hasField(spr, 'anim') && (spr : Dynamic).anim != null)
+				try { (spr : Dynamic).anim.pause(); } catch (_:Dynamic) {}
+		}
+	}
+
+	/**
+	 * Reanuda la cutscene cuando el juego sale de pausa (substate cerrado).
+	 */
+	function _resumeCutscene():Void
+	{
+		// Reanudar timers
+		for (t in _timers)
+			t.active = true;
+
+		// Reanudar tweens
+		for (tw in _tweens)
+			tw.active = true;
+
+		// Reanudar sonidos
+		for (snd in _sounds)
+			if (snd != null) snd.resume();
+
+		// Reanudar animaciones de los sprites propios
+		for (spr in _sprites)
+		{
+			if (spr == null) continue;
+			if (spr.animation != null && spr.animation.curAnim != null)
+				spr.animation.curAnim.paused = false;
+			// FlxAnimate
+			if (Reflect.hasField(spr, 'anim') && (spr : Dynamic).anim != null)
+				try { (spr : Dynamic).anim.resume(); } catch (_:Dynamic) {}
+		}
+	}
+
+	/**
 	 * Congela/descongela los personajes del PlayState durante la cutscene.
 	 * Pausa/reanuda sus animaciones para que no sigan bailando mientras
 	 * la cutscene reproduce sus propias animaciones con stageAnim.
@@ -1261,10 +1360,11 @@ class SpriteCutscene
 	{
 		var ps = funkin.gameplay.PlayState.instance;
 		if (ps == null) return;
+		// GF no se congela: solo bopea al ritmo y no interfiere con la cutscene.
+		// Congelarla haría que se quedase estática durante toda la cinemática.
 		var chars:Array<Dynamic> = [];
 		if (ps.boyfriend != null) chars.push(ps.boyfriend);
 		if (ps.dad       != null) chars.push(ps.dad);
-		if (ps.gf        != null) chars.push(ps.gf);
 		for (c in chars)
 		{
 			if (c == null) continue;
@@ -1308,7 +1408,8 @@ class SpriteCutscene
 	{
 		var ps = funkin.gameplay.PlayState.instance;
 		if (ps == null) return;
-		var chars:Array<Dynamic> = [ps.boyfriend, ps.dad, ps.gf];
+		// GF no se incluye: nunca fue congelada, su sistema de animación ya la gestiona.
+		var chars:Array<Dynamic> = [ps.boyfriend, ps.dad];
 		for (c in chars)
 		{
 			if (c == null) continue;
@@ -1341,6 +1442,9 @@ class SpriteCutscene
 
 	function _cleanup():Void
 	{
+		// Resetear estado de pausa para que no queden timers/tweens desactivados
+		// si la cutscene se reutiliza o se salta mientras el juego está pausado.
+		_wasGamePaused = false;
 		// FIX animaciones: reanudar los personajes al terminar la cutscene
 		_setCharactersFrozen(false);
 		// FIX animaciones persisten: forzar a cada personaje a su idle/dance

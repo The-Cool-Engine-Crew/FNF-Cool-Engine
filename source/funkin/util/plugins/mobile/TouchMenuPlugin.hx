@@ -55,15 +55,15 @@ import data.PlayerSettings;
 class TouchMenuPlugin extends FlxBasic
 {
 	// ── Configuración pública ───────────────────────────────────────────
-	public static var swipeMinDist:Float  = 48.0;  // px mínimos usando maxDist (antes 55 del dist final)
-	public static var swipeMaxTime:Float  = 0.50;  // s máximos del swipe (más margen)
-	public static var tapMaxDist:Float    = 28.0;  // px máximos de jitter permitido en un tap (antes 22)
+	public static var swipeMinDist:Float  = 32.0;  // px mínimos para considerar swipe (bajado de 48 — más sensible)
+	public static var swipeMaxTime:Float  = 0.75;  // s máximos del swipe (subido de 0.5 — más margen para swipes lentos)
+	public static var tapMaxDist:Float    = 10.0;  // px máximos para un tap (bajado de 28 — evita confundir swipes con ACCEPT)
 	public static var tapMaxTime:Float    = 0.36;  // s máximos de un tap
-	public static var holdBackTime:Float  = 1.00;  // s para BACK por mantener (antes 0.70 — demasiado agresivo)
+	public static var holdBackTime:Float  = 1.20;  // s para BACK por mantener (subido de 1.0)
+	/** Si el dedo se movió más de este umbral en cualquier momento, hold-back no se lanza. */
+	public static var holdBackMoveGuard:Float = 14.0;
 	public static var backEdgeZone:Float  = 55.0;
-	/** Ratio mínimo para que un eje domine. |dy|/|dx| >= vertBias → vertical.
-	 *  Si el swipe no llega al ratio pero maxDist >= swipeMinDist, se resuelve
-	 *  al eje dominante de todas formas (evita swipes diagonales silenciados). */
+	/** Ratio mínimo para que un eje domine. |dy|/|dx| >= vertBias → vertical. */
 	public static var vertBias:Float      = 1.2;
 	public static var showHint:Bool       = true;
 
@@ -193,9 +193,11 @@ class TouchMenuPlugin extends FlxBasic
 			data.maxDist = dist;
 
 		// ── BACK por mantener quieto ───────────────────────────────────
+		// holdBackMoveGuard impide que el hold-back se lance si el dedo
+		// se movió aunque sea un poco — evita BACK accidental al inicio de un swipe lento.
 		if (_includeBack && !data.backFired
 		 && data.duration >= holdBackTime
-		 && data.maxDist  <  tapMaxDist)
+		 && data.maxDist  <  holdBackMoveGuard)
 		{
 			data.backFired = true;
 			data.gestFired = true;
@@ -226,26 +228,30 @@ class TouchMenuPlugin extends FlxBasic
 			return;
 		}
 
-		// ── Swipe ──────────────────────────────────────────────────────
-		// BUG ORIGINAL: usaba `dist` (distancia final dx/dy), que es pequeña si
-		// el dedo vuelve un poco al soltar. Ahora usamos `data.maxDist` — la
-		// distancia máxima alcanzada durante el gesto — para el umbral.
-		//
-		// Si hay mucho pull-back (dist < 40 % del máximo), la dirección del
-		// vector final es poco fiable; en ese caso también miramos data.maxDist
-		// para obtener la dirección aproximada (el gesto fue claramente un
-		// swipe aunque el dedo volvió).
-		if (data.maxDist >= swipeMinDist && data.duration <= swipeMaxTime)
-		{
-			var absDx = Math.abs(dx);
-			var absDy = Math.abs(dy);
+		var absDx = Math.abs(dx);
+		var absDy = Math.abs(dy);
 
-			// Si el dedo volvió mucho atrás, el vector final no refleja la
-			// dirección real del swipe. Descartamos como swipe sin caer en tap.
-			if (dist < swipeMinDist * 0.40)
+		// ── Swipe ──────────────────────────────────────────────────────
+		// Se considera swipe si el dedo alcanzó la distancia mínima en el tiempo permitido.
+		// Si el tiempo se excedió pero el movimiento es grande y claro, también se acepta
+		// como swipe lento (evita que swipes deliberados caigan a ACCEPT o BACK).
+		var isSwipe    = data.maxDist >= swipeMinDist && data.duration <= swipeMaxTime;
+		var isSlowSwipe = data.maxDist >= swipeMinDist * 1.8 && !isSwipe; // swipe lento pero grande y claro
+
+		if (isSwipe || isSlowSwipe)
+		{
+			// Si el dedo volvió atrás más del 60%, el vector final es poco fiable.
+			// Solo descartamos si el gesto no es lo suficientemente claro.
+			if (dist < swipeMinDist * 0.35 && !isSlowSwipe)
 				return;
 
-			// Eje vertical domina con claridad → UP / DOWN
+			// Para swipes lentos, usamos la posición del máximo desplazamiento implícito
+			// (el vector dx/dy sigue siendo la mejor aproximación de la dirección).
+			// Si el pullback es extremo en swipe lento, también descartamos.
+			if (isSlowSwipe && dist < swipeMinDist * 0.25)
+				return;
+
+			// Eje vertical domina → UP / DOWN
 			if (absDy >= absDx * vertBias)
 			{
 				if (dy < 0) { _upInput.fire();  _pulseHint("↑"); }
@@ -253,7 +259,7 @@ class TouchMenuPlugin extends FlxBasic
 				return;
 			}
 
-			// Eje horizontal domina con claridad → LEFT / RIGHT
+			// Eje horizontal domina → LEFT / RIGHT
 			if (_includeLeftRight && absDx >= absDy * vertBias)
 			{
 				if (dx < 0) { _leftInput.fire();  _pulseHint("←"); }
@@ -261,10 +267,7 @@ class TouchMenuPlugin extends FlxBasic
 				return;
 			}
 
-			// ── Diagonal (ningún eje supera el ratio) ─────────────────
-			// ANTES: se ignoraba en silencio → el gesto desaparecía.
-			// AHORA: resolvemos al eje dominante como fallback, para que un
-			// swipe ligeramente diagonal siga funcionando.
+			// Diagonal: resolver al eje dominante (nunca silenciar el gesto)
 			if (absDy >= absDx)
 			{
 				if (dy < 0) { _upInput.fire();  _pulseHint("↑"); }
@@ -275,22 +278,19 @@ class TouchMenuPlugin extends FlxBasic
 				if (dx < 0) { _leftInput.fire();  _pulseHint("←"); }
 				else        { _rightInput.fire(); _pulseHint("→"); }
 			}
-			else
-			{
-				// Sin LEFT/RIGHT disponible y el eje X domina → no hacer nada
-				// (no caer en tap, fue un intento de swipe horizontal)
-			}
-			return; // fue un intento de swipe — no convertir a tap
+			return; // fue un swipe — nunca convertir a tap
 		}
 
 		// ── Tap → ACCEPT ───────────────────────────────────────────────
-		// Usamos data.maxDist (no dist) para filtrar el jitter acumulado.
-		// Si el dedo se movió más de tapMaxDist en cualquier momento, no es tap.
+		// tapMaxDist es pequeño (10px) para que solo los taps deliberados
+		// disparen ACCEPT — cualquier intento de swipe queda fuera de este umbral.
 		if (data.maxDist <= tapMaxDist && data.duration <= tapMaxTime)
 		{
 			_acceptInput.fire();
 			_pulseHint("✓");
 		}
+		// Si maxDist está entre tapMaxDist y swipeMinDist: gesto ambiguo → ignorar.
+		// Mejor no hacer nada que disparar la acción equivocada.
 	}
 
 	// ── Helpers ──────────────────────────────────────────────────────────

@@ -1005,12 +1005,23 @@ class Paths
 			final oflCache:openfl.utils.AssetCache = cast openfl.utils.Assets.cache;
 			@:privateAccess
 			{
+				// FIX Bug H — recoger las claves en Arrays ANTES de modificar el mapa.
+				// Iterar map.keys() mientras se llama removeBitmapData/removeSound (que hacen
+				// map.remove internamente) es comportamiento indefinido en Haxe/CPP y HashLink:
+				// el iterator puede saltar entradas, repetirlas o corromper el mapa.
+				// Snapshotear primero garantiza que se procesen exactamente las claves que
+				// existían al inicio del clear, sin importar la implementación del Map en
+				// cada target (StringMap en CPP, IntMap en HL, ObjectMap en Java...).
 				if (oflCache.bitmapData != null)
-					for (k in oflCache.bitmapData.keys())
-						oflCache.removeBitmapData(k);
+				{
+					final bmpKeys = [for (k in oflCache.bitmapData.keys()) k];
+					for (k in bmpKeys) oflCache.removeBitmapData(k);
+				}
 				if (oflCache.sound != null)
-					for (k in oflCache.sound.keys())
-						oflCache.removeSound(k);
+				{
+					final sndKeys = [for (k in oflCache.sound.keys()) k];
+					for (k in sndKeys) oflCache.removeSound(k);
+				}
 			}
 			oflCache.clear();
 		}
@@ -1262,6 +1273,36 @@ class Paths
 
 	static function _storeAtlas(key:String, atlas:FlxAtlasFrames):Void
 	{
+		// FIX Issue #8 — aplicar el límite maxAtlasCache antes de insertar.
+		// Antes, el límite de 50 entradas estaba solo en comentarios; no había
+		// código que lo enforceara dentro de la sesión. En mods con muchos assets,
+		// atlasCache podía crecer ilimitadamente durante gameplay.
+		// Si ya estamos al límite, evictar la entrada más vieja (FIFO aproximado
+		// usando el primer key del mapa) cuyo FlxGraphic ya no sea válido, o la
+		// más antigua si todas son válidas.
+		if (atlasCount >= maxAtlasCache)
+		{
+			var evictKey:Null<String> = null;
+			// Preferir una entrada con gráfico inválido (ya dispuesto)
+			for (k => a in atlasCache)
+			{
+				if (!_atlasValid(a)) { evictKey = k; break; }
+				if (evictKey == null) evictKey = k; // fallback: primera entrada
+			}
+			if (evictKey != null)
+			{
+				// FIX Bug 9: restore destroyOnNoUse=true before dropping the reference.
+				// _storeAtlas() sets it to false on insert so PathsCache owns the
+				// lifecycle. If we evict without restoring the flag, Flixel never
+				// auto-reclaims the FlxGraphic and it is pinned in the bitmap cache
+				// permanently — a silent, unbounded VRAM/RAM leak.
+				final evicted = atlasCache.get(evictKey);
+				if (evicted?.parent != null)
+					evicted.parent.destroyOnNoUse = true;
+				atlasCache.remove(evictKey);
+				atlasCount--;
+			}
+		}
 		// Sin eviction durante gameplay — clearPreviousSession() libera en bloque.
 		if (atlas?.parent != null)
 			atlas.parent.destroyOnNoUse = false; // PathsCache gestiona el ciclo de vida
@@ -1281,13 +1322,28 @@ class Paths
 		}
 	}
 
-	/** Elimina del caché de atlas cualquier entrada cuyo FlxGraphic ya no esté en PathsCache. */
+	/**
+	 * Removes any atlas cache entry whose FlxGraphic is no longer valid OR whose
+	 * parent graphic has been evicted from PathsCache (zombie entries whose bitmap
+	 * pointer is non-null but the graphic is no longer tracked by the session cache).
+	 */
 	static function _pruneInvalidAtlases():Void
 	{
 		final toRemove:Array<String> = [];
 		for (key in atlasCache.keys())
-			if (!_atlasValid(atlasCache.get(key)))
+		{
+			final atlas = atlasCache.get(key);
+			// FIX Bug 10: _atlasValid() only checks atlas.parent.bitmap != null.
+			// A "zombie" atlas can have a non-null bitmap while its parent graphic
+			// has already been evicted from PathsCache (e.g. cleared by
+			// clearSecondLayer). Adding hasValidGraphic catches those zombies so
+			// they are pruned in the same pass instead of lingering until the next
+			// postStateSwitch cycle.
+			final parentKey  = atlas?.parent?.key ?? '';
+			final isZombie   = parentKey != '' && !cache.hasValidGraphic(parentKey);
+			if (!_atlasValid(atlas) || isZombie)
 				toRemove.push(key);
+		}
 		for (key in toRemove)
 		{
 			atlasCache.remove(key);

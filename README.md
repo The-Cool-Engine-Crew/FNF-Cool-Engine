@@ -2,6 +2,7 @@
 
 > **Note**  
 > This engine is currently a work in progress. If you find any bugs or unexpected behavior, please open an issue in the repository.
+> It may contain [Psych Engine](https://github.com/ShadowMario/FNF-PsychEngine), [NMV](https://github.com/NMVTeam/NightmareVision), [CNE](https://github.com/CodenameCrew/CodenameEngine), and [V-Slice](https://github.com/FunkinCrew/Funkin) code, things just for optimization and to make mod porting possible.
 
 [![Build Cool Engine](https://github.com/The-Cool-Engine-Crew/FNF-Cool-Engine/actions/workflows/main.yml/badge.svg)](https://github.com/The-Cool-Engine-Crew/FNF-Cool-Engine/actions/workflows/main.yml)
 

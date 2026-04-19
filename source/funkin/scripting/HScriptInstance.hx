@@ -131,6 +131,12 @@ class HScriptInstance implements IScript
 
 	/** Sentinel: indica que la función NO existe en este script. */
 	static final _MISSING:{} = {};
+
+	/**
+	 * Array vacío reutilizable para llamadas sin argumentos.
+	 * Evita asignar un Array nuevo en el heap en cada call(funcName, null).
+	 */
+	static final _EMPTY_ARGS:Array<Dynamic> = [];
 	#end
 
 	// ── Constructor ───────────────────────────────────────────────────────────
@@ -161,35 +167,38 @@ class HScriptInstance implements IScript
 		if (!active)
 			return null;
 		// BUG FIX #8: bloquear llamadas mientras hotReload() re-ejecuta el programa.
-		// Sin este guard, onUpdate/onBeatHit del mismo frame acceden al intérprete
-		// en estado intermedio → crash cuando BF canta durante un hot-reload.
 		if (_reloading)
 			return null;
 
 		#if HSCRIPT_ALLOWED
 		if (interp == null)
 			return null;
-		if (args == null)
-			args = [];
 
+		// OPT v4: array estático en vez de asignar un Array nuevo por llamada
+		if (args == null)
+			args = _EMPTY_ARGS;
+
+		// OPT v4: cache lookup FUERA del try/catch.
+		// StringMap.get y la comparación con _MISSING no lanzan excepciones.
+		// Solo el Reflect.callMethod real necesita protección.
+		var func = _funcCache.get(funcName);
+
+		if (func == null)
+		{
+			final resolved = interp.variables.get(funcName);
+			func = (resolved != null && Reflect.isFunction(resolved)) ? resolved : _MISSING;
+			_funcCache.set(funcName, func);
+		}
+
+		if (func == _MISSING)
+			return null;
+
+		// Solo el dispatch real necesita try/catch
 		try
 		{
-			var func = _funcCache.get(funcName);
-
-			if (func == null)
-			{
-				// Primera vez que se llama con este nombre — resolver y cachear
-				final resolved = interp.variables.get(funcName);
-				func = (resolved != null && Reflect.isFunction(resolved)) ? resolved : _MISSING;
-				_funcCache.set(funcName, func);
-			}
-
-			if (func != _MISSING)
-			{
-				returnValue = Reflect.callMethod(null, func, args);
-				errorCount = 0; // successful call — reset the error streak
-				return returnValue;
-			}
+			returnValue = Reflect.callMethod(null, func, args);
+			errorCount  = 0;
+			return returnValue;
 		}
 		catch (e:Dynamic)
 		{
@@ -227,6 +236,31 @@ class HScriptInstance implements IScript
 	{
 		final r = call(funcName, args);
 		return r == true;
+	}
+
+	/**
+	 * Pre-carga el _funcCache con todas las funciones definidas en el script.
+	 *
+	 * OPT v4: llamar esto inmediatamente después de interp.execute() elimina
+	 * los "cold misses" del caché. Sin warmCache(), la primera llamada a cada
+	 * función (onUpdate, onBeatHit, onCreate...) tenía que hacer:
+	 *   interp.variables.get(name) + Reflect.isFunction(val) + cache.set()
+	 *
+	 * Con warmCache(), la primera llamada ya encuentra la entrada en el caché
+	 * y va directo a Reflect.callMethod(), igual que todas las siguientes.
+	 *
+	 * También pre-marca como _MISSING las funciones que no existen, eliminando
+	 * el coste de las primeras N llamadas fallidas por función no definida.
+	 */
+	public function warmCache():Void
+	{
+		#if HSCRIPT_ALLOWED
+		if (interp == null)
+			return;
+		_funcCache.clear();
+		for (name => val in interp.variables)
+			_funcCache.set(name, (val != null && Reflect.isFunction(val)) ? val : _MISSING);
+		#end
 	}
 
 	// ── Variables ─────────────────────────────────────────────────────────────
@@ -336,6 +370,7 @@ class HScriptInstance implements IScript
 			final _processedSource = ScriptHandler.processImports(_source, interp);
 			program = ScriptHandler.parser.parseString(_processedSource, name);
 			interp.execute(program);
+			warmCache(); // OPT v4: pre-fill _funcCache immediately after execution
 			return true;
 		}
 		catch (e:Dynamic)
@@ -367,22 +402,27 @@ class HScriptInstance implements IScript
 		try
 		{
 			_source = File.getContent(path);
-			program = ScriptHandler.parser.parseString(_source, path);
+
+			// FIX: processImports MUST run before parseString on every reload.
+			// Without this, a hot-reloaded script loses all its `import`,
+			// `package`, `using`, and `#if/#end` processing — the parser
+			// would see them raw and throw an error or silently skip the file.
+			final _processedSource = ScriptHandler.processImports(_source, interp);
+			program = ScriptHandler.parser.parseString(_processedSource, path);
 
 			// Re-exponer ScriptAPI (podría haber cambiado entre recargas)
 			ScriptAPI.expose(interp);
 
 			// Invalidar caché de funciones — el script redefinió sus funciones
-			_funcCache.clear();
 			errorCount = 0; // fresh reload — give the script a clean slate
 
 			// BUG FIX #8: bloquear call() durante la re-ejecución del programa.
-			// onUpdate/onBeatHit del mismo frame crashean si acceden al intérprete
-			// mientras interp.execute() está redefiniendo las funciones del script.
 			_reloading = true;
 			try
 			{
 				interp.execute(program);
+				warmCache(); // OPT v4: re-fill caché tras hot-reload
+				_reloading = false; // desbloquear ANTES de llamar callbacks
 				call('onCreate');
 				call('postCreate');
 			}

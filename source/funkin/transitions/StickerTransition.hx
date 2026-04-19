@@ -179,8 +179,29 @@ class StickerTransition
 		finish();
 	}
 
+	/**
+	 * Marks the sticker cache as dirty so it is rebuilt on the next transition.
+	 * Only destroys the cached FlxGraphics when no transition is currently active;
+	 * if a transition is in progress its sprites are still using those bitmaps —
+	 * destroying them now would cause blank textures mid-animation.
+	 */
 	public static function invalidateCache():Void
 	{
+		if (transitionSprite == null)
+		{
+			// Safe to destroy — no sprite is currently rendering these graphics.
+			for (g in graphicsCache)
+			{
+				if (g == null) continue;
+				try { FlxG.bitmap.removeByKey(g.key); g.destroy(); } catch (_:Dynamic) {}
+			}
+		}
+		// If a transition IS active we deliberately skip the destroy: the sprites
+		// hold strong useCount references and will release them when the transition
+		// finishes. clearUnused() will then collect the orphaned graphics naturally
+		// on the next preStateSwitch, because we restore destroyOnNoUse=true below
+		// via preloadGraphics() on next load (or they become eligible immediately
+		// since useCount will drop to 0 once the transition completes).
 		graphicsCache.clear();
 		cacheLoaded = false;
 		trace('[StickerTransition] Cache invalidated');
@@ -434,7 +455,16 @@ class StickerTransition
 					#end
 					if (bmp == null) { failed++; continue; }
 					var g = FlxGraphic.fromBitmapData(bmp);
-					g.persist = true;
+					g.persist          = true;
+					// FIX: clearUnused() destroys FlxGraphics with useCount==0 AND
+					// destroyOnNoUse==true. Between transitions sticker sprites are
+					// gone (useCount drops to 0) but cacheLoaded remains true, so
+					// preloadGraphics() is never re-run — the next transition calls
+					// _makeSprite() with a dead FlxGraphic (bitmap==null) and gets
+					// null back, producing blank/missing stickers. Setting this to
+					// false keeps the graphics alive across the gap between transitions;
+					// they are only truly destroyed in invalidateCache().
+					g.destroyOnNoUse   = false;
 					graphicsCache.set(key, g);
 					loaded++;
 				}
@@ -481,6 +511,13 @@ class StickerTransitionContainer extends openfl.display.Sprite
 
 	private var dissipationTimers:Array<FlxTimer> = [];
 
+	// FIX Bug 3: store the gameResized handler so it can be removed in clear().
+	// The anonymous lambda `(_, _) -> onResize()` was added but never removed,
+	// retaining a strong reference to `this` in FlxG.signals.gameResized for
+	// the lifetime of the game — preventing GC of every StickerTransitionContainer
+	// instance ever created.
+	private var _onResizeHandler:(Int, Int) -> Void;
+
 	public function new():Void
 	{
 		super();
@@ -493,7 +530,8 @@ class StickerTransitionContainer extends openfl.display.Sprite
 		grpStickers = new FlxTypedGroup<FlxSprite>();
 		grpStickers.camera = stickersCamera;
 
-		FlxG.signals.gameResized.add((_, _) -> onResize());
+		_onResizeHandler = (_, _) -> onResize();
+		FlxG.signals.gameResized.add(_onResizeHandler);
 		scrollRect = new openfl.geom.Rectangle();
 		onResize();
 	}
@@ -523,6 +561,14 @@ class StickerTransitionContainer extends openfl.display.Sprite
 	public function clear():Void
 	{
 		FlxG.signals.preUpdate.remove(_tick);
+		// FIX Bug 3: remove the gameResized handler registered in new().
+		// Without this, each StickerTransitionContainer instance stayed rooted
+		// in FlxG.signals forever — one retained reference per transition played.
+		if (_onResizeHandler != null)
+		{
+			FlxG.signals.gameResized.remove(_onResizeHandler);
+			_onResizeHandler = null;
+		}
 		FlxG.removeChild(this);
 		visible = false;
 		clearStickers();

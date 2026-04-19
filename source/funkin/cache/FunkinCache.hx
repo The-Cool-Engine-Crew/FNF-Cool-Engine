@@ -9,6 +9,7 @@ import animationdata.FunkinSprite;
 import funkin.system.MemoryUtil;
 #if lime
 import lime.utils.Assets as LimeAssets;
+import Paths;
 #end
 
 /**
@@ -84,9 +85,40 @@ class FunkinCache extends AssetCache
 	{
 		openfl.utils.Assets.cache = new FunkinCache();
 
+		// FIX: asignar el path resolver para que PathsCache._loadGraphic (Intento 3)
+		// pueda resolver keys con prefijo de librería Lime/OpenFL como
+		// "shared:icons/icon-bf.png". Sin esto, el Intento 3 es siempre saltado
+		// (pathResolver == null) y los iconos de personaje fallan al cargar cuando
+		// el cache está vacío (e.g. primera entrada desde Freeplay → LoadingState →
+		// PlayState), mientras que F5 funcionaba porque rescataba de _previousGraphics.
+		funkin.cache.PathsCache.pathResolver = Paths.image;
+
 		FlxG.signals.preStateSwitch.add(function()
 		{
 			try { openfl.system.System.gc(); } catch (_:Dynamic) {}
+
+			// ── FIX Bug 5: prune stale atlas entries BEFORE rotating layers ────
+			// pruneAtlasCache() was only called in postStateSwitch, after
+			// clearPreviousGraphics() had already nulled the BitmapData pointers.
+			// Running it here first ensures atlases whose FlxGraphic was destroyed
+			// by the previous state are evicted before they are moved to SECOND,
+			// preventing a full extra cycle of stale entries in RAM.
+			try { Paths.pruneAtlasCache(); } catch (_:Dynamic) {}
+
+			// ── FIX Bug 4: clear Character JSON/path caches ───────────────────
+			// _dataCache and _pathCache are static Maps that grow indefinitely —
+			// one entry per character loaded across all songs in a session. In
+			// large mod packs this can accumulate 1-2 MB of JSON strings. The
+			// caches are safe to wipe here; they are rebuilt on next access.
+			try { funkin.gameplay.objects.character.Character.clearCharCaches(); } catch (_:Dynamic) {}
+
+			// ── FIX Bug 12: clear NoteTypeManager frame cache ─────────────────
+			// _frames and _holdFrames hold FlxAtlasFrames that point into
+			// BitmapData destroyed by the previous state's clearSecondLayer().
+			// After that, _atlasValid() fails and they are reloaded from disk on
+			// the next gameplay session — causing a redundant RAM spike. Clearing
+			// them here lets the next session start with a clean cache.
+			try { funkin.gameplay.notes.NoteTypeManager.clearCache(); } catch (_:Dynamic) {}
 
 			// ── Paso 0b: expulsar FlxGraphics muertos ANTES de rotar ─────────
 			// Si el state anterior dejó FlxGraphics con useCount=0 en el pool de
@@ -115,6 +147,19 @@ class FunkinCache extends AssetCache
 				for (snd in FlxG.sound.list)
 					if (snd != null && !snd.persist)
 						try { snd.stop(); } catch (_:Dynamic) {}
+			}
+			catch (_:Dynamic) {}
+
+			try
+			{
+				if (FlxG.sound.music != null && !FlxG.sound.music.persist)
+				{
+					FlxG.sound.music.stop();
+					try { @:privateAccess FlxG.sound.music._sound?.close(); } catch (_:Dynamic) {}
+					FlxG.sound.list.remove(FlxG.sound.music, true);
+					FlxG.sound.music = null;
+				}
+				funkin.audio.MusicManager.invalidate();
 			}
 			catch (_:Dynamic) {}
 
@@ -168,12 +213,37 @@ class FunkinCache extends AssetCache
 			
 			try { FlxG.bitmap.clearUnused(); } catch (_:Dynamic) {}
 
+			// FIX Bug 4 — flushGPUCache solo se llamaba en PlayState.create().
+			// Los estados de menú cargan texturas que nunca sueltan su copia CPU
+			// (píxeles en RAM además de VRAM). En menús con muchos sprites
+			// (FreeplayState, OptionsMenu, StageEditor) esto suma 50–200 MB extra
+			// que System.totalMemory reporta aunque ya estén subidas a la GPU.
+			// Llamarlo aquí, después de que el nuevo state ya creó sus sprites
+			// (postStateSwitch se dispara tras create()), libera esas copias CPU
+			// en todos los estados, no solo en PlayState.
+			haxe.Timer.delay(function()
+			{
+				try { funkin.cache.PathsCache.instance.flushGPUCache(); } catch (_:Dynamic) {}
+			}, 80); // 80ms ≈ 5 frames — suficiente para que el primer render ocurra
+
 			#if lime
 			try { lime.utils.Assets.cache.clear('songs');  } catch (_:Dynamic) {}
 			try { lime.utils.Assets.cache.clear('music');  } catch (_:Dynamic) {}
 			try { lime.utils.Assets.cache.clear('sounds'); } catch (_:Dynamic) {}
+			// FIX Bug 6 — el cache de imágenes de Lime es independiente del de
+			// OpenFL/Flixel. Sin limpiarlo los BitmapData que FunkinCache ya
+			// dispose()-ó siguen referenciados por lime.utils.Assets.cache.image,
+			// bloqueando al GC e impidiendo que System.totalMemory baje al volver
+			// al menú. Limpiar 'images' aquí libera esas referencias inmediatamente.
+			try { lime.utils.Assets.cache.clear('images'); } catch (_:Dynamic) {}
 			#end
 
+			// FIX Bug 5 — GC diferido: en C++ los destructores de los objetos
+			// liberados por clearSecondLayer() se encolan para ejecutarse en el
+			// hilo del GC. Si llamamos Gc.run() en el mismo frame, muchos objetos
+			// aún no tienen finalizer listo y el GC no los recoge, así que
+			// System.totalMemory no baja. Diferir 2 frames (~32ms a 60fps) da
+			// tiempo a que todos los destructores terminen antes del ciclo mayor.
 			#if (android || mobileC || ios)
 			try { MemoryUtil.collectMinor(); } catch (_:Dynamic) {} // inmediato: limpia gen. joven
 			haxe.Timer.delay(function()                             // ~130ms después
@@ -182,8 +252,11 @@ class FunkinCache extends AssetCache
 				try { flixel.FlxG.bitmap.clearUnused(); } catch (_:Dynamic) {}
 			}, 130);
 			#else
-			MemoryUtil.collectMajor();
-			try { FlxG.bitmap.clearUnused(); } catch (_:Dynamic) {}
+			haxe.Timer.delay(function()   // ~2 frames a 60fps
+			{
+				MemoryUtil.collectMajor();
+				try { FlxG.bitmap.clearUnused(); } catch (_:Dynamic) {}
+			}, 32);
 			#end
 		});
 	}
@@ -209,60 +282,100 @@ class FunkinCache extends AssetCache
 
 	/**
 	 * Destruye los assets de SECOND no rescatados.
-	 * OPTIMIZACIÓN: batch eviction — acumula claves en un Array local
-	 * y ejecuta los removes en una sola pasada para evitar rehash del Map.
+	 *
+	 * FIX CRÍTICO (RAM no se vacía al cambiar de state):
+	 *   Los tres bucles de este método (bitmaps, fonts, sounds) llamaban a
+	 *   map.remove(k) DURANTE su propio `for (k => v in map)`. En Haxe/CPP,
+	 *   modificar un Map mientras se itera es comportamiento indefinido: el
+	 *   iterador puede saltar entradas. Las entradas saltadas que debían
+	 *   evictarse nunca recibían removeByKey/dispose/close, dejando sus
+	 *   texturas y buffers de audio nativos vivos en RAM indefinidamente.
+	 *
+	 *   Solución: separar completamente la fase de DECISIÓN (recoger claves
+	 *   en arrays sin tocar los Maps) de la fase de MUTACIÓN (procesar los
+	 *   arrays actuando sobre los Maps). Ningún Map se modifica mientras
+	 *   su iterador está activo.
+	 *
+	 * OPTIMIZACIÓN: batch eviction — acumula las claves a eliminar en Arrays
+	 * locales y ejecuta los removes en una sola pasada.
 	 */
 	public function clearSecondLayer():Void
 	{
 		if (bitmapData2 == null) return; // guard double-clear
 
 		// ── Bitmaps ────────────────────────────────────────────────────────────
-		final toRemove:Array<String> = [];
+		// Fase 1: decisión — iterar sin modificar bitmapData2.
+		// BUG FIX CRÍTICO — antes: `graphic.persist` era siempre `true` para
+		// TODOS los FlxGraphic gestionados por PathsCache, por lo que NINGÚN
+		// asset de la capa SECOND se descartaba nunca: todos se rescataban a
+		// CURRENT aunque el nuevo state no los necesitara, duplicando la RAM
+		// usada en cada cambio de state.
+		//
+		// Solución: rescatar solo si:
+		//   a) useCount > 0: un FlxSprite del nuevo state tiene referencia activa
+		//   b) isInCurrentSession(): PathsCache ya incorporó el asset a la
+		//      sesión actual (lo rescató de _previous o lo cargó de nuevo)
+		//
+		// graphic.persist sigue a `true` — es necesario para que Flixel no lo
+		// evicte por su cuenta. Pero FunkinCache ya no lo usa como criterio de
+		// rescate; usa PathsCache como fuente de verdad.
+		final bmpRescue:Array<String> = [];
+		final bmpEvict:Array<String>  = [];
 		for (k => b in bitmapData2)
 		{
 			if (_permanentBitmaps.exists(k)) continue;
 			final graphic = FlxG.bitmap.get(k);
-			// BUG FIX CRÍTICO — antes: `graphic.persist` era siempre `true` para
-			// TODOS los FlxGraphic gestionados por PathsCache, por lo que NINGÚN
-			// asset de la capa SECOND se descartaba nunca: todos se rescataban a
-			// CURRENT aunque el nuevo state no los necesitara, duplicando la RAM
-			// usada en cada cambio de state.
-			//
-			// Solución: rescatar solo si:
-			//   a) useCount > 0: un FlxSprite del nuevo state tiene referencia activa
-			//   b) isInCurrentSession(): PathsCache ya incorporó el asset a la
-			//      sesión actual (lo rescató de _previous o lo cargó de nuevo)
-			//
-			// graphic.persist sigue a `true` — es necesario para que Flixel no lo
-			// evicte por su cuenta. Pero FunkinCache ya no lo usa como criterio de
-			// rescate; usa PathsCache como fuente de verdad.
-			final shouldRescue = graphic != null
+			var shouldRescue = graphic != null
 				&& (graphic.useCount > 0
 					|| funkin.cache.PathsCache.instance.isInCurrentSession(k));
+			// KEY-MISMATCH GUARD:
+			// FunkinCache indexa BitmapData por el path completo de OpenFL
+			// (e.g. "assets/shared/images/icons/icon-bf.png"), mientras que
+			// PathsCache usa la clave corta (e.g. "icons/icon-bf").
+			// Cuando el lookup por key falla (FlxG.bitmap.get(k)==null y
+			// isInCurrentSession(k)==false), clearSecondLayer() tomaría la
+			// decisión incorrecta de evictar aunque PathsCache haya rescatado
+			// el gráfico bajo un key distinto → BitmapData disposed → invisible.
+			// Solución: fallback por identidad de objeto — si algún gráfico de la
+			// sesión actual en PathsCache referencia este mismo BitmapData, rescatar.
+			if (!shouldRescue && b != null)
+				shouldRescue = funkin.cache.PathsCache.instance.isBitmapObjectInCurrentSession(b);
 			if (shouldRescue)
-			{
-				// Aún en uso → rescatar a CURRENT
-				bitmapData.set(k, b);
-				_bitmapCount++;
-				bitmapData2.remove(k);
-				_bitmap2Count--;
-				continue;
-			}
-			toRemove.push(k);
+				bmpRescue.push(k);
+			else
+				bmpEvict.push(k);
 		}
-		for (k in toRemove)
+
+		// Fase 2a: rescatar bitmaps a CURRENT.
+		for (k in bmpRescue)
 		{
 			final b = bitmapData2.get(k);
+			if (b == null) continue;
+			bitmapData.set(k, b);
+			_bitmapCount++;
+			bitmapData2.remove(k);
+			_bitmap2Count--;
+		}
+
+		// Fase 2b: evictar bitmaps.
+		// CRÍTICO: dispose() libera la textura nativa (GPU/Stage3D).
+		// Sin esto el wrapper Haxe se GC-ea pero la VRAM/RAM nativa queda retenida.
+		// FIX Bug 2: no destruir BitmapData que PathsCache considera permanentes.
+		// FunkinCache solo veía useCount de FlxG.bitmap; si el useCount era 0
+		// en ese instante (e.g. entre frames) llamaba dispose() aunque el asset
+		// estuviera en _permanentGraphics de PathsCache → textura destruida,
+		// recarga innecesaria y subida de RAM en cada visita a FreeplayState.
+		for (k in bmpEvict)
+		{
+			final b = bitmapData2.get(k);
+			// FIX doble dispose: removeByKey() → g.destroy() ya llama dispose() si
+			// destroyOnNoUseCount=true. Capturar si el bitmap sigue vivo ANTES de
+			// removeByKey() para no llamar dispose() una segunda vez → corrupción.
+			final existingGraphic = FlxG.bitmap.get(k);
+			final bitmapAlreadyDisposed = existingGraphic == null || existingGraphic.bitmap == null;
 			FlxG.bitmap.removeByKey(k);
 			#if lime LimeAssets.cache.image.remove(k); #end
-			// CRÍTICO: dispose() libera la textura nativa (GPU/Stage3D).
-			// Sin esto el wrapper Haxe se GC-ea pero la VRAM/RAM nativa queda retenida.
-			// FIX Bug 2: no destruir BitmapData que PathsCache considera permanentes.
-			// FunkinCache solo veía useCount de FlxG.bitmap; si el useCount era 0
-			// en ese instante (e.g. entre frames) llamaba dispose() aunque el asset
-			// estuviera en _permanentGraphics de PathsCache → textura destruida,
-			// recarga innecesaria y subida de RAM en cada visita a FreeplayState.
-			if (b != null && !funkin.cache.PathsCache.instance.isPermanent(k))
+			if (!bitmapAlreadyDisposed && b != null && !funkin.cache.PathsCache.instance.isPermanent(k))
 				try { b.dispose(); } catch (_:Dynamic) {}
 			bitmapData2.remove(k);
 			if (onEvict != null) try { onEvict(k, 'bitmap'); } catch (_:Dynamic) {}
@@ -270,38 +383,143 @@ class FunkinCache extends AssetCache
 		_bitmap2Count = 0;
 
 		// ── Fonts ─────────────────────────────────────────────────────────────
-		for (k in font2.keys())
+		// FIX Issue #6 — rescatar fuentes usadas por el nuevo state antes de evictar.
+		// Antes todas las fuentes eran evictadas en cada state switch (sin rescue),
+		// forzando una recarga desde disco aunque el nuevo state las necesite
+		// (Funkin.otf, etc.). Ahora se rescatan a CURRENT si PathsCache las considera
+		// activas en la sesión actual, igual que bitmaps y sounds.
+		// Fase 1: decisión sin modificar font2.
+		final fontRescue:Array<String> = [];
+		final fontEvict:Array<String>  = [];
+		for (k => _ in font2)
+		{
+			if (funkin.cache.PathsCache.instance.isInCurrentSession(k))
+				fontRescue.push(k);
+			else
+				fontEvict.push(k);
+		}
+		// Fase 2a: rescatar.
+		for (k in fontRescue)
+		{
+			final f = font2.get(k);
+			if (f == null) continue;
+			font.set(k, f);
+			_fontCount++;
+			font2.remove(k);
+		}
+		// Fase 2b: evictar.
+		for (k in fontEvict)
 		{
 			#if lime LimeAssets.cache.font.remove(k); #end
 			if (onEvict != null) try { onEvict(k, 'font'); } catch (_:Dynamic) {}
 		}
 
 		// ── Sounds ────────────────────────────────────────────────────────────
-		for (k => s in sound2)
+		// Fase 1: decisión sin modificar sound2.
+		final sndRescue:Array<String> = [];
+		final sndEvict:Array<String>  = [];
+		for (k => _ in sound2)
 		{
 			if (_permanentSounds.exists(k)) continue;
 			if (funkin.cache.PathsCache.instance.isInCurrentSoundSession(k))
-			{
-				// Rescatar a CURRENT — el nuevo state ya lo cargó en PathsCache
-				sound.set(k, s);
-				_soundCount++;
-				sound2.remove(k);
-				continue;
-			}
+				sndRescue.push(k);
+			else
+				sndEvict.push(k);
+		}
+		// Fase 2a: rescatar a CURRENT — el nuevo state ya lo cargó en PathsCache.
+		for (k in sndRescue)
+		{
+			final s = sound2.get(k);
+			if (s == null) continue;
+			sound.set(k, s);
+			_soundCount++;
+			sound2.remove(k);
+		}
+		// Fase 2b: evictar — close() libera el buffer de audio nativo.
+		// Sin close(), solo muere el wrapper Haxe; el PCM buffer permanece en RAM
+		// hasta que el GC finaliza el objeto Sound, lo que puede tardar cientos
+		// de frames o no ocurrir antes del siguiente cambio de state.
+		for (k in sndEvict)
+		{
+			final s = sound2.get(k);
 			#if lime LimeAssets.cache.audio.remove(k); #end
-			// close() libera el buffer de audio nativo; sin esto solo muere el wrapper.
 			if (s != null) try { s.close(); } catch (_:Dynamic) {}
 			if (onEvict != null) try { onEvict(k, 'sound'); } catch (_:Dynamic) {}
 		}
 
-		bitmapData2 = new Map();
-		font2       = new Map();
-		sound2      = new Map();
+		bitmapData2.clear();
+		font2.clear();
+		sound2.clear();
 	}
 
 	/** Limpieza segura — solo durante pantalla de carga. */
 	public static function safeCleanup():Void
 		try { FlxG.bitmap.clearUnused(); } catch (_:Dynamic) {}
+
+	// ══════════════════════════════════════════════════════════════════════════
+	// VRAM — estimación y evicción proactiva
+	// ══════════════════════════════════════════════════════════════════════════
+
+	/**
+	 * Estima el uso de VRAM de los bitmaps en caché (bytes).
+	 * Fórmula: ancho × alto × bytesPerPixel (4 si transparente, 3 si no).
+	 * Es una aproximación — no cuenta mipmaps ni alineación de GPU.
+	 */
+	public function estimateVRAMBytes():Int
+	{
+		var total = 0;
+		for (b in bitmapData)         if (b != null) total += b.width * b.height * (b.transparent ? 4 : 3);
+		for (b in bitmapData2)        if (b != null) total += b.width * b.height * (b.transparent ? 4 : 3);
+		for (b in _permanentBitmaps)  if (b != null) total += b.width * b.height * (b.transparent ? 4 : 3);
+		return total;
+	}
+
+	/** Estimación de VRAM en MB. */
+	public inline function estimateVRAMMB():Int
+		return Math.ceil(estimateVRAMBytes() / (1024 * 1024));
+
+	/**
+	 * Si la VRAM estimada supera `budgetMB`, evicta la capa SECOND de inmediato
+	 * sin esperar al siguiente cambio de state.
+	 * @param budgetMB   Presupuesto de VRAM en MB (por defecto 512).
+	 * @return           true si se evictó la capa SECOND.
+	 */
+	public function evictSecondLayerIfOverBudget(budgetMB:Int = 512):Bool
+	{
+		final usedMB = estimateVRAMMB();
+		if (usedMB > budgetMB)
+		{
+			trace('[FunkinCache] VRAM presupuesto excedido ($usedMB MB > $budgetMB MB) — evictando capa SECOND.');
+			clearSecondLayer();
+			try { FlxG.bitmap.clearUnused(); } catch (_:Dynamic) {}
+			try { funkin.system.MemoryUtil.collectMinor(); } catch (_:Dynamic) {}
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Almacena un BitmapData optimizándolo automáticamente antes de guardarlo:
+	 *   • Convierte RGBA→RGB cuando no hay transparencia real (~25% menos VRAM).
+	 *   • Opcionalmente recorta la textura a `maxSide` píxeles por lado.
+	 *
+	 * A diferencia de `setBitmapData()`, este método es seguro para llamar con
+	 * bitmaps recién cargados del disco cuando no hay otras referencias activas.
+	 *
+	 * @param id        Clave de caché.
+	 * @param bitmap    BitmapData recién cargado (puede ser reemplazado internamente).
+	 * @param maxSide   Si > 0, reduce la textura al tamaño máximo indicado.
+	 */
+	public function addOptimizedBitmap(id:String, bitmap:BitmapData, maxSide:Int = 0):Void
+	{
+		if (bitmap == null) return;
+		// Convertir RGBA→RGB si no hay transparencia real
+		var b = funkin.assets.AssetOptimizer.optimizeBitmapData(bitmap);
+		// Recortar si se pasó un límite de tamaño
+		if (maxSide > 0)
+			b = funkin.assets.AssetOptimizer.capTextureDimensions(b, maxSide);
+		setBitmapData(id, b);
+	}
 
 	// ══════════════════════════════════════════════════════════════════════════
 	// PERMANENTES
@@ -535,6 +753,22 @@ class FunkinCache extends AssetCache
 	/** Limpieza total incluyendo permanentes (al cerrar el juego o cambiar de mod). */
 	public function clearAll():Void
 	{
+		// FIX Bug #1 — cerrar buffers de audio nativos antes de vaciar los mapas.
+		// clear() hace sound.clear() / sound2.clear() que solo suelta las referencias
+		// Haxe; los buffers PCM nativos de OpenFL quedan vivos hasta que el GC
+		// los recoge (puede tardar cientos de frames). Llamar close() explícitamente
+		// los libera de inmediato, igual que hace clearSecondLayer() en cada switch.
+		for (s in sound)          try { s.close(); } catch (_:Dynamic) {}
+		for (s in sound2)         try { s.close(); } catch (_:Dynamic) {}
+		for (s in _permanentSounds) try { s.close(); } catch (_:Dynamic) {}
+
+		// FIX Bug #3 — dispose() los BitmapData permanentes antes de limpiar el mapa.
+		// clearAll() es llamado en cambios de mod: los permanentes del mod anterior
+		// deben liberar su VRAM/RAM ahora, no esperar al GC.
+		// NOTA: no llamar FlxG.bitmap.removeByKey() aquí porque destroy() ya se
+		// encargará de eso; dispose() es suficiente para liberar el pixel buffer nativo.
+		for (b in _permanentBitmaps) try { b.dispose(); } catch (_:Dynamic) {}
+
 		clear();
 		_permanentBitmaps.clear();
 		_permanentSounds.clear();
@@ -549,7 +783,8 @@ class FunkinCache extends AssetCache
 		var perm = 0;
 		for (_ in _permanentBitmaps) perm++;
 		return '[FunkinCache] CURRENT: ${_bitmapCount} bmp / ${_soundCount} snd / ${_fontCount} fnt'
-			 + ' | SECOND: ${_bitmap2Count} bmp | PERM: $perm bmp';
+			 + ' | SECOND: ${_bitmap2Count} bmp | PERM: $perm bmp'
+			 + ' | VRAM estimada: ${estimateVRAMMB()} MB';
 	}
 
 	public function dumpKeys():String

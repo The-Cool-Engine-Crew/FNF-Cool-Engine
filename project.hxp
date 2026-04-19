@@ -131,13 +131,19 @@ class Project extends HXProject
 
   function configureAssets():Void
   {
-    // Preload en todas las plataformas excepto web
-    var shouldPreload = !isWeb();
+    // FIX startup: el preload síncrono solo es necesario en web.
+    // En desktop (Windows/Linux/Mac) los assets se leen de disco bajo demanda;
+    // forzar shouldPreload=true bloqueaba el arranque cargando TODO assets/
+    // en memoria antes del primer frame → startups de 10-30 s con mods grandes.
+    var shouldPreload = isWeb();
     if (shouldPreload) setHaxedef("PRELOAD_ALL"); else unsetHaxedef("PRELOAD_ALL");
     if (!shouldPreload) setHaxedef("NO_PRELOAD_ALL"); else unsetHaxedef("NO_PRELOAD_ALL");
 
+    // "default" es pequeña y puede precargarse en web.
+    // "assets" NUNCA se precarga: en web la cubre PRELOAD_ALL;
+    // en desktop la lazy load desde disco es inmediata y mucho más rápida.
     addLibrary("default", false, shouldPreload);
-    addLibrary("assets",  false, shouldPreload);
+    addLibrary("assets",  false, false);         // siempre lazy: jamás precargar todo
 
     var audioExclude = isWeb() ? "*.ogg" : "*.mp3";
     addAssetPath("assets/", "assets", audioExclude);
@@ -402,14 +408,17 @@ class Project extends HXProject
     // Esto silencia el warning "Lime version may not be compatible with OpenFL"
     // que aparece cuando openfl es un fork de git sin version tag.
     haxelibs.push(new Haxelib("lime",   "8.3.1"));
-    haxelibs.push(new Haxelib("openfl", "9.3.0"));
+    haxelibs.push(new Haxelib("openfl", "9.5.1"));
     addLib("flixel");
     addLib("flixel-addons");
     addLib("linc_luajit");
     addLib("coolui");
     addLib("hscript");
     addLib("flixel-animate");
+    addLib("tink_core");
     addLib("actuate");
+
+    addLib("grig.audio");
 
     if (isWeb())
       setHaxedef("webgl");

@@ -43,7 +43,9 @@ class MusicBeatState extends CoolUIState
 
 	private var curStep : Int = 0;
 	private var curBeat : Int = 0;
-	private var controls(get, never):Controls;
+	// FIX: public + non-inline so Reflect.getProperty(state, 'controls') works
+	// in HScript state scripts, song scripts and character scripts.
+	public var controls(get, never):Controls;
 
 	/** Si true, carga automáticamente scripts de assets/states/{ClassName}/. */
 	public var autoScriptLoad:Bool = true;
@@ -57,7 +59,10 @@ class MusicBeatState extends CoolUIState
 	private var _devToastTween:flixel.tweens.FlxTween = null;
 	private var _devToastCam:flixel.FlxCamera      = null;
 
-	inline function get_controls():Controls
+	// FIX: removed 'inline' — inline functions are erased at compile time so
+	// Reflect.getProperty / Reflect.field cannot find them at runtime.
+	// Without this, 'controls' was always null inside any HScript.
+	function get_controls():Controls
 		return PlayerSettings.player1.controls;
 
 	#if mobileC

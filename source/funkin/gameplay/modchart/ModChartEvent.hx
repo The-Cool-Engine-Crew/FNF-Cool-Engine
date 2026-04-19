@@ -33,6 +33,13 @@ enum abstract ModEventType(String) from String to String
 	var TORNADO = "tornado";
 	var CONFUSION = "confusion";
 
+	// ── Rotación 3D simulada (perspectiva por eje) ────────────────────────────
+	// rotX → gira alrededor del eje X (comprime scaleY con cos); efecto "página que se voltea"
+	// rotY → gira alrededor del eje Y (comprime scaleX con cos); efecto "moneda girando de lado"
+	// Rango: 0-360°. Cara trasera automática cuando cos < 0 (flipX/flipY).
+	var ROT_X = "rotX";
+	var ROT_Y = "rotY";
+
 	// ── Per-nota – Scroll / Posición
 	var SCROLL_MULT = "scrollMult";
 	var FLIP_X = "flipX";
@@ -54,6 +61,26 @@ enum abstract ModEventType(String) from String to String
 	var BEAT_SCALE = "beatScale";
 	var STEALTH = "stealth";
 	var NOTE_ALPHA = "noteAlpha";
+
+	// ── Deformación / baile de strums ──────────────────────────────────────
+	/** Inclina el strum en X (lean horizontal en grados). */
+	var SKEW_X = "skewX";
+	/** Inclina el strum en Y (lean vertical en grados). */
+	var SKEW_Y = "skewY";
+	/** Amplitud del salto parabólico Y por beat (px). */
+	var JUMP_Y = "jumpY";
+	/** Período del salto en beats (default 1 = un salto por beat). */
+	var JUMP_PERIOD = "jumpPeriod";
+	/** Amplitud del temblor aleatorio en X (px). */
+	var SHAKE_X = "shakeX";
+	/** Amplitud del temblor aleatorio en Y (px). */
+	var SHAKE_Y = "shakeY";
+	/** Velocidad del temblor (oscilaciones/seg, default 20). */
+	var SHAKE_SPEED = "shakeSpeed";
+	/** Pulso de escala en X por beat (aplastado/estirado horizontal). */
+	var BEAT_SCALE_X = "beatScaleX";
+	/** Pulso de escala en Y por beat (aplastado/estirado vertical). */
+	var BEAT_SCALE_Y = "beatScaleY";
 
 	// ── Cámara
 	var CAM_ZOOM = "camZoom";
@@ -215,11 +242,11 @@ class ModChartHelpers
 	{
 		return switch (type)
 		{
-			case MOVE_X | SET_ABS_X | NOTE_OFFSET_X | FLIP_X | TIPSY | ZIGZAG: 0xFF4FC3F7;
-			case MOVE_Y | SET_ABS_Y | NOTE_OFFSET_Y | BUMPY | WAVE: 0xFF81C784;
-			case ANGLE | SPIN | TORNADO | CONFUSION: 0xFFFFB74D;
+			case MOVE_X | SET_ABS_X | NOTE_OFFSET_X | FLIP_X | TIPSY | ZIGZAG | SKEW_X | SHAKE_X: 0xFF4FC3F7;
+			case MOVE_Y | SET_ABS_Y | NOTE_OFFSET_Y | BUMPY | WAVE | SKEW_Y | SHAKE_Y | JUMP_Y: 0xFF81C784;
+			case ANGLE | SPIN | TORNADO | CONFUSION | ROT_X | ROT_Y: 0xFFFFB74D;
 			case ALPHA | NOTE_ALPHA | STEALTH: 0xFFBA68C8;
-			case SCALE | SCALE_X | SCALE_Y | BEAT_SCALE: 0xFFFF8A65;
+			case SCALE | SCALE_X | SCALE_Y | BEAT_SCALE | BEAT_SCALE_X | BEAT_SCALE_Y: 0xFFFF8A65;
 			case DRUNK_X | DRUNK_Y | DRUNK_FREQ: 0xFF26C6DA;
 			case SCROLL_MULT | INVERT: 0xFFFFD54F;
 			case BUMPY_SPEED | TIPSY_SPEED | ZIGZAG_FREQ | WAVE_SPEED: 0xFF66BB6A;
@@ -297,10 +324,14 @@ class ModChartHelpers
 		ANGLE, SPIN, ALPHA, SCALE, SCALE_X, SCALE_Y, VISIBLE, RESET,
 		DRUNK_X, DRUNK_Y, DRUNK_FREQ,
 		TORNADO, CONFUSION,
+		ROT_X, ROT_Y,
 		SCROLL_MULT, FLIP_X, NOTE_OFFSET_X, NOTE_OFFSET_Y,
 		BUMPY, BUMPY_SPEED,
 		TIPSY, TIPSY_SPEED, INVERT, ZIGZAG, ZIGZAG_FREQ, WAVE, WAVE_SPEED,
 		BEAT_SCALE, STEALTH, NOTE_ALPHA,
+		SKEW_X, SKEW_Y, JUMP_Y, JUMP_PERIOD,
+		SHAKE_X, SHAKE_Y, SHAKE_SPEED,
+		BEAT_SCALE_X, BEAT_SCALE_Y,
 		CAM_ZOOM, CAM_MOVE_X, CAM_MOVE_Y, CAM_ANGLE,
 		WIN_X, WIN_Y, WIN_SCALE, WIN_SCALE_X, WIN_SCALE_Y, WIN_ALPHA, WIN_RESET,
 		WIN_ORBIT, WIN_ORBIT_SPEED, WIN_ORBIT_PHASE, WIN_ORBIT_EX, WIN_ORBIT_EY,
@@ -423,6 +454,8 @@ class ModChartHelpers
 			case DRUNK_FREQ: "Drunk Frequency";
 			case TORNADO: "Tornado";
 			case CONFUSION: "Confusion";
+			case ROT_X: "Rotate 3D X (deg)";
+			case ROT_Y: "Rotate 3D Y (deg)";
 			case SCROLL_MULT: "Scroll Multiplier";
 			case FLIP_X: "Flip X";
 			case NOTE_OFFSET_X: "Note Offset X";
@@ -437,6 +470,15 @@ class ModChartHelpers
 			case WAVE: "Wave Y";
 			case WAVE_SPEED: "Wave Speed";
 			case BEAT_SCALE: "Beat Scale";
+			case SKEW_X: "Skew X (lean horizontal, deg)";
+			case SKEW_Y: "Skew Y (lean vertical, deg)";
+			case JUMP_Y: "Jump Y (hop amplitude, px)";
+			case JUMP_PERIOD: "Jump Period (beats per hop)";
+			case SHAKE_X: "Shake X (vibración horizontal, px)";
+			case SHAKE_Y: "Shake Y (vibración vertical, px)";
+			case SHAKE_SPEED: "Shake Speed (oscilaciones/seg)";
+			case BEAT_SCALE_X: "Beat Scale X (pulso X por beat)";
+			case BEAT_SCALE_Y: "Beat Scale Y (pulso Y por beat)";
 			case STEALTH: "Stealth";
 			case NOTE_ALPHA: "Note Alpha";
 			case CAM_ZOOM: "Camera Zoom";

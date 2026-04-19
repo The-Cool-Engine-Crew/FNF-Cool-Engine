@@ -132,6 +132,22 @@ class ModchartHoldMesh extends FlxBasic {
 	// Buffers preallocados de camino (HOLD_SUBS+1 puntos)
 	var _ptsX:Array<Float>;
 	var _ptsY:Array<Float>;
+	/**
+	 * Y pre-rotación para cada punto del path.
+	 *
+	 * FIX (artifact visual + clip zone desalineado con rotación fuerte):
+	 *   _ptsY[i] contiene la Y *después* de aplicar confusion/tornado/strumAngle.
+	 *   Tras rotar el path, la Y rotada puede terminar en cualquier coordenada de
+	 *   pantalla y ya no representa el progreso de scroll — _clipAlpha comparaba
+	 *   esa Y rotada contra un threshold horizontal, produciendo:
+	 *     1. Zona de borrado del hold desalineada con la versión sin mesh.
+	 *     2. Triángulos fantasma con alpha incorrecto → la línea verde del screenshot.
+	 *
+	 *   Solución: guardar la py sin rotar aquí y usarla exclusivamente en _clipAlpha.
+	 *   La clip zone es puramente temporal (depende de songPos vs strumTime), no espacial,
+	 *   así que la Y pre-rotación es siempre la correcta independientemente del ángulo.
+	 */
+	var _ptsYraw:Array<Float>;
 
 	// Buffers para una pieza: HOLD_SUBS quads × 4 vértices × 2 coords
 	var _verts:openfl.Vector<Float>;
@@ -149,8 +165,9 @@ class ModchartHoldMesh extends FlxBasic {
 		if (cam != null)
 			cameras = [cam];
 
-		_ptsX = [for (_ in 0...HOLD_SUBS + 1) 0.0];
-		_ptsY = [for (_ in 0...HOLD_SUBS + 1) 0.0];
+		_ptsX    = [for (_ in 0...HOLD_SUBS + 1) 0.0];
+		_ptsY    = [for (_ in 0...HOLD_SUBS + 1) 0.0];
+		_ptsYraw = [for (_ in 0...HOLD_SUBS + 1) 0.0]; // Y pre-rotación para clip
 
 		// HOLD_SUBS quads: 4 vértices × 2 coords = 8 floats por quad
 		_verts  = new openfl.Vector<Float>(HOLD_SUBS * 8, true);
@@ -437,6 +454,9 @@ class ModchartHoldMesh extends FlxBasic {
 					var px:Float = _evalX(t, songPos, st, strumX, strumW, noteW);
 					var py:Float = _evalY(t, songPos, st, refY, pEffSpeed, pEffDown);
 
+					// Guardar Y pre-rotación para _clipAlpha (ver FIX en declaración de _ptsYraw)
+					_ptsYraw[i] = py;
+
 					if (_applyRot) {
 						var cosA:Float = _cosU;
 						var sinA:Float = _sinU;
@@ -461,7 +481,10 @@ class ModchartHoldMesh extends FlxBasic {
 				if (isWGH) {
 					var anyVisible:Bool = false;
 					for (i in 0...HOLD_SUBS + 1) {
-						if (_clipAlpha(_ptsY[i], strumThreshold, pEffDown) > 0.0) {
+						// FIX: usar _ptsYraw (Y pre-rotación) en lugar de _ptsY (Y rotada).
+						// Con rotación fuerte, _ptsY puede estar en cualquier parte de la
+						// pantalla y _clipAlpha devolvería alpha incorrecto.
+						if (_clipAlpha(_ptsYraw[i], strumThreshold, pEffDown) > 0.0) {
 							anyVisible = true;
 							break;
 						}
@@ -570,8 +593,13 @@ class ModchartHoldMesh extends FlxBasic {
 					// puede tener distinto alpha si cruza el threshold del strum.
 					// Esto produce el degradado suave que sigue la curva del hold
 					// (imposible con un clipRect recto).
-					var rowA0:Float = isWGH ? _clipAlpha(y0, strumThreshold, pEffDown) : 1.0;
-					var rowA1:Float = isWGH ? _clipAlpha(y1, strumThreshold, pEffDown) : 1.0;
+					//
+					// FIX: usar _ptsYraw (Y pre-rotación) en lugar de y0/y1 (Y rotada).
+					// La Y rotada no representa progreso de scroll cuando hay confusion/
+					// tornado/strumAngle → _clipAlpha devolvía alpha equivocado →
+					// zona de borrado desalineada + artefacto visual (línea de color).
+					var rowA0:Float = isWGH ? _clipAlpha(_ptsYraw[s],     strumThreshold, pEffDown) : 1.0;
+					var rowA1:Float = isWGH ? _clipAlpha(_ptsYraw[s + 1], strumThreshold, pEffDown) : 1.0;
 
 					// Aplicar note.alpha base
 					rowA0 *= baseA;

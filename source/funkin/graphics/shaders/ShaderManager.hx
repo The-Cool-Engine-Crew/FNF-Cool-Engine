@@ -207,10 +207,21 @@ class ShaderManager
 
 	static function _onStateSwitch():Void
 	{
-		// FIX: aplicar applyMenuPreset() (que incluye applyToCamera) en lugar de
-		// solo applyToCamera(). Esto garantiza que los parámetros de bloom para
-		// estados de menú (threshold=0.60, intensity=0.50) se restauren después
-		// de cada cambio de estado, incluyendo la primera transición desde CacheState.
+		// FIX Bug 11: _spriteToInstance, _liveInstances, _cameraOverlayMap and
+		// _pendingParams were never cleared between states. Any FlxSprite from
+		// PlayState that had a runtime shader applied (via script) remained rooted
+		// here, preventing the GC from reclaiming the sprite, the Character that
+		// owns it, and the BitmapData of its texture. Clear all four maps first,
+		// then re-apply bloom/menu settings on the next frame via the deferred timer.
+		_spriteToInstance.clear();
+		_liveInstances.clear();
+		_cameraOverlayMap.clear();
+		_pendingParams.clear();
+
+		// FIX: apply applyMenuPreset() (which includes applyToCamera()) rather than
+		// only applyToCamera(). This ensures bloom parameters for menu states
+		// (threshold=0.60, intensity=0.50) are restored after every state switch,
+		// including the first transition from CacheState.
 		flixel.util.FlxTimer.wait(0, function() {
 			applyMenuPreset();
 			applyToCamera();

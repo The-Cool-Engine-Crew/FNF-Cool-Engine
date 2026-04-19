@@ -173,7 +173,11 @@ class OptionsMenuState extends MusicBeatSubstate
 	 * son instantáneas y la primera solo paga el costo una vez por sesión.
 	 */
 	/** Nulleado por ModSelectorState al cambiar de mod para forzar recarga del BG. */
-	public static var _cachedMenuBG:openfl.display.BitmapData = null;
+	// FIX Bug 1: removed `public static var _cachedMenuBG:openfl.display.BitmapData`
+	// The static BitmapData was allocated via BitmapData.fromFile(), completely
+	// outside PathsCache/FunkinCache, so it was never tracked or freed — a permanent
+	// ~3-5 MB leak and a second in-RAM copy of the same PNG that MainMenuState
+	// already keeps via PathsCache. Replaced with Paths.getGraphic() below.
 
 	// ── Controller icon atlas ─────────────────────────────────────────────────
 
@@ -268,11 +272,10 @@ class OptionsMenuState extends MusicBeatSubstate
 		{
 			// MENÚ NORMAL: menuBG con shader de colorización
 			_bgMenuShader = new MenuBGShader();
-			// BUG FIX #7: usar caché estático — evita leer el PNG del disco
-			// cada vez que se abre el menú (primera apertura era ~300-500ms).
-			if (_cachedMenuBG == null)
-				_cachedMenuBG = openfl.display.BitmapData.fromFile(Paths.image('menu/menuBG'));
-			bgSprite = new FlxSprite().loadGraphic(_cachedMenuBG);
+			// FIX Bug 1: use Paths.getGraphic() instead of a static BitmapData.
+			// PathsCache manages the lifetime of this graphic — no duplicate copy
+			// in RAM and no permanent leak when the options menu is closed.
+			bgSprite = new FlxSprite().loadGraphic(Paths.getGraphic('menu/menuBG'));
 			var bgScale:Float = Math.max(FlxG.width / bgSprite.width, FlxG.height / bgSprite.height) * 1.05;
 			bgSprite.scale.set(bgScale, bgScale);
 			bgSprite.updateHitbox();

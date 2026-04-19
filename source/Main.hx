@@ -537,6 +537,14 @@ class Main extends Sprite
 		PlayerSettings.init();
 		PlayerSettings.player1.controls.loadKeyBinds();
 
+		// ── F11 fullscreen toggle (desktop only) ──────────────────────────────
+		#if (desktop && !html5)
+		stage.addEventListener(openfl.events.KeyboardEvent.KEY_DOWN, function(e:openfl.events.KeyboardEvent) {
+			if (e.keyCode == openfl.ui.Keyboard.F11)
+				FlxG.fullscreen = !FlxG.fullscreen;
+		});
+		#end
+
 		// ── CursorManager: sistema de cursor personalizable ──────────────────
 		funkin.system.CursorManager.init();
 		funkin.system.CursorManager.loadSkinPreference();

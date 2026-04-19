@@ -149,7 +149,15 @@ class StateScriptHandler
 			script.program = ScriptHandler.parser.parseString(processedContent, scriptPath);
 
 			script.interp.execute(script.program);
-			script.call('onCreate');
+			// OPT: pre-fill the function lookup cache so the first call to
+			// every hook (onUpdate, onBeatHit, etc.) hits the fast path.
+			script.warmCache();
+			// NOTE: do NOT call onCreate here.
+			// ScriptableState/ScriptableSubState.create() calls
+			// StateScriptHandler.callOnScripts('onCreate') AFTER all
+			// scripts for the state are loaded, so onCreate would fire
+			// twice if we also called it here.  The caller is always
+			// responsible for the first onCreate call.
 
 			scripts.set(name, script);
 			_cacheDirty = true;
@@ -779,6 +787,17 @@ class StateScriptHandler
 	{
 		// ── 1. AUTO-REFLECT: exponer TODOS los campos de instancia del state ──
 		_reflectStateFields(interp, state);
+
+		// FIX: 'controls' es private+inline en MusicBeatState por lo que la
+		// reflexión nunca lo ve (las funciones inline se borran en compilación
+		// y los campos privados no aparecen en Type.getInstanceFields()).
+		// Lo exponemos directamente desde PlayerSettings para que cualquier
+		// script de state/menu pueda usar controls.UP_P, controls.ACCEPT, etc.
+		if (!interp.variables.exists('controls'))
+		{
+			try { interp.variables.set('controls', data.PlayerSettings.player1.controls); }
+			catch (e:Dynamic) { trace('[StateScriptHandler] controls expose failed: $e'); }
+		}
 
 		// ── 2. Referencia principal al state ──────────────────────────────────
 		interp.variables.set('state', state);

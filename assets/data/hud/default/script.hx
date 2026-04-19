@@ -55,9 +55,6 @@ function _createHealthBar()
 	screenCenterX(healthBarBG);
 	uiAdd(healthBarBG);
 
-	var dad = PlayState.instance.dad;
-	var boyfriend = PlayState.instance.boyfriend;
-
 	// makeBar already sets RIGHT_TO_LEFT, scrollFactor and camHUD
 	healthBar = makeBar(healthBarBG.x + 4, healthBarBG.y + 4, Std.int(healthBarBG.width - 8), Std.int(healthBarBG.height - 8), gameState, 'health', 0, 2);
 	var dadColor = (dad != null && dad.characterData != null && dad.characterData.healthBarColor != null)

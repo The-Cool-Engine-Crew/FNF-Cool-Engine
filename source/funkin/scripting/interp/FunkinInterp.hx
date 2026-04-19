@@ -1,143 +1,307 @@
 package funkin.scripting.interp;
 
-import flixel.FlxG;
 #if HSCRIPT_ALLOWED
 import hscript.Interp;
 import hscript.Expr;
-// hscript.Expr.Error existe en 2.4+ como clase base de errores
-// En versiones muy antiguas puede no tener `.e` — usar Dynamic como fallback
 #end
 
+/**
+ * FunkinInterp — intérprete extendido para los scripts del engine.
+ *
+ * Extiende hscript.Interp con soporte para:
+ *
+ *   scriptObject   — objeto Haxe "host" al que el script puede leer/escribir
+ *                    campos directamente sin prefix (igual que @:hscriptClass).
+ *
+ *   = assignment   — escribe de vuelta al scriptObject cuando el ident vive ahí.
+ *
+ *   += -= *= /= %= — operadores compuestos que también escriben al scriptObject.
+ *   &= |= ^= <<= >>= >>>=   El Interp base solo escribe en variables/locals;
+ *                            sin este fix "campo += 5" leía del SO pero escribía
+ *                            en variables → el valor del SO nunca cambiaba.
+ *
+ *   ?? ??=         — operadores de null-coalescing (HScript 2.6+ los parsea como
+ *                    EBinop pero el Interp base no los evalúa → error en runtime).
+ *                    ?? : devuelve el lado izquierdo si no es null, si no el derecho.
+ *                    ??=: asigna el derecho solo si el izquierdo es null.
+ */
 class FunkinInterp extends Interp
 {
-	public var scriptObject:Dynamic = null;
+	/** Objeto Haxe que actúa como "this" implícito para los scripts. */
+	public var scriptObject(default, set):Dynamic = null;
+
+	/** Campos del scriptObject (para lookup O(1)). */
+	var _soFields:haxe.ds.StringMap<Bool> = new haxe.ds.StringMap();
+
+	/** Cache de métodos enlazados del scriptObject para evitar createMethod en cada acceso. */
+	var _soMethods:haxe.ds.StringMap<Dynamic> = new haxe.ds.StringMap();
+
+	function set_scriptObject(v:Dynamic):Dynamic
+	{
+		_soFields  = new haxe.ds.StringMap();
+		_soMethods = new haxe.ds.StringMap();
+
+		if (v != null)
+		{
+			for (f in Reflect.fields(v))
+				_soFields.set(f, true);
+
+			final cls = Type.getClass(v);
+			if (cls != null)
+				for (f in Type.getInstanceFields(cls))
+					_soFields.set(f, true);
+		}
+
+		return scriptObject = v;
+	}
+
+	// ── Detección de formato de hscript (struct vs enum directo) ─────────────
+	var _fmtIsStruct:Bool  = false;
+	var _fmtDetected:Bool  = false;
+
+	// Índices de enum cacheados (evitar Type.enumConstructor() en hot-path)
+	var _idxEBinop:Int = -1;
+	var _idxEIdent:Int = -1;
+
+	// Operadores compuestos que el base Interp NO escribe al scriptObject.
+	static final _COMPOUND_OPS:Array<String> = [
+		"+=", "-=", "*=", "/=", "%=",
+		"&=", "|=", "^=",
+		"<<=", ">>=", ">>>="
+	];
 
 	public function new()
 	{
 		super();
 	}
 
-	// ── 1. Interceptar Lectura y Funciones ──
+	// ── resolve ───────────────────────────────────────────────────────────────
+
 	override public function resolve(id:String):Dynamic
 	{
-		var l = locals.get(id);
+		final l = locals.get(id);
 		if (l != null)
 			return l.r;
 
-		// FIX: usar exists() en vez de `v != null`.
-		// StringMap.get() devuelve null tanto cuando la clave no existe como cuando
-		// la clave existe con valor null. La comprobación `v != null` hacía que
-		// variables intencionalmente nulas (gf, dad, bf en canciones sin esos
-		// personajes, health = 0, etc.) no se encontrasen y se lanzase
-		// EUnknownVariable en silencio, haciendo que los scripts fallaran sin
-		// mostrar ningún error visible al usuario.
 		if (variables.exists(id))
 			return variables.get(id);
 
-		if (scriptObject != null)
+		if (scriptObject != null && _soFields.exists(id))
 		{
-			try
-			{
-				if (Reflect.hasField(scriptObject, id) || Reflect.getProperty(scriptObject, id) != null)
-				{
-					var prop = Reflect.getProperty(scriptObject, id);
+			final cached = _soMethods.get(id);
+			if (cached != null)
+				return cached;
 
-					// Si es una función, hacemos un auto-bind para que 'this' apunte al objeto correcto
-					if (Reflect.isFunction(prop))
-					{
-						return Reflect.makeVarArgs(function(args)
-						{
-							return Reflect.callMethod(scriptObject, prop, args);
-						});
-					}
-					return prop; // Retornar variable normal
-				}
-			}
-			catch (e:Dynamic)
+			final prop = Reflect.getProperty(scriptObject, id);
+
+			if (Reflect.isFunction(prop))
 			{
+				final obj = scriptObject;
+				final bound = Reflect.makeVarArgs(function(args)
+					return Reflect.callMethod(obj, prop, args));
+				_soMethods.set(id, bound);
+				return bound;
 			}
+
+			return prop; // getter / campo normal
 		}
 
 		throw hscript.Expr.Error.EUnknownVariable(id);
 	}
 
+	// ── expr ─────────────────────────────────────────────────────────────────
+
 	override public function expr(e:hscript.Expr):Dynamic
 	{
-		// FIX: separar la inspección estructural (que necesita try/catch por
-		// compatibilidad de versiones de hscript) de la evaluación real.
-		//
-		// El problema original: un único try/catch envolvía TODO, incluyendo
-		// `expr(params[2])` (evaluar el RHS de la asignación). Si el RHS lanzaba
-		// un error de runtime (EUnknownVariable, etc.), el catch lo tragaba en
-		// silencio y llamaba a `super.expr(e)`, que volvía a evaluar el RHS dos
-		// veces y hacía que los errores nunca llegasen a _handleError.
-		//
-		// Solución: el try/catch solo cubre la inspección de la estructura del
-		// Expr (que puede fallar por diferencias entre hscript 2.4/2.5). La
-		// evaluación del RHS y la escritura en variables/scriptObject quedan
-		// FUERA del try/catch para que los errores de runtime propaguen
-		// normalmente hasta HScriptInstance._handleError.
+		#if HSCRIPT_ALLOWED
 
-		// Paso 1 — inspección estructural (try/catch solo para compat de versiones)
-		var assignId:Null<String> = null;
-		var assignRhsExpr:Dynamic = null;
-
-		try
+		// Detectar una sola vez si hscript usa el formato struct {e:...}
+		// (versiones recientes) o enum directo (versiones anteriores).
+		if (!_fmtDetected)
 		{
-			var isStruct = Reflect.hasField(e, "e");
-			var def = isStruct ? Reflect.field(e, "e") : e;
+			_fmtIsStruct = Reflect.hasField(e, "e");
+			_fmtDetected = true;
+		}
 
-			if (Type.enumConstructor(def) == "EBinop")
+		final def:Dynamic = _fmtIsStruct ? Reflect.field(e, "e") : e;
+		if (def == null)
+			return super.expr(e);
+
+		final defIdx:Int = Type.enumIndex(def);
+
+		// Fast-path: si ya sabemos el índice de EBinop, comparamos enteros.
+		if (_idxEBinop >= 0)
+		{
+			if (defIdx != _idxEBinop)
+				return super.expr(e);
+		}
+		else
+		{
+			if (Type.enumConstructor(def) != "EBinop")
+				return super.expr(e);
+			_idxEBinop = defIdx;
+		}
+
+		final params = Type.enumParameters(def);
+		final op:String = params[0];
+
+		// ── ?? null-coalescing ────────────────────────────────────────────────
+		//   a ?? b  →  a != null ? a : b
+		// hscript 2.6+ parsea ?? como EBinop("??", ...) pero el Interp base
+		// no lo evalúa y lanza "Unknown operator ??".
+		if (op == "??")
+		{
+			final lv:Dynamic = expr(params[1]);
+			return lv != null ? lv : expr(params[2]);
+		}
+
+		// ── ??= null-coalescing assignment ────────────────────────────────────
+		//   a ??= b  →  if (a == null) a = b
+		// Solo se intercepta cuando el LHS es un EIdent simple.
+		if (op == "??=")
+		{
+			final id = _getEIdentId(params[1]);
+			if (id == null)
+				return super.expr(e); // LHS complejo — dejar al base
+
+			// Leer valor actual (tolerante: si no existe, asumimos null)
+			var current:Dynamic = null;
+			try { current = resolve(id); } catch (_:Dynamic) {}
+
+			if (current != null)
+				return current; // ya tiene valor — no asignar
+
+			// Asignar y devolver el nuevo valor
+			final val:Dynamic = expr(params[2]);
+			return _writeIdent(id, val);
+		}
+
+		// ── = plain assignment ────────────────────────────────────────────────
+		// Escribe al scriptObject si el ident vive ahí (el base solo escribe
+		// en variables/locals y nunca llama Reflect.setProperty al scriptObject).
+		if (op == "=")
+		{
+			final lhsRaw:Dynamic = _fmtIsStruct ? Reflect.field(params[1], "e") : params[1];
+			if (lhsRaw == null)
+				return super.expr(e);
+
+			final lhsIdx:Int = Type.enumIndex(lhsRaw);
+
+			if (_idxEIdent >= 0)
 			{
-				var params = Type.enumParameters(def);
-				if (params[0] == "=")
+				if (lhsIdx != _idxEIdent)
+					return super.expr(e); // LHS no es EIdent (acceso a campo, array, etc.)
+			}
+			else
+			{
+				if (Type.enumConstructor(lhsRaw) != "EIdent")
+					return super.expr(e);
+				_idxEIdent = lhsIdx;
+			}
+
+			final id:String   = Type.enumParameters(lhsRaw)[0];
+			final val:Dynamic = expr(params[2]);
+			return _writeIdent(id, val);
+		}
+
+		// ── Operadores compuestos (+= -= *= /= %= &= |= ^= <<= >>= >>>=) ─────
+		//
+		// El Interp base evalúa estos como:
+		//   1. leer valor actual via expr(lhs)    ← nuestro resolve() lo maneja bien
+		//   2. calcular nuevo valor
+		//   3. assign(lhs, nuevovalor)             ← el base SOLO escribe en
+		//                                             variables/locals, NUNCA en
+		//                                             scriptObject → BUG
+		//
+		// Solución: si el LHS es un EIdent que vive en scriptObject (no en locals
+		// ni variables), nos encargamos nosotros.  Si vive en locals/variables,
+		// dejamos pasar al base (ya funciona bien allí).
+		if (_COMPOUND_OPS.indexOf(op) >= 0)
+		{
+			final id = _getEIdentId(params[1]);
+			if (id != null)
+			{
+				final inLocal = locals.get(id) != null;
+				final inVars  = variables.exists(id);
+
+				if (!inLocal && !inVars && scriptObject != null && _soFields.exists(id))
 				{
-					var def1 = isStruct ? Reflect.field(params[1], "e") : params[1];
-					if (Type.enumConstructor(def1) == "EIdent")
-					{
-						assignId = Type.enumParameters(def1)[0];
-						assignRhsExpr = params[2];
-					}
+					final cur:Dynamic = Reflect.getProperty(scriptObject, id);
+					final rhs:Dynamic = expr(params[2]);
+					final newVal:Dynamic = _applyCompound(op, cur, rhs);
+					Reflect.setProperty(scriptObject, id, newVal);
+					return newVal;
 				}
 			}
-		}
-		catch (structEx:Dynamic)
-		{
-			// La inspección estructural falló (diferencia de API entre versiones
-			// de hscript) → delegar en super sin intentar la redirección.
-			return super.expr(e);
+			// ident en locals/variables → el base lo resuelve correctamente
 		}
 
-		// Si no es una asignación simple `ident = valor`, delegar en super.
-		if (assignId == null)
-			return super.expr(e);
+		return super.expr(e);
 
-		// Paso 2 — evaluación real: los errores de runtime propagan normalmente.
-		var val = expr(assignRhsExpr);
+		#else
+		return super.expr(e);
+		#end
+	}
 
-		if (locals.exists(assignId))
+	// ── Helpers privados ─────────────────────────────────────────────────────
+
+	/**
+	 * Extrae el nombre de un nodo EIdent, o null si el nodo no es EIdent.
+	 * Usa el mismo formato-struct detection que expr().
+	 */
+	inline function _getEIdentId(node:Dynamic):Null<String>
+	{
+		final raw:Dynamic = _fmtIsStruct ? Reflect.field(node, "e") : node;
+		if (raw == null) return null;
+		if (Type.enumConstructor(raw) != "EIdent") return null;
+		return Type.enumParameters(raw)[0];
+	}
+
+	/**
+	 * Escribe `val` al identificador `id` en la capa correcta:
+	 *   1. local scope  (var declarada dentro del script)
+	 *   2. scriptObject (campo del objeto host Haxe)
+	 *   3. variables    (scope global del intérprete)
+	 */
+	function _writeIdent(id:String, val:Dynamic):Dynamic
+	{
+		final loc = locals.get(id);
+		if (loc != null)
 		{
-			locals.get(assignId).r = val;
+			loc.r = val;
 			return val;
 		}
 
-		// Si la variable le pertenece al Stage/Character, actualizarla ahí directamente
-		if (scriptObject != null)
+		if (scriptObject != null && _soFields.exists(id))
 		{
-			try
-			{
-				if (Reflect.hasField(scriptObject, assignId) || Reflect.getProperty(scriptObject, assignId) != null)
-				{
-					Reflect.setProperty(scriptObject, assignId, val);
-					return val;
-				}
-			}
-			catch (_:Dynamic)
-			{
-			}
+			Reflect.setProperty(scriptObject, id, val);
+			return val;
 		}
 
-		variables.set(assignId, val);
+		variables.set(id, val);
 		return val;
+	}
+
+	/**
+	 * Aplica un operador compuesto a dos valores y devuelve el resultado.
+	 * Usado exclusivamente por el bloque de compound-assignment de expr().
+	 */
+	static function _applyCompound(op:String, a:Dynamic, b:Dynamic):Dynamic
+	{
+		return switch (op)
+		{
+			case "+=":   a + b;
+			case "-=":   a - b;
+			case "*=":   a * b;
+			case "/=":   a / b;
+			case "%=":   a % b;
+			case "&=":   (a : Int) &   (b : Int);
+			case "|=":   (a : Int) |   (b : Int);
+			case "^=":   (a : Int) ^   (b : Int);
+			case "<<=":  (a : Int) <<  (b : Int);
+			case ">>=":  (a : Int) >>  (b : Int);
+			case ">>>=": (a : Int) >>> (b : Int);
+			default:     b; // fallback: tratar como asignación directa
+		}
 	}
 }

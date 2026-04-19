@@ -33,26 +33,6 @@ import funkin.data.SaveData;
 
 using StringTools;
 
-/**
- * ModSelectorState — 3 tabs: Mods / Configuración / Sistema
- *
- * MODS tab:
- *  [↑↓]   Navegar lista           [Enter] Activar mod
- *  [X]    Enable/Disable          [E]     Editar mod.json
- *  [N]    Crear nuevo mod         [F]     Toggle startup mod
- *
- * CONFIG tab (GlobalConfig):
- *  [↑↓]   Seleccionar campo       [Enter] Editar valor
- *  [F5]   Guardar a disco
- *
- * SISTEMA tab:
- *  [↑↓]   Navegar opciones        [Enter] Cambiar/Abrir
- *  [F5]   Guardar configuración
- *
- * Global: [1][2][3] cambiar tab   [Esc] volver al menú
- *
- * Todos los colores se toman de EditorTheme.current.
- */
 class ModSelectorState extends MusicBeatState {
 	// ─── Layout ───────────────────────────────────────────────────────────────
 	public static inline var LIST_W = 380;
@@ -608,7 +588,7 @@ class ModSelectorState extends MusicBeatState {
 			_switchTab(2);
 			return;
 		}
-		if (FlxG.keys.justPressed.ESCAPE) {
+		if (controls.BACK) {
 			_sndConfirm();
 			_goBack();
 			return;
@@ -740,7 +720,7 @@ class ModSelectorState extends MusicBeatState {
 			_sndScroll();
 			_cur = (_cur + 1) % _mods.length;
 			_selectItem(_cur);
-		} else if (FlxG.keys.justPressed.ENTER) {
+		} else if (controls.ACCEPT) {
 			_inputCooldown = 0.25;
 			_sndConfirm();
 			_activateMod();
@@ -780,7 +760,7 @@ class ModSelectorState extends MusicBeatState {
 			_sndScroll();
 			_cfgCursor = (_cfgCursor + 1) % _cfgItems.length;
 			_updateCfgCursor();
-		} else if (FlxG.keys.justPressed.ENTER) {
+		} else if (controls.ACCEPT) {
 			_inputCooldown = 0.2;
 			_sndScroll();
 			_editCfgField();
@@ -878,7 +858,7 @@ class ModSelectorState extends MusicBeatState {
 			_sysCursor = (_sysCursor + 1) % _sysItems.length;
 			_updateSysCursor();
 			_updateSysDesc();
-		} else if (FlxG.keys.justPressed.ENTER) {
+		} else if (controls.ACCEPT) {
 			_inputCooldown = 0.25;
 			_sndConfirm();
 			_activateSysItem();
@@ -1148,12 +1128,6 @@ class ModSelectorState extends MusicBeatState {
 		//     Sin esto, los créditos del mod anterior aparecen en el nuevo mod.
 		funkin.menus.credits.CreditsDataHandler.reload();
 
-		// 14. BitmapData del fondo del menú de opciones.
-		//     OptionsMenuState._cachedMenuBG cachea un snapshot del BG para el
-		//     blur shader. Si el nuevo mod tiene un BG distinto, el snapshot
-		//     quedaría obsoleto y aparecería el fondo del mod anterior.
-		funkin.menus.OptionsMenuState._cachedMenuBG = null;
-
 		// 15. Animaciones de intro de menús.
 		//     TitleState.initialized evita reproducir el intro dos veces en la
 		//     misma sesión. Al cambiar de mod queremos que el nuevo mod muestre
@@ -1176,7 +1150,11 @@ class ModSelectorState extends MusicBeatState {
 		//     dejar weeks bloqueadas/desbloqueadas incorrectamente.
 		funkin.menus.StoryMenuState.weekUnlocked = [];
 
-		Paths.clearAllCaches();
+		// FIX Bug #2 — eliminada la segunda llamada a Paths.clearAllCaches() que
+		// existía aquí. Paths.forceClearCache() (línea ~1077) ya ejecuta
+		// clearAllCaches() → PathsCache.destroy() con toda la limpieza necesaria.
+		// La segunda llamada iteraba mapas ya vacíos (trabajo redundante) y
+		// oscurecía qué cleanup realmente ocurrió durante el cambio de mod.
 
 		#if cpp cpp.vm.Gc.run(true); #end
 		#if hl hl.Gc.major(); #end
@@ -1426,7 +1404,7 @@ class ModListItem extends FlxSprite {
 //  SimpleTextInputSubState
 // ═══════════════════════════════════════════════════════════════════════════
 
-class SimpleTextInputSubState extends FlxSubState {
+class SimpleTextInputSubState extends funkin.states.MusicBeatSubstate {
 	var _title:String;
 	var _text:String;
 	var _onDone:String->Void;
@@ -1434,7 +1412,7 @@ class SimpleTextInputSubState extends FlxSubState {
 	var _inputTxt:FlxText;
 
 	public function new(title:String, initial:String, onDone:String->Void, ?onChange:String->Void) {
-		super(0x00000000);
+		super();
 		_title = title;
 		_text = initial;
 		_onDone = onDone;
@@ -1527,12 +1505,12 @@ class SimpleTextInputSubState extends FlxSubState {
 
 	override function update(elapsed:Float) {
 		super.update(elapsed);
-		if (FlxG.keys.justPressed.ESCAPE) {
+		if (controls.BACK) {
 			FlxG.sound.play(Paths.sound('menus/scrollMenu'));
 			close();
 			return;
 		}
-		if (FlxG.keys.justPressed.ENTER) {
+		if (controls.ACCEPT) {
 			FlxG.sound.play(Paths.sound('menus/confirmMenu'));
 			_onDone(_text);
 			close();
@@ -1570,7 +1548,7 @@ class SimpleTextInputSubState extends FlxSubState {
 //  ModEditSubState — con colores de EditorTheme
 // ═══════════════════════════════════════════════════════════════════════════
 
-class ModEditSubState extends FlxSubState {
+class ModEditSubState extends funkin.states.MusicBeatSubstate {
 	var _mod:ModInfo;
 	var _isCreate:Bool;
 	var _onDone:ModInfo->Void;
@@ -1593,7 +1571,7 @@ class ModEditSubState extends FlxSubState {
 	var _closeBtn:FlxSprite;
 
 	public function new(mod:ModInfo, isCreate:Bool, onDone:ModInfo->Void) {
-		super(0x00000000);
+		super();
 		_mod = Reflect.copy(mod);
 		_isCreate = isCreate;
 		_onDone = onDone;
@@ -1763,15 +1741,24 @@ class ModEditSubState extends FlxSubState {
 			}
 		}
 
-		if (FlxG.keys.justPressed.UP || FlxG.keys.justPressed.W) {
+		var upP = controls.UP_P;
+		var downP = controls.DOWN_P;
+
+		if (_fields.length < 1)
+		{
+			upP = false;
+			downP = false;
+		}
+
+		if (upP) {
 			FlxG.sound.play(Paths.sound('menus/scrollMenu'));
 			_changeField(-1);
 		}
-		if (FlxG.keys.justPressed.DOWN || FlxG.keys.justPressed.S) {
+		if (downP) {
 			FlxG.sound.play(Paths.sound('menus/scrollMenu'));
 			_changeField(1);
 		}
-		if (FlxG.keys.justPressed.ENTER) {
+		if (controls.ACCEPT) {
 			FlxG.sound.play(Paths.sound('menus/scrollMenu'));
 			_startEdit();
 		}
@@ -1779,7 +1766,7 @@ class ModEditSubState extends FlxSubState {
 			FlxG.sound.play(Paths.sound('menus/confirmMenu'));
 			_save();
 		}
-		if (FlxG.keys.justPressed.ESCAPE) {
+		if (controls.BACK) {
 			funkin.system.CursorManager.show();
 			FlxG.sound.play(Paths.sound('menus/scrollMenu'));
 			close();
@@ -1787,11 +1774,11 @@ class ModEditSubState extends FlxSubState {
 	}
 
 	function _handleTextInput():Void {
-		if (FlxG.keys.justPressed.ESCAPE) {
+		if (controls.BACK) {
 			_endEdit(false);
 			return;
 		}
-		if (FlxG.keys.justPressed.ENTER) {
+		if (controls.ACCEPT) {
 			_endEdit(true);
 			return;
 		}

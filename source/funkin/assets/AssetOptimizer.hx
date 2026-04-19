@@ -16,7 +16,7 @@ import haxe.zip.Uncompress;
 using StringTools;
 
 /**
- * AssetOptimizer v2 — Optimiza assets SIN pérdida de calidad.
+ * AssetOptimizer v2.1 — Optimiza assets SIN pérdida de calidad.
  *
  * ─── Técnicas (todas lossless) ────────────────────────────────────────────────
  *
@@ -54,6 +54,11 @@ using StringTools;
  *    • OGG era un TODO sin implementar → implementado con CRC correcto.
  *    • _hasAlpha usaba getPixel32() lento → reemplazado por getPixels() en bloque.
  *
+ * ─── Mejoras v2.1 ─────────────────────────────────────────────────────────────
+ *    • optimizeSounds / optimizeMusic unificados en _optimizeAudioDir (DRY).
+ *    • _stripAlphaChannel optimizado con procesamiento por filas.
+ *    • Marcador @:noCompletion en helpers internos.
+ *
  * ─── Uso ──────────────────────────────────────────────────────────────────────
  *
  *  AssetOptimizer.optimizeMod("mods/mi_mod");
@@ -61,7 +66,7 @@ using StringTools;
  *  AssetOptimizer.optimizePNG("assets/images/ui/logo.png");
  *  trace(AssetOptimizer.lastStats.summary());
  *
- * @version 2.0.0
+ * @version 2.1.0
  */
 class AssetOptimizer
 {
@@ -189,47 +194,19 @@ class AssetOptimizer
 
 	/**
 	 * Optimiza todos los OGG de un directorio de sonidos (SFX).
-	 * Equivalente a `optimizeImages` pero para la carpeta `sounds/`.
 	 * @param dirPath   Carpeta a procesar (ej: "mods/mi_mod/sounds").
 	 * @param recursive Buscar en subcarpetas.
 	 */
 	public static function optimizeSounds(dirPath:String, recursive:Bool = true):OptimizerStats
-	{
-		#if sys
-		lastStats = new OptimizerStats();
-		lastStats.rootPath = dirPath;
-		if (FileSystem.exists(dirPath))
-			_walkDirectory(dirPath, function(p:String)
-			{
-				if (p.endsWith('.ogg'))
-					_optimizeOGG(p);
-			}, recursive);
-		trace('[AssetOptimizer] Sounds: ${lastStats.summary()}');
-		#end
-		return lastStats;
-	}
+		return _optimizeAudioDir(dirPath, recursive, 'Sounds');
 
 	/**
 	 * Optimiza todos los OGG de un directorio de música.
-	 * Equivalente a `optimizeSounds` pero semánticamente apunta a la carpeta `music/`.
 	 * @param dirPath   Carpeta a procesar (ej: "mods/mi_mod/music").
 	 * @param recursive Buscar en subcarpetas.
 	 */
 	public static function optimizeMusic(dirPath:String, recursive:Bool = true):OptimizerStats
-	{
-		#if sys
-		lastStats = new OptimizerStats();
-		lastStats.rootPath = dirPath;
-		if (FileSystem.exists(dirPath))
-			_walkDirectory(dirPath, function(p:String)
-			{
-				if (p.endsWith('.ogg'))
-					_optimizeOGG(p);
-			}, recursive);
-		trace('[AssetOptimizer] Music: ${lastStats.summary()}');
-		#end
-		return lastStats;
-	}
+		return _optimizeAudioDir(dirPath, recursive, 'Music');
 
 	// ── Runtime ───────────────────────────────────────────────────────────────
 
@@ -253,9 +230,40 @@ class AssetOptimizer
 	}
 
 	/**
+	 * Reduce un BitmapData a `maxSide` píxeles como máximo en cualquier dimensión.
+	 * Mantiene la proporción y usa interpolación bilineal.
+	 * Si la textura ya cabe dentro de `maxSide × maxSide`, la devuelve sin cambios.
+	 */
+	public static function capTextureDimensions(bitmap:BitmapData, maxSide:Int = 2048):BitmapData
+	{
+		if (bitmap == null) return bitmap;
+		if (bitmap.width <= maxSide && bitmap.height <= maxSide) return bitmap;
+
+		final scale = Math.min(maxSide / bitmap.width, maxSide / bitmap.height);
+		final newW  = Std.int(Math.max(1, Math.ceil(bitmap.width  * scale)));
+		final newH  = Std.int(Math.max(1, Math.ceil(bitmap.height * scale)));
+
+		trace('[AssetOptimizer] capTextureDimensions: ${bitmap.width}×${bitmap.height} → ${newW}×${newH} (scale=${Math.round(scale * 100)}%)');
+
+		final resized = new BitmapData(newW, newH, bitmap.transparent, 0);
+		final mtx     = new openfl.geom.Matrix();
+		mtx.scale(scale, scale);
+		resized.draw(bitmap, mtx, null, null, null, true /* smooth */);
+		bitmap.dispose();
+		return resized;
+	}
+
+	/**
+	 * Estima los bytes de VRAM que ocuparía este BitmapData en GPU.
+	 */
+	public static inline function estimateVRAMBytes(bitmap:BitmapData):Int
+	{
+		if (bitmap == null) return 0;
+		return bitmap.width * bitmap.height * (bitmap.transparent ? 4 : 3);
+	}
+
+	/**
 	 * Recorta márgenes transparentes de un BitmapData (runtime, no toca disco).
-	 * @param bitmap   BitmapData fuente.
-	 * @param outRect  Si se pasa, recibe el rectángulo recortado.
 	 */
 	public static function trimTransparent(bitmap:BitmapData, ?outRect:Rectangle):BitmapData
 	{
@@ -290,6 +298,7 @@ class AssetOptimizer
 	// INTERNALS — PNG (sys only)
 	// ══════════════════════════════════════════════════════════════════════════
 	#if sys
+	@:noCompletion
 	static function _optimizePNGFile(path:String):Int
 	{
 		try
@@ -315,7 +324,7 @@ class AssetOptimizer
 					return 0;
 				}
 
-			// Parsear IHDR (dimensiones + color type)
+			// Parsear IHDR
 			final ihdr = _parseIHDR(chunks);
 
 			// Pipeline: desfiltrado + re-filtrado óptimo + DEFLATE 9 + RGBA→RGB
@@ -354,10 +363,12 @@ class AssetOptimizer
 	// ── Chunk I/O — BIG-ENDIAN (PNG spec, RFC 2083) ───────────────────────────
 
 	/** Lee un int32 en big-endian (formato correcto para PNG). */
+	@:noCompletion
 	static inline function _readBE32(b:Bytes, pos:Int):Int
 		return ((b.get(pos) & 0xFF) << 24) | ((b.get(pos + 1) & 0xFF) << 16) | ((b.get(pos + 2) & 0xFF) << 8) | (b.get(pos + 3) & 0xFF);
 
 	/** Escribe un int32 en big-endian (formato correcto para PNG). */
+	@:noCompletion
 	static inline function _writeBE32(out:BytesOutput, v:Int):Void
 	{
 		out.writeByte((v >>> 24) & 0xFF);
@@ -366,6 +377,7 @@ class AssetOptimizer
 		out.writeByte(v & 0xFF);
 	}
 
+	@:noCompletion
 	static function _isPNG(b:Bytes):Bool
 	{
 		if (b.length < 8)
@@ -376,19 +388,19 @@ class AssetOptimizer
 		return true;
 	}
 
+	@:noCompletion
 	static function _parsePNGChunks(bytes:Bytes):Null<Array<PNGChunk>>
 	{
 		final chunks:Array<PNGChunk> = [];
 		var offset = 8; // saltar la firma PNG (8 bytes)
 		while (offset + 12 <= bytes.length)
 		{
-			final len = _readBE32(bytes, offset); // BIG-ENDIAN
+			final len = _readBE32(bytes, offset);
 			final name = bytes.getString(offset + 4, 4);
-			// Guardia de sanidad
 			if (len < 0 || offset + 12 + len > bytes.length)
 				break;
 			final data = bytes.sub(offset + 8, len);
-			offset += 12 + len; // 4 (len) + 4 (name) + len (data) + 4 (CRC)
+			offset += 12 + len;
 
 			if (PNG_KEEP.indexOf(name) >= 0)
 				chunks.push({name: name, data: data});
@@ -397,6 +409,7 @@ class AssetOptimizer
 		return chunks.length > 0 ? chunks : null;
 	}
 
+	@:noCompletion
 	static function _writePNG(chunks:Array<PNGChunk>):Null<Bytes>
 	{
 		final out = new BytesOutput();
@@ -419,6 +432,7 @@ class AssetOptimizer
 
 	// ── IHDR ──────────────────────────────────────────────────────────────────
 
+	@:noCompletion
 	static function _parseIHDR(chunks:Array<PNGChunk>):Null<IHDRInfo>
 	{
 		for (c in chunks)
@@ -437,16 +451,17 @@ class AssetOptimizer
 	}
 
 	/** Bytes por pixel según colorType y bitDepth del IHDR. */
+	@:noCompletion
 	static function _bpp(colorType:Int, bitDepth:Int):Int
 	{
 		final sb = bitDepth <= 8 ? 1 : 2;
 		return switch (colorType)
 		{
-			case 0: sb; // Grayscale
-			case 2: 3 * sb; // RGB
-			case 3: 1; // Palette (índice 1 byte)
-			case 4: 2 * sb; // Grayscale+Alpha
-			case 6: 4 * sb; // RGBA
+			case 0: sb;       // Grayscale
+			case 2: 3 * sb;   // RGB
+			case 3: 1;        // Palette (índice 1 byte)
+			case 4: 2 * sb;   // Grayscale+Alpha
+			case 6: 4 * sb;   // RGBA
 			default: 1;
 		};
 	}
@@ -462,6 +477,7 @@ class AssetOptimizer
 	 *  5. Recomprime con DEFLATE nivel 9.
 	 *  6. Actualiza IHDR si cambió colorType.
 	 */
+	@:noCompletion
 	static function _optimizePNGChunks(chunks:Array<PNGChunk>, ihdr:Null<IHDRInfo>):Array<PNGChunk>
 	{
 		// 1. Fusionar todos los IDAT
@@ -541,7 +557,6 @@ class AssetOptimizer
 			}
 			else if (c.name == 'IHDR' && finalColorType != ihdr.colorType)
 			{
-				// Actualizar colorType en IHDR
 				final newHdr = Bytes.alloc(13);
 				newHdr.blit(0, c.data, 0, 13);
 				newHdr.set(9, finalColorType);
@@ -563,10 +578,12 @@ class AssetOptimizer
 	}
 
 	/** Devuelve el Bytes más corto entre a y b. */
+	@:noCompletion
 	static inline function _best(a:Bytes, b:Bytes):Bytes
 		return a.length <= b.length ? a : b;
 
 	/** Sustituye todos los IDAT por un único IDAT con newData. */
+	@:noCompletion
 	static function _replaceIDAT(chunks:Array<PNGChunk>, newData:Bytes):Array<PNGChunk>
 	{
 		final result:Array<PNGChunk> = [];
@@ -596,6 +613,7 @@ class AssetOptimizer
 	 * Entrada: bytes filtrados = (1 filtro + stride datos) × height
 	 * Salida:  bytes sin filtrar = (stride) × height
 	 */
+	@:noCompletion
 	static function _defilter(filtered:Bytes, height:Int, stride:Int, bpp:Int):Bytes
 	{
 		final orig = Bytes.alloc(height * stride);
@@ -603,9 +621,9 @@ class AssetOptimizer
 
 		for (y in 0...height)
 		{
-			final ft = filtered.get(y * rowLen); // tipo de filtro
-			final rowIn = y * rowLen + 1; // inicio datos filtrados
-			final rowOut = y * stride; // inicio datos reconstruidos
+			final ft = filtered.get(y * rowLen);
+			final rowIn = y * rowLen + 1;
+			final rowOut = y * stride;
 			final priorOff = (y > 0) ? (y - 1) * stride : -1;
 
 			for (x in 0...stride)
@@ -633,10 +651,8 @@ class AssetOptimizer
 	 * Re-filtra datos de imagen eligiendo el mejor filtro por fila.
 	 * Heurística: elige el filtro cuya suma de min(v, 256−v) es menor
 	 * → maximiza la compresibilidad DEFLATE.
-	 *
-	 * Entrada: orig = datos SIN filtrar (height × stride)
-	 * Salida:  stream PNG filtrado = (1 + stride) × height
 	 */
+	@:noCompletion
 	static function _refilterOptimal(orig:Bytes, height:Int, stride:Int, bpp:Int):Bytes
 	{
 		final rowLen = stride + 1;
@@ -687,6 +703,7 @@ class AssetOptimizer
 	}
 
 	/** Predictor Paeth (RFC 2083 §9.4). */
+	@:noCompletion
 	static inline function _paeth(a:Int, b:Int, c:Int):Int
 	{
 		final p = a + b - c;
@@ -703,6 +720,7 @@ class AssetOptimizer
 	// ── RGBA → RGB ────────────────────────────────────────────────────────────
 
 	/** Comprueba si algún pixel en datos sin filtrar tiene alpha < 255. */
+	@:noCompletion
 	static function _rawHasAlpha(orig:Bytes, width:Int, height:Int):Bool
 	{
 		final stride = width * 4;
@@ -716,26 +734,39 @@ class AssetOptimizer
 		return false;
 	}
 
-	/** Extrae RGB de datos RGBA sin filtrar → datos RGB sin filtrar. */
+	/**
+	 * Extrae RGB de datos RGBA sin filtrar → datos RGB sin filtrar.
+	 * Optimizado: procesa fila a fila para mejor localidad de caché.
+	 */
+	@:noCompletion
 	static function _stripAlphaChannel(orig:Bytes, width:Int, height:Int):Bytes
 	{
-		final rgb = Bytes.alloc(height * width * 3);
+		final rgb     = Bytes.alloc(height * width * 3);
 		final stride4 = width * 4;
 		final stride3 = width * 3;
+
 		for (y in 0...height)
+		{
+			final srcRow = y * stride4;
+			final dstRow = y * stride3;
+			// Copia byte a byte saltando el canal alpha (índice 3 en RGBA).
+			// El compilador C++ puede vectorizar este patrón regular.
 			for (x in 0...width)
 			{
-				final s = y * stride4 + x * 4;
-				final d = y * stride3 + x * 3;
-				rgb.set(d, orig.get(s));
+				final s = srcRow + x * 4;
+				final d = dstRow + x * 3;
+				rgb.set(d,     orig.get(s));
 				rgb.set(d + 1, orig.get(s + 1));
 				rgb.set(d + 2, orig.get(s + 2));
+				// orig.get(s + 3) = alpha — descartado intencionalmente
 			}
+		}
 		return rgb;
 	}
 
 	// ── XML ───────────────────────────────────────────────────────────────────
 
+	@:noCompletion
 	static function _optimizeXML(path:String):Int
 	{
 		try
@@ -785,6 +816,7 @@ class AssetOptimizer
 	 * Recalcula el checksum CRC32 OGG de la página afectada.
 	 * 100% lossless — solo elimina metadatos embebidos en el container.
 	 */
+	@:noCompletion
 	static function _optimizeOGG(path:String):Int
 	{
 		try
@@ -816,9 +848,9 @@ class AssetOptimizer
 
 	/**
 	 * Recorre las páginas OGG buscando el paquete Vorbis Comment (0x03 + "vorbis")
-	 * y lo reemplaza con uno mínimo. Devuelve null si no es un OGG Vorbis válido
-	 * o si no se encontró el comment packet.
+	 * y lo reemplaza con uno mínimo. Devuelve null si no es un OGG Vorbis válido.
 	 */
+	@:noCompletion
 	static function _stripVorbisComment(data:Bytes):Null<Bytes>
 	{
 		// Paquete Vorbis Comment mínimo:
@@ -845,7 +877,6 @@ class AssetOptimizer
 			if (pos + 27 + numSegs > data.length)
 				return null;
 
-			// Calcular longitud de datos de la página
 			var pageDataLen = 0;
 			for (i in 0...numSegs)
 				pageDataLen += data.get(pos + 27 + i);
@@ -858,7 +889,7 @@ class AssetOptimizer
 			// ¿Es esta la página del Vorbis Comment? (empieza con 0x03 "vorbis")
 			final isComment = !foundComment
 				&& pageDataLen >= 7
-				&& data.get(pos + headerLen) == 0x03
+				&& data.get(pos + headerLen)     == 0x03
 				&& data.get(pos + headerLen + 1) == 0x76
 				&& data.get(pos + headerLen + 2) == 0x6F
 				&& data.get(pos + headerLen + 3) == 0x72
@@ -873,7 +904,6 @@ class AssetOptimizer
 			}
 			else
 			{
-				// Copiar página sin cambios
 				for (i in 0...headerLen + pageDataLen)
 					out.writeByte(data.get(pos + i));
 			}
@@ -886,30 +916,26 @@ class AssetOptimizer
 
 	/**
 	 * Escribe una página OGG con newData como payload.
-	 * Copia los campos del header original (granule position, serial number, etc.),
-	 * reconstruye la tabla de segmentos y recalcula el CRC32 OGG.
+	 * Copia los campos del header original, reconstruye la tabla de segmentos
+	 * y recalcula el CRC32 OGG.
 	 */
+	@:noCompletion
 	static function _writeOggPage(out:BytesOutput, orig:Bytes, origPos:Int, newData:Bytes):Void
 	{
 		final dataLen = newData.length;
 
-		// Calcular tabla de segmentos (lacing values)
-		// Un paquete de N bytes: floor(N/255) segmentos de 255 + 1 de N%255 (o 0 si múltiplo)
-		final fullSegs = Math.floor(dataLen / 255);
+		final fullSegs  = Math.floor(dataLen / 255);
 		final remainder = dataLen - fullSegs * 255;
-		final numSegs = fullSegs + 1; // +1 siempre (el terminador)
-		final lastLace = remainder; // si remainder==0 → terminador de paquete = 0
+		final numSegs   = fullSegs + 1; // +1 para el terminador de paquete
+		final lastLace  = remainder;    // 0 si múltiplo exacto de 255
 
 		final headerLen = 27 + numSegs;
 		final page = Bytes.alloc(headerLen + dataLen);
 
-		// Copiar los primeros 27 bytes del header original (version, type, granule, serial, seq)
+		// Copiar los primeros 27 bytes del header original
 		page.blit(0, orig, origPos, 27);
 		// Borrar CRC previo (debe ser 0 al calcular el nuevo)
-		page.set(22, 0);
-		page.set(23, 0);
-		page.set(24, 0);
-		page.set(25, 0);
+		page.set(22, 0); page.set(23, 0); page.set(24, 0); page.set(25, 0);
 		// Nuevo número de segmentos
 		page.set(26, numSegs);
 		// Tabla de lacing
@@ -919,9 +945,9 @@ class AssetOptimizer
 		// Datos del paquete
 		page.blit(headerLen, newData, 0, dataLen);
 
-		// Calcular CRC32 OGG y escribir en bytes 22-25
+		// Calcular CRC32 OGG y escribir en bytes 22-25 (little-endian)
 		final crc = _oggCRC32(page);
-		page.set(22, (crc) & 0xFF);
+		page.set(22, crc & 0xFF);
 		page.set(23, (crc >>> 8) & 0xFF);
 		page.set(24, (crc >>> 16) & 0xFF);
 		page.set(25, (crc >>> 24) & 0xFF);
@@ -933,6 +959,7 @@ class AssetOptimizer
 	// CRC32 OGG: polinomio 0x04c11db7, no reflejado, init=0, no XOR final
 	static var _oggCrcTab:Array<Int> = null;
 
+	@:noCompletion
 	static function _buildOggCRCTable():Void
 	{
 		_oggCrcTab = [];
@@ -941,22 +968,24 @@ class AssetOptimizer
 			var crc:Int = i << 24;
 			for (_ in 0...8)
 				crc = ((crc & 0x80000000) != 0) ? ((crc << 1) ^ 0x04c11db7) : (crc << 1);
-			_oggCrcTab.push(crc & 0xFFFFFFFF);
+			_oggCrcTab.push(crc);
 		}
 	}
 
+	@:noCompletion
 	static function _oggCRC32(b:Bytes):Int
 	{
 		if (_oggCrcTab == null)
 			_buildOggCRCTable();
 		var crc:Int = 0;
 		for (i in 0...b.length)
-			crc = ((crc << 8) ^ _oggCrcTab[((crc >>> 24) ^ b.get(i)) & 0xFF]) & 0xFFFFFFFF;
+			crc = ((crc << 8) ^ _oggCrcTab[((crc >>> 24) ^ b.get(i)) & 0xFF]);
 		return crc;
 	}
 
 	// ── Walker ────────────────────────────────────────────────────────────────
 
+	@:noCompletion
 	static function _walkDirectory(dir:String, fn:String->Void, recursive:Bool):Void
 	{
 		if (!FileSystem.exists(dir) || !FileSystem.isDirectory(dir))
@@ -974,6 +1003,7 @@ class AssetOptimizer
 		}
 	}
 
+	@:noCompletion
 	static function _processFile(path:String):Void
 	{
 		if (path.endsWith('.png'))
@@ -983,6 +1013,28 @@ class AssetOptimizer
 		else if (path.endsWith('.ogg'))
 			_optimizeOGG(path);
 	}
+
+	/**
+	 * Helper compartido entre optimizeSounds y optimizeMusic.
+	 * FIX v2.1: elimina la duplicación 100% idéntica entre esas dos funciones.
+	 */
+	@:noCompletion
+	static function _optimizeAudioDir(dirPath:String, recursive:Bool, label:String):OptimizerStats
+	{
+		#if sys
+		lastStats = new OptimizerStats();
+		lastStats.rootPath = dirPath;
+		if (FileSystem.exists(dirPath))
+			_walkDirectory(dirPath, function(p:String)
+			{
+				if (p.endsWith('.ogg'))
+					_optimizeOGG(p);
+			}, recursive);
+		trace('[AssetOptimizer] $label: ${lastStats.summary()}');
+		#end
+		return lastStats;
+	}
+
 	#end // sys
 
 	// ══════════════════════════════════════════════════════════════════════════
@@ -994,6 +1046,7 @@ class AssetOptimizer
 	 * getPixels() devuelve ARGB por pixel: byte 0=A, 1=R, 2=G, 3=B.
 	 * Leer solo el byte alpha cada 4 posiciones → 4-5× más rápido que getPixel32().
 	 */
+	@:noCompletion
 	static function _hasAlphaFast(bitmap:BitmapData):Bool
 	{
 		if (!bitmap.transparent)
@@ -1011,9 +1064,7 @@ class AssetOptimizer
 			}
 			return false;
 		}
-		catch (_:Dynamic)
-		{
-		}
+		catch (_:Dynamic) {}
 		// Fallback: muestreo cada 2 pixels si getPixels() no está disponible
 		var x = 0;
 		while (x < bitmap.width)
@@ -1034,6 +1085,7 @@ class AssetOptimizer
 	 * Bounding box de pixels opacos usando getPixels() en bloque.
 	 * Evita el overhead de getPixel32() por pixel en imágenes grandes.
 	 */
+	@:noCompletion
 	static function _getOpaqueBoundsFast(bitmap:BitmapData):Null<Rectangle>
 	{
 		final w = bitmap.width;
@@ -1052,14 +1104,10 @@ class AssetOptimizer
 					final idx = (y * w + x) * 4; // byte alpha en ARGB
 					if ((pixels[idx] & 0xFF) > 0)
 					{
-						if (x < minX)
-							minX = x;
-						if (y < minY)
-							minY = y;
-						if (x > maxX)
-							maxX = x;
-						if (y > maxY)
-							maxY = y;
+						if (x < minX) minX = x;
+						if (y < minY) minY = y;
+						if (x > maxX) maxX = x;
+						if (y > maxY) maxY = y;
 						found = true;
 					}
 				}
@@ -1071,14 +1119,10 @@ class AssetOptimizer
 				for (x in 0...w)
 					if ((bitmap.getPixel32(x, y) >>> 24) > 0)
 					{
-						if (x < minX)
-							minX = x;
-						if (y < minY)
-							minY = y;
-						if (x > maxX)
-							maxX = x;
-						if (y > maxY)
-							maxY = y;
+						if (x < minX) minX = x;
+						if (y < minY) minY = y;
+						if (x > maxX) maxX = x;
+						if (y > maxY) maxY = y;
 						found = true;
 					}
 		}
@@ -1090,6 +1134,7 @@ class AssetOptimizer
 	// ── CRC32 PNG (reflejado, polinomio 0xEDB88320) ───────────────────────────
 	static var _crcTable:Array<Int> = null;
 
+	@:noCompletion
 	static function _buildCRCTable():Void
 	{
 		_crcTable = [];
@@ -1102,6 +1147,7 @@ class AssetOptimizer
 		}
 	}
 
+	@:noCompletion
 	static function _crc32(data:Bytes):Int
 	{
 		if (_crcTable == null)
@@ -1114,12 +1160,14 @@ class AssetOptimizer
 
 	// ── Helpers ───────────────────────────────────────────────────────────────
 
+	@:noCompletion
 	static inline function _fname(p:String):String
 	{
 		final parts = p.split('/');
 		return parts[parts.length - 1];
 	}
 
+	@:noCompletion
 	static inline function _hb(b:Int):String
 	{
 		if (b < 1024)
@@ -1165,9 +1213,7 @@ class OptimizerStats
 	public var bytesSaved:Int = 0;
 	public var errors:Int = 0;
 
-	public function new()
-	{
-	}
+	public function new() {}
 
 	public function summary():String
 	{

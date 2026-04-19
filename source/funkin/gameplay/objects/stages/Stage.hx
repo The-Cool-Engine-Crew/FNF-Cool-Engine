@@ -624,6 +624,8 @@ class Stage extends FlxTypedGroup<FlxBasic>
 				createSprite(element);
 			case "animated":
 				createAnimatedSprite(element);
+			case "atlas", "animate_atlas", "texture_atlas":
+				createAtlasSprite(element);
 			case "graphic":
 				createGraphicSprite(element);
 			case "group":
@@ -789,6 +791,102 @@ class Stage extends FlxTypedGroup<FlxBasic>
 
 		var sprite:FunkinSprite = new FunkinSprite(element.position[0], element.position[1]);
 		sprite.makeGraphic(Std.int(gW), Std.int(gH), gColor);
+
+		applyElementProperties(sprite, element);
+		_addToGroup(element, sprite);
+
+		if (element.name != null)
+			elements.set(element.name, sprite);
+	}
+
+	// ── Texture Atlas (FunkinSprite + loadAnimateAtlas) ──────────────────────
+
+	/**
+	 * createAtlasSprite — carga explícita de un Texture Atlas de Adobe Animate.
+	 *
+	 * A diferencia de createSprite (que auto-detecta), este método va directo a
+	 * loadAnimateAtlas() sin intentar Sparrow/Packer primero.  Úsalo cuando el
+	 * elemento tiene type:"atlas" en el JSON del stage.
+	 *
+	 * El asset debe ser el nombre de la CARPETA que contiene Animation.json (o
+	 * spritemap1.json) y la sub-carpeta images/.  La carpeta tiene que estar
+	 * en stages/<lib>/images/<assetKey>/ o assets/stages/<stage>/images/<assetKey>/.
+	 *
+	 * Las animaciones (element.animations) se añaden igual que en animated:
+	 * cada entrada usa name/prefix/framerate/looped tal cual.
+	 * Si no se definen animaciones, FunkinSprite reproduce el clip por defecto.
+	 */
+	function createAtlasSprite(element:StageElement):Void
+	{
+		final res      = _resolveAssetLib(element);
+		final assetKey = res.key;
+
+		var sprite:FunkinSprite = new FunkinSprite(element.position[0], element.position[1]);
+
+		// ── Buscar la carpeta del atlas ───────────────────────────────────────
+		var loaded   = false;
+		var candidates:Array<String> = [];
+
+		if (res.lib != null)
+		{
+			var modPath = mods.ModManager.resolveInMod('stages/${res.lib}/images/$assetKey');
+			if (modPath != null) candidates.push(modPath);
+		}
+
+		// Base-assets: stages/<lib>/images/<key> y stages/<stage>/images/<key>
+		var libName = res.lib ?? Paths.currentStage;
+		candidates.push('assets/stages/$libName/images/$assetKey');
+		if (res.lib != null)
+			candidates.push('assets/stages/${res.lib}/images/$assetKey');
+
+		for (folder in candidates)
+		{
+			#if sys
+			if (folder != '' && sys.FileSystem.exists(folder)
+				&& (sys.FileSystem.exists('$folder/Animation.json')
+				||  sys.FileSystem.exists('$folder/spritemap1.json')))
+			{
+				sprite.loadAnimateAtlas(folder);
+				loaded = true;
+				break;
+			}
+			#end
+		}
+
+		if (!loaded)
+		{
+			if (isEditorPreview)
+			{
+				trace('[Stage] createAtlasSprite: carpeta atlas no encontrada para "${element.asset}" — placeholder de editor');
+				_makePlaceholderGraphic(sprite, element.name ?? element.asset);
+			}
+			else
+			{
+				trace('[Stage] createAtlasSprite: carpeta atlas no encontrada para asset="${element.asset}"'
+					+ (res.lib != null ? ' (lib: ${res.lib})' : '') + ' — sprite omitido');
+				return;
+			}
+		}
+
+		// ── Animaciones declaradas en el JSON ─────────────────────────────────
+		if (element.animations != null && loaded)
+		{
+			for (anim in element.animations)
+			{
+				sprite.addAnim(
+					anim.name,
+					anim.prefix,
+					anim.framerate != null ? anim.framerate : 24,
+					anim.looped    != null ? anim.looped    : false,
+					(anim.indices != null && anim.indices.length > 0) ? anim.indices : null
+				);
+			}
+
+			if (element.firstAnimation != null)
+				sprite.playAnim(element.firstAnimation);
+			else if (element.animations.length > 0)
+				sprite.playAnim(element.animations[0].name);
+		}
 
 		applyElementProperties(sprite, element);
 		_addToGroup(element, sprite);
@@ -1413,8 +1511,8 @@ class Stage extends FlxTypedGroup<FlxBasic>
 
 		if (element.active != null)
 			sprite.active = element.active;
-		else if (element.type == 'sprite') // sprites estáticos sin animación
-			sprite.active = false;         // no necesitan update() cada frame
+		else if (element.type == 'sprite')
+			sprite.active = false;
 
 		if (element.alpha != null)
 			sprite.alpha = element.alpha;
@@ -1441,6 +1539,22 @@ class Stage extends FlxTypedGroup<FlxBasic>
 					sprite.blend = openfl.display.BlendMode.MULTIPLY;
 				case "screen":
 					sprite.blend = openfl.display.BlendMode.SCREEN;
+				case "alpha":
+					sprite.blend = openfl.display.BlendMode.ALPHA;
+				case "darken":
+					sprite.blend = openfl.display.BlendMode.DARKEN;
+				case "difference":
+					sprite.blend = openfl.display.BlendMode.DIFFERENCE;
+				case "erase":
+					sprite.blend = openfl.display.BlendMode.ERASE;
+				case "hardlight":
+					sprite.blend = openfl.display.BlendMode.HARDLIGHT;
+				case "invert":
+					sprite.blend = openfl.display.BlendMode.INVERT;
+				case "lighten":
+					sprite.blend = openfl.display.BlendMode.LIGHTEN;
+				case "overlay":
+					sprite.blend = openfl.display.BlendMode.OVERLAY;
 				default:
 					sprite.blend = openfl.display.BlendMode.NORMAL;
 			}

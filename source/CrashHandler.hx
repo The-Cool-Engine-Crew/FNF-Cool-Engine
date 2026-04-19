@@ -350,11 +350,11 @@ class CrashHandler {
 
 			var args = ["--pid", Std.string(pid), "--logdir", dir, "--url", REPORT_URL];
 
-			#if windows
-			Sys.command("cmd", ["/C", "start", "", "/B", WATCHER_EXE].concat(args));
-			#elseif (linux || mac)
-			Sys.command("sh", ["-c", WATCHER_EXE + " " + args.join(" ") + " &"]);
-			#end
+			// FIX startup: Sys.command() es bloqueante — espera a que cmd.exe/sh
+			// arranque y lance el watcher antes de continuar, añadiendo 1-3 s de
+			// pantalla negra porque init() se llama antes de createGame().
+			// sys.io.Process() lanza el proceso y retorna INMEDIATAMENTE.
+			new sys.io.Process(WATCHER_EXE, args);
 
 			trace('[CrashHandler] CrashWatcher launched (PID=$pid).');
 			_watcherRunning = true;
@@ -385,11 +385,8 @@ class CrashHandler {
 
 			var args = ["--mode", "warning", "--logfile", logPath];
 
-			#if windows
-			Sys.command("cmd", ["/C", "start", "", "/B", WATCHER_EXE].concat(args));
-			#elseif (linux || mac)
-			Sys.command("sh", ["-c", WATCHER_EXE + " " + args.join(" ") + " &"]);
-			#end
+			// FIX: mismo problema que _spawnWatcher — usar Process() no bloqueante.
+			new sys.io.Process(WATCHER_EXE, args);
 
 			return true;
 		} catch (_) {}

@@ -6,7 +6,7 @@
     {
       "type": "video",
       "asset": "engine_intro",
-      "skipable": false
+      "skipable": true
     }
   ]
 }

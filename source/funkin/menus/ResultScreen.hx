@@ -261,6 +261,19 @@ class ResultScreen extends funkin.states.MusicBeatSubstate {
 	override function destroy():Void {
 		StateScriptHandler.callOnScripts('onDestroy', []);
 		StateScriptHandler.clearStateScripts();
+
+		// FIX Bug 2: ResultScreen creates 9 makeGraphic() sprites including two
+		// full-screen ones (1280×720 = ~3.5 MB each). Without explicit destroy()
+		// calls here the BitmapData backing those sprites is not released until
+		// the next postStateSwitch, leaving 5-8 MB stranded in RAM per cycle.
+		if (bg != null)          { bg.destroy();          bg = null; }
+		if (glowOverlay != null) { glowOverlay.destroy();  glowOverlay = null; }
+		if (topBar != null)      { topBar.destroy();       topBar = null; }
+
+		// Prune any atlases whose FlxGraphic was destroyed above so they don't
+		// sit as zombie entries until the next postStateSwitch cleanup.
+		try { Paths.pruneAtlasCache(); } catch (_:Dynamic) {}
+
 		// Liberar el singleton de GameState ahora que ya mostramos las stats.
 		// PlayState dejó de hacerlo en su propio destroy() para que este
 		// estado pueda leer los valores correctos en create().

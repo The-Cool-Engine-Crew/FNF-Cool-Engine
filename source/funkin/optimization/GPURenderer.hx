@@ -48,6 +48,10 @@ class GPURenderer
     // Camera rect actualizado UNA vez por render
     private var _camDirty:Bool = true;
 
+    // Auto-prune de batches huérfanos cada N renders para liberar VRAM
+    private static inline var PRUNE_INTERVAL:Int = 300;
+    private var _pruneCounter:Int = 0;
+
     public function new(?camera:FlxCamera)
     {
         this.camera    = camera != null ? camera : FlxG.camera;
@@ -126,6 +130,13 @@ class GPURenderer
 
         clear();
         _camDirty = true;
+
+        // Auto-prune de batches cuyas texturas ya no están en uso → libera VRAM
+        if (++_pruneCounter >= PRUNE_INTERVAL)
+        {
+            _pruneCounter = 0;
+            clearUnusedBatches();
+        }
     }
 
     public function clear():Void
@@ -331,6 +342,7 @@ class GPUBatch
     public function destroy():Void
     {
         vertices = null;
+        uvtData  = null;
         indices  = null;
         texture  = null;
     }

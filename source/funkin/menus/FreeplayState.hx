@@ -478,6 +478,15 @@ class FreeplayState extends funkin.states.MusicBeatState
 		#end
 
 		super.create();
+
+		// FIX Bug 4 — liberar copias CPU de texturas ya subidas a la GPU.
+		// Los menús nunca llamaban flushGPUCache(), dejando los píxeles en RAM
+		// además de VRAM. En FreeplayState (albums, ratings, iconos, bg) esto suma
+		// fácilmente 40–80 MB extra que no se liberan al volver al menú principal.
+		// Diferimos 100ms para que el primer render haya ocurrido (context3D listo).
+		haxe.Timer.delay(function() {
+			try { funkin.cache.PathsCache.instance.flushGPUCache(); } catch (_:Dynamic) {}
+		}, 100);
 	}
 
 	// ── Album loading / display ───────────────────────────────────────────────
@@ -889,6 +898,10 @@ class FreeplayState extends funkin.states.MusicBeatState
 			case 1:
 				upP = false;
 				downP = false;
+		}
+
+		if (difficultyStuff.length < 1){
+			leftP = false; rightP = false;
 		}
 
 		#if HSCRIPT_ALLOWED
@@ -1373,11 +1386,6 @@ class FreeplayState extends funkin.states.MusicBeatState
 			return;
 		difficultyStuff = cast Song.getAvailableDifficulties(songs[curSelected].songName.toLowerCase());
 
-		// ── Hook para scripts: permite filtrar dificultades por variante de personaje ──
-		// El script recibe (songName, diffs) y devuelve el array filtrado.
-		// Si devuelve null o un valor no-Array, se conserva el original.
-		// Uso en freeplay_main.hx:
-		//   function onDifficultyStuffBuilt(songName, diffs) { ... return filteredDiffs; }
 		final _filtered = StateScriptHandler.callOnScriptsReturn('onDifficultyStuffBuilt', [songs[curSelected].songName, difficultyStuff], null);
 		if (_filtered != null && Std.isOfType(_filtered, Array))
 			difficultyStuff = cast _filtered;
@@ -1476,8 +1484,20 @@ class FreeplayState extends funkin.states.MusicBeatState
 		// ── FIX Bug 3a: iconArray acumulaba HealthIcon sin destruir ──────────
 		// Flixel los destruye eventualmente, pero el GC no los recoge antes del
 		// siguiente create() → la RAM sube con cada ciclo FreeplayState → PlayState.
-		for (icon in iconArray)
-			if (icon != null) icon.destroy();
+		// FIX Bug 2: además de destroy(), eliminar explícitamente el FlxGraphic
+		// de cada ícono de FlxG.bitmap. HealthIcon.destroy() destruye el FlxSprite
+		// pero no llama FlxG.bitmap.removeByKey(), así que el BitmapData del ícono
+		// queda vivo en el cache de Flixel indefinidamente (useCount cae a 0 pero
+		// persist=true lo blinda contra el clearUnused automático de Flixel).
+		// Con removeByKey() explícito, el bitmap se dispone inmediatamente y no
+		// necesita esperar a clearSecondLayer() del siguiente cambio de state.
+		for (icon in iconArray) {
+			if (icon == null) continue;
+			final gKey = icon.graphic?.key;
+			icon.destroy();
+			if (gKey != null && gKey != '')
+				try { FlxG.bitmap.removeByKey(gKey); } catch (_:Dynamic) {}
+		}
 		iconArray = [];
 
 		// ── diffPills: clear() solo los saca del grupo sin destruirlos ────────

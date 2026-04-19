@@ -274,18 +274,20 @@ class CoreAudio extends FlxBasic
 		register(snd, 1.0); // baseVolume 1.0 — PlayState no necesita sobreescribir .volume
 	}
 
-	/** Elimina y desregistra un vocal por clave. */
+	/** Removes and unregisters a vocal by key. */
 	public static function removeVocal(key:String):Void
 	{
 		final snd = vocals.get(key);
 		if (snd == null) return;
-		if (snd.alive) snd.stop();   // guarda contra FlxSounds ya destruidos
+		if (snd.alive) snd.stop();
 		unregister(snd);
-		FlxG.sound.list.remove(snd, false);
+		// FIX Bug 7: pass true so FlxSound.destroy() is called, closing the
+		// native OpenFL PCM buffer immediately instead of waiting for the GC.
+		FlxG.sound.list.remove(snd, true);
 		vocals.remove(key);
 	}
 
-	/** Elimina y desregistra todos los vocales. */
+	/** Removes and unregisters all vocals, immediately closing their native PCM buffers. */
 	public static function clearVocals():Void
 	{
 		for (_ => snd in vocals)
@@ -293,7 +295,11 @@ class CoreAudio extends FlxBasic
 			if (snd == null) continue;
 			if (snd.alive) snd.stop();
 			unregister(snd);
-			FlxG.sound.list.remove(snd, false);
+			// FIX Bug 7: true → FlxSound.destroy() is called on removal, which
+			// closes the OpenFL native audio buffer right away. Without this,
+			// each song's vocal buffers (~10-30 MB decompressed) accumulate in
+			// RAM across songs when the GC is paused during gameplay.
+			FlxG.sound.list.remove(snd, true);
 		}
 		vocals.clear();
 	}
@@ -473,9 +479,21 @@ class CoreAudio extends FlxBasic
 		forceRestart:Bool = false, loop:Bool = true):Void
 	{
 		if (track == null || track.trim() == '') return;
-		if (!forceRestart && menuTrack == track
-			&& FlxG.sound.music != null && FlxG.sound.music.playing)
+
+		// FIX: la guarda anterior usaba .playing, que Flixel pone a false
+		// durante FlxG.switchState() (FlxSoundManager.onStateSwitch pausa
+		// los sounds un frame). Eso hacía que al cambiar de state con la misma
+		// track, la guarda fallara → _stopMenuInternal() destruía el sound →
+		// se recargaba desde el inicio → corte audible aunque fuera el mismo menú.
+		//
+		// Solución: si la track es la misma y el sound existe (playing O paused),
+		// simplemente asegurar que esté reproduciéndose y retornar sin reiniciar.
+		if (!forceRestart && menuTrack == track && FlxG.sound.music != null)
+		{
+			if (!FlxG.sound.music.playing)
+				try { FlxG.sound.music.resume(); } catch (_:Dynamic) {}
 			return;
+		}
 
 		// Si la nueva pista es distinta a la guardada, descartar posición salvada.
 		if (_savedMenuTrack != track)
@@ -516,9 +534,15 @@ class CoreAudio extends FlxBasic
 		fadeDuration:Float = 4.0, forceRestart:Bool = false):Void
 	{
 		if (track == null || track.trim() == '') return;
-		if (!forceRestart && menuTrack == track
-			&& FlxG.sound.music != null && FlxG.sound.music.playing)
+
+		// FIX: mismo bug que playMenu — .playing es false durante switchState.
+		// Si la track ya está cargada (playing o paused), solo resumir y retornar.
+		if (!forceRestart && menuTrack == track && FlxG.sound.music != null)
+		{
+			if (!FlxG.sound.music.playing)
+				try { FlxG.sound.music.resume(); } catch (_:Dynamic) {}
 			return;
+		}
 
 		// Si la nueva pista es distinta a la guardada, descartar posición salvada.
 		if (_savedMenuTrack != track)

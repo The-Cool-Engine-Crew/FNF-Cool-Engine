@@ -11,7 +11,7 @@ set -e
 
 HAXE_VERSION="4.3.6"
 LIME_VERSION="8.3.1"
-OPENFL_VERSION="9.3.0"
+OPENFL_VERSION="9.5.1"
 
 echo "==============================================="
 echo "   FNF Cool Engine — Environment Setup — macOS"
@@ -72,6 +72,8 @@ haxelib install extension-haptics
 haxelib git funkin.vis     https://github.com/FunkinCrew/funkVis        --never
 haxelib git    coolui https://github.com/The-Cool-Engine-Crew/coolui --never
 haxelib install flixel-tools 1.5.1  --quiet --never
+haxelib git grig.audio     https://github.com/FunkinCrew/grig.audio
+haxelib install tink_core --quiet --never
 
 # ── Additional ───────────────────────────────────
 echo ""

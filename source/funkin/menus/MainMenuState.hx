@@ -228,6 +228,11 @@ class MainMenuState extends funkin.states.MusicBeatState
 		StickerTransition.clearStickers();
 
 		super.create();
+
+		// FIX Bug 4 — liberar copias CPU de texturas en menús (ver FreeplayState).
+		haxe.Timer.delay(function() {
+			try { funkin.cache.PathsCache.instance.flushGPUCache(); } catch (_:Dynamic) {}
+		}, 100);
 	}
 
 	var selectedSomethin:Bool = false;

@@ -108,6 +108,28 @@ class MemoryUtil
 		return Math.round(System.totalMemory / (1024 * 1024));
 
 	/**
+	 * Estima la VRAM utilizada por los BitmapData registrados en FlxG.bitmap.
+	 * Suma ancho × alto × bytesPerPixel para cada textura viva.
+	 * Es una aproximación — no cuenta mipmaps ni alineación de hardware.
+	 * @return Estimación en MB.
+	 */
+	public static function estimateVRAMMB():Int
+	{
+		var total:Float = 0;
+		try
+		{
+			for (graphic in @:privateAccess flixel.FlxG.bitmap._cache)
+			{
+				if (graphic == null || graphic.bitmap == null) continue;
+				final b = graphic.bitmap;
+				total += b.width * b.height * (b.transparent ? 4 : 3);
+			}
+		}
+		catch (_:Dynamic) {}
+		return Math.ceil(total / (1024 * 1024));
+	}
+
+	/**
 	 * Formatea bytes en una string legible: "152 MB" / "1.2 GB".
 	 * @param bytes  Cantidad en bytes.
 	 */

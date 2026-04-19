@@ -18,7 +18,7 @@ pause
 
 :: ── Versions ──────────────────────────────────────
 set LIME_VERSION=8.3.1
-set OPENFL_VERSION=9.3.0
+set OPENFL_VERSION=9.5.1
 
 cls
 echo ===============================================
@@ -52,6 +52,9 @@ haxelib git funkin.vis https://github.com/FunkinCrew/funkVis         --never
 haxelib git coolui https://github.com/The-Cool-Engine-Crew/coolui --never
 haxelib install flixel-tools 1.5.1  --quiet --never
 haxelib install extension-haptics
+
+haxelib git grig.audio     https://github.com/FunkinCrew/grig.audio          --never
+haxelib install tink_core --quiet --never
 
 cls
 echo ===============================================

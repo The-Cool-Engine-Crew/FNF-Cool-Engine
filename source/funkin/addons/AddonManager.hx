@@ -81,6 +81,10 @@ class AddonManager
 	 */
 	public static function init():Void
 	{
+		// FIX Bug 8: destroy existing AddonEntry instances before discarding them
+		// so their HScriptInstance interpreters are properly freed.
+		for (ae in loadedAddons)
+			try ae.destroy() catch (_:Dynamic) {}
 		loadedAddons    = [];
 		registeredSystems = new Map();
 		initialized     = true;
@@ -301,5 +305,21 @@ class AddonEntry
 		inst.set('addonPath', path);
 		inst.set('registerSystem', AddonManager.registerSystem);
 		#end
+	}
+
+	// FIX Bug 8: AddonEntry had no destroy() method.
+	// HScriptInstance objects stored in _scripts were never destroyed, leaving
+	// their hscript Interps (with ScriptAPI closures and variable bindings)
+	// alive for the entire game session — one interpreter per addon hook, per
+	// mod load. On mod switch/reload, init() replaced loadedAddons = [] without
+	// destroying the old AddonEntry objects, so every previous generation of
+	// scripts accumulated in memory indefinitely.
+	public function destroy():Void
+	{
+		#if HSCRIPT_ALLOWED
+		for (_ => inst in _scripts)
+			if (inst != null) try inst.destroy() catch (_:Dynamic) {}
+		#end
+		_scripts.clear();
 	}
 }

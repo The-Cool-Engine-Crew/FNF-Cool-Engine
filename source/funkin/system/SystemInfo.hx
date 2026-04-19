@@ -44,8 +44,52 @@ class SystemInfo
 	public static var totalRAM(default, null):String = "Unknown";
 	public static var ramType(default, null):String  = "";
 
+	/**
+	 * VRAM total en KB tal como la reporta el driver NVX la primera vez.
+	 * -1 si el driver no expone la extensión (AMD sin NVX, Intel, mobile).
+	 */
+	public static var vRAMTotalKB(default, null):Int = -1;
+
 	/** true después de llamar init(). */
 	public static var initialized(default, null):Bool = false;
+
+	// ── VRAM dinámica ─────────────────────────────────────────────────────────
+
+	/**
+	 * Devuelve los KB de VRAM LIBRE en este momento via GL_GPU_MEM_INFO_CURRENT_AVAILABLE_MEM_NVX
+	 * (constante NVX 0x9049, disponible en NVIDIA y algunos drivers Mesa).
+	 * Devuelve -1 si el driver no lo soporta o no hay contexto GL activo.
+	 *
+	 * NOTA: AMD expone WGL_GPU_RAM_AMD / ATI_meminfo en su lugar; esos paths
+	 * requieren extensiones distintas. Esta función solo cubre el path NVX por
+	 * ahora — en AMD/Intel devolverá -1 y la UI mostrará solo el total estático.
+	 */
+	@:access(openfl.display3D.Context3D)
+	public static function getVRAMFreeKB():Int
+	{
+		try
+		{
+			if (!FlxG.renderTile) return -1;
+			var ctx = FlxG.stage.context3D;
+			if (ctx == null || ctx.gl == null) return -1;
+			// GL_GPU_MEM_INFO_CURRENT_AVAILABLE_MEM_NVX = 0x9049
+			var kb:Int = cast ctx.gl.getParameter(0x9049);
+			return (kb > 0) ? kb : -1;
+		}
+		catch (_:Dynamic) { return -1; }
+	}
+
+	/**
+	 * Devuelve los KB de VRAM USADA = total - libre.
+	 * Devuelve -1 si alguno de los dos valores no está disponible.
+	 */
+	public static function getVRAMUsedKB():Int
+	{
+		if (vRAMTotalKB <= 0) return -1;
+		var free = getVRAMFreeKB();
+		if (free < 0) return -1;
+		return Std.int(Math.max(0, vRAMTotalKB - free));
+	}
 
 	// ── Resumen compacto para debug overlay ──────────────────────────────────
 
@@ -211,18 +255,22 @@ class SystemInfo
 					gpuMaxTextureSize = '${maxTex}×${maxTex}';
 					#end
 
-					// VRAM via NV extension (GL_GPU_MEM_INFO_TOTAL_AVAILABLE_MEM_NVX)
-					// El valor está en KB cuando está disponible.
+					// VRAM total via NV extension (GL_GPU_MEM_INFO_TOTAL_AVAILABLE_MEM_NVX = 0x9048)
+					// También intentamos 0x9048 directamente como fallback si el campo privado
+					// de openfl no está expuesto en la build actual.
 					@:privateAccess
-					if (openfl.display3D.Context3D.__glMemoryTotalAvailable != -1)
-					{
-						var kb:Int = cast ctx.gl.getParameter(
-							openfl.display3D.Context3D.__glMemoryTotalAvailable
-						);
+					var _nvxTotal:Int =
+						(openfl.display3D.Context3D.__glMemoryTotalAvailable != -1)
+						? openfl.display3D.Context3D.__glMemoryTotalAvailable
+						: 0x9048;
+					try {
+						var kb:Int = cast ctx.gl.getParameter(_nvxTotal);
 						// Algunos drivers reportan 1 o valores inválidos en APUs
-						if (kb > 16)
+						if (kb > 16) {
+							vRAMTotalKB = kb;
 							vRAM = MemoryUtil.formatBytes(kb * 1024.0);
-					}
+						}
+					} catch (_:Dynamic) {}
 				}
 			}
 		}
