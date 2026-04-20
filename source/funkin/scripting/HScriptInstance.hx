@@ -605,10 +605,28 @@ class HScriptInstance implements IScript
 			}
 			catch (_counterErr:Dynamic) {}
 
-			// ── Popup in-game (no bloqueante) ─────────────────────────────────
-			// ScriptErrorNotifier tiene su propia capa de try/catch interna,
-			// pero lo envolvemos también aquí por si la construcción del Sprite
-			// OpenFL falla por un estado de render corrupto.
+			// ── Queue load-time errors for the CrashWatcher batch warning ────
+			// Runtime errors (onUpdate, onBeatHit, etc.) stay as in-game popups.
+			// Errors during loading are queued here and flushed by
+			// CrashHandler.flushScriptWarnings() once startup is complete.
+			if (funcName == 'loadString' || funcName == 'load' || funcName == 'hotReload')
+			{
+				try
+				{
+					CrashHandler.queueScriptWarning(
+						(name     != null && name     != '') ? name     : "?",
+						(funcName != null && funcName != '') ? funcName : "?",
+						lineNum,
+						msg,
+						lineContent != '' ? lineContent : null
+					);
+				}
+				catch (_qErr:Dynamic) {}
+			}
+
+			// ── In-game popup (non-blocking) ──────────────────────────────────
+			// ScriptErrorNotifier has its own try/catch internally, but we wrap
+			// here too in case the OpenFL Sprite build fails in a corrupt render.
 			try
 			{
 				final popupMsg = lineContent != '' ? '$msg\n\n>> $lineContent' : msg;

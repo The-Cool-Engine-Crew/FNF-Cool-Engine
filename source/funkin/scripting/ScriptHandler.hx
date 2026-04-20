@@ -1,6 +1,7 @@
 package funkin.scripting;
 
 import haxe.Exception;
+import CrashHandler;
 #if sys
 import sys.FileSystem;
 import sys.io.File;
@@ -201,6 +202,11 @@ class ScriptHandler
 		_loadFolder('$base/assets/data/scripts/events', 'global');
 		#end
 		trace('[ScriptHandler v4] Global scripts loaded.');
+
+		// Flush any load-time errors collected by HScriptInstance
+		// into a single CrashWatcher warning dialog so the developer
+		// sees every broken script in one place.
+		CrashHandler.flushScriptWarnings();
 	}
 
 	// ── Context loading ───────────────────────────────────────────────────────

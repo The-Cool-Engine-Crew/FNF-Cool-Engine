@@ -867,9 +867,23 @@ class WideRatioScaleMode extends RatioScaleMode
 			gameSize.y = Height;
 			gameSize.x = Width;
 
-			// Expandir el ancho lógico de Flixel
+			var prevW:Int = FlxG.width;
 			untyped FlxG.width  = newW;
 			untyped FlxG.height = _baseH;
+
+			// Mobile WideScreen
+
+			if (prevW != newW && FlxG.cameras != null)
+			{
+				for (cam in FlxG.cameras.list)
+				{
+					if (cam == null) continue;
+					if (cam.width == prevW || cam.width == _baseW)
+					{
+						cam.setSize(newW, _baseH);
+					}
+				}
+			}
 		}
 		else
 		{

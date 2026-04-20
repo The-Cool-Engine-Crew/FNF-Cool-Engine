@@ -147,6 +147,13 @@ class CrashHandler {
 	 */
 	private static var _recentWarnings:Map<String, Float> = new Map();
 
+	/**
+	 * Queue of script errors collected during startup / script loading.
+	 * Call flushScriptWarnings() once loading is done to show them all
+	 * in a single CrashWatcher warning dialog.
+	 */
+	private static var _scriptWarnings:Array<{script:String, func:String, line:Int, msg:String, lineContent:String}> = [];
+
 	// =========================================================================
 	//  PUBLIC API
 	// =========================================================================
@@ -317,6 +324,88 @@ class CrashHandler {
 	}
 
 	// =========================================================================
+	//  SCRIPT WARNING QUEUE  (batch errors from load-time / hot-reload)
+	// =========================================================================
+
+	/**
+	 * Enqueues a single script error to be shown later via flushScriptWarnings().
+	 * Call this from HScriptInstance._handleError() during loadString / load.
+	 *
+	 * @param script      Script file name or path.
+	 * @param func        Function where the error occurred ("loadString", "onUpdate", …).
+	 * @param line        Line number in the script (-1 if unknown).
+	 * @param msg         Human-readable error message.
+	 * @param lineContent Optional: the actual source line that caused the error.
+	 */
+	public static function queueScriptWarning(script:String, func:String, line:Int, msg:String, ?lineContent:String):Void {
+		try {
+			if (script == null || script == "") script = "(unknown script)";
+			if (func   == null || func   == "") func   = "?";
+			if (msg    == null || msg    == "") msg    = "(unknown error)";
+			_scriptWarnings.push({
+				script      : script,
+				func        : func,
+				line        : line,
+				msg         : msg,
+				lineContent : (lineContent != null) ? lineContent : ""
+			});
+		} catch (_) {}
+	}
+
+	/**
+	 * Flushes all queued script errors into a single CrashWatcher warning dialog.
+	 * Call once from Main after all scripts have been loaded.
+	 * No-op if the queue is empty.
+	 */
+	public static function flushScriptWarnings():Void {
+		try {
+			if (_scriptWarnings == null || _scriptWarnings.length == 0)
+				return;
+
+			var errors = _scriptWarnings.copy();
+			_scriptWarnings = [];
+
+			var count  = errors.length;
+			var plural = count > 1 ? "s" : "";
+
+			var sb = new StringBuf();
+
+			// Header
+			sb.add("===========================================\n");
+			sb.add("  COOL ENGINE \u2014 SCRIPT LOAD WARNINGS\n");
+			sb.add("===========================================\n\n");
+			sb.add('$count script error$plural found during startup.\n');
+			sb.add("The game will continue running, but the affected\n");
+			sb.add("scripts may not work correctly.\n\n");
+			sb.add("===========================================\n\n");
+
+			// One block per error
+			for (i in 0...errors.length) {
+				var e = errors[i];
+				sb.add('--- Error ${i + 1} of $count ---\n');
+				sb.add('Script   : ${e.script}\n');
+				sb.add('Function : ${e.func}\n');
+				if (e.line > 0)
+					sb.add('Line     : ${e.line}\n');
+				sb.add('Error    : ${e.msg}\n');
+				if (e.lineContent != null && e.lineContent != "")
+					sb.add('Source   : ${e.lineContent}\n');
+				sb.add('\n');
+			}
+
+			// Footer
+			sb.add("===========================================\n");
+			sb.add("None of these errors crashed the game.\n");
+			sb.add("Fix the issues above and restart.\n");
+			sb.add("===========================================\n");
+			sb.add(REPORT_URL + "\n");
+
+			warn(sb.toString(), "ScriptLoader");
+
+		} catch (_) {}
+	}
+
+	// =========================================================================
 	//  EXTERNAL WATCHER
 	// =========================================================================
 
@@ -350,10 +439,6 @@ class CrashHandler {
 
 			var args = ["--pid", Std.string(pid), "--logdir", dir, "--url", REPORT_URL];
 
-			// FIX startup: Sys.command() es bloqueante — espera a que cmd.exe/sh
-			// arranque y lance el watcher antes de continuar, añadiendo 1-3 s de
-			// pantalla negra porque init() se llama antes de createGame().
-			// sys.io.Process() lanza el proceso y retorna INMEDIATAMENTE.
 			new sys.io.Process(WATCHER_EXE, args);
 
 			trace('[CrashHandler] CrashWatcher launched (PID=$pid).');
@@ -385,7 +470,6 @@ class CrashHandler {
 
 			var args = ["--mode", "warning", "--logfile", logPath];
 
-			// FIX: mismo problema que _spawnWatcher — usar Process() no bloqueante.
 			new sys.io.Process(WATCHER_EXE, args);
 
 			return true;

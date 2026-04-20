@@ -601,6 +601,9 @@ class Project extends HXProject
 
     config.set("android.resizeable-activity", "false");
     config.push("android.meta-data", "android.max_aspect=2.4");
+    
+    config.push("android.meta-data", "android.notch_support=true");     // Huawei / Honor
+    config.push("android.meta-data", "notch.config=portrait|landscape"); // Xiaomi MIUI
 
     // Permisos Android: se añaden via config (HXProject no tiene androidPermissions)
     var perms = [

@@ -324,6 +324,12 @@ namespace CoolEngineCrashWatcher
             if (StartsWith(line, "Error    :"))  return ColError;
             if (StartsWith(line, "Context  :"))  return ColContext;
 
+            // Script-error structured fields (from CrashHandler.flushScriptWarnings)
+            if (StartsWith(line, "Script   :"))  return ColUser;     // green  — script path
+            if (StartsWith(line, "Function :"))  return ColMod;      // amber  — function name
+            if (StartsWith(line, "Line     :"))  return ColContext;   // gold   — line number
+            if (StartsWith(line, "Source   :"))  return ColCause;    // orange — source snippet
+
             // Cause chain
             if (trimmed.StartsWith("[") && trimmed.Contains("] ") && line.StartsWith("  ["))
                 return ColCause;
@@ -602,9 +608,31 @@ namespace CoolEngineCrashWatcher
 
         void BuildUI()
         {
-            Text            = "Cool Engine — Script Warning";
-            Size            = new Size(800, 540);
-            MinimumSize     = new Size(640, 380);
+            // ── Detect mode: batch load warnings vs. single runtime warning ──
+            bool isBatchLoad = _warningText.Contains("SCRIPT LOAD WARNINGS");
+            int  errorCount  = 0;
+            if (isBatchLoad)
+            {
+                // Count "--- Error N of M ---" blocks to get the total
+                int idx = 0;
+                while ((idx = _warningText.IndexOf("--- Error ", idx, StringComparison.Ordinal)) >= 0)
+                { errorCount++; idx++; }
+            }
+
+            string windowTitle   = isBatchLoad ? "Cool Engine — Script Load Errors" : "Cool Engine — Script Warning";
+            string headerTitle   = isBatchLoad
+                ? (errorCount > 1 ? errorCount + " script errors found — game continues" : "Script error found — game continues")
+                : "Script error — game continues";
+            string sub1Text      = isBatchLoad
+                ? "These errors occurred while loading scripts at startup."
+                : "This is a non-fatal warning. The game is still running normally.";
+            string sub2Text      = isBatchLoad
+                ? "The game will continue, but affected scripts may not work."
+                : "Press OK to dismiss and continue.";
+
+            Text            = windowTitle;
+            Size            = new Size(860, 580);
+            MinimumSize     = new Size(660, 400);
             StartPosition   = FormStartPosition.CenterScreen;
             BackColor       = Theme.BgDark;
             ForeColor       = Theme.TextPrimary;
@@ -623,16 +651,16 @@ namespace CoolEngineCrashWatcher
 
             var iconLbl = new Label
             {
-                Text      = "⚠️",
+                Text      = isBatchLoad ? "🚨" : "⚠️",
                 Font      = new Font("Segoe UI Emoji", 22f),
-                ForeColor = Theme.AccentAmber,
+                ForeColor = isBatchLoad ? Theme.AccentRed : Theme.AccentAmber,
                 AutoSize  = true,
                 Location  = new Point(16, 16),
             };
 
             var titleLbl = new Label
             {
-                Text      = "Script error — game continues",
+                Text      = headerTitle,
                 Font      = new Font("Segoe UI Semibold", 13f, FontStyle.Bold),
                 ForeColor = Theme.TextPrimary,
                 AutoSize  = true,
@@ -641,7 +669,7 @@ namespace CoolEngineCrashWatcher
 
             var sub1 = new Label
             {
-                Text      = "This is a non-fatal warning. The game is still running normally.",
+                Text      = sub1Text,
                 Font      = new Font("Segoe UI", 8.5f),
                 ForeColor = Theme.TextMuted,
                 AutoSize  = true,
@@ -650,7 +678,7 @@ namespace CoolEngineCrashWatcher
 
             var sub2 = new Label
             {
-                Text      = "Press OK to dismiss and continue.",
+                Text      = sub2Text,
                 Font      = new Font("Segoe UI", 8.5f),
                 ForeColor = Theme.TextMuted,
                 AutoSize  = true,

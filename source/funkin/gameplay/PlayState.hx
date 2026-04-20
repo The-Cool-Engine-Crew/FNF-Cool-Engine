@@ -238,8 +238,14 @@ class PlayState extends funkin.states.MusicBeatState {
 	 * true = modo osu-like: sin stage ni personajes, sólo strums + notas + HUD.
 	 */
 	public static var minimalMode(get, set):Bool;
-	static inline function get_minimalMode():Bool return PlayStateConfig.minimalMode;
-	static inline function set_minimalMode(v:Bool):Bool { PlayStateConfig.minimalMode = v; return v; }
+
+	static inline function get_minimalMode():Bool
+		return PlayStateConfig.minimalMode;
+
+	static inline function set_minimalMode(v:Bool):Bool {
+		PlayStateConfig.minimalMode = v;
+		return v;
+	}
 
 	public var canPause:Bool = true;
 	public var paused:Bool = false;
@@ -446,7 +452,7 @@ class PlayState extends funkin.states.MusicBeatState {
 				return;
 			FlxG.stage.removeEventListener(openfl.events.Event.ENTER_FRAME, _onFlushFrame);
 			funkin.cache.PathsCache.instance.flushGPUCache();
-			#if cpp
+			#if (cpp && !mobileC)
 			cpp.vm.Gc.run(true);
 			try {
 				cpp.vm.Gc.compact();
@@ -920,12 +926,11 @@ class PlayState extends funkin.states.MusicBeatState {
 		add(mobileControls);
 		var _hitbox = mobileControls._hitbox;
 		var _vpad = mobileControls._virtualPad;
-		
+
 		inputHandler.strumTapEnabled = (SaveData.data.strumTap == true);
 
 		if (_hitbox != null) {
-			if (inputHandler.strumTapEnabled)
-			{
+			if (inputHandler.strumTapEnabled) {
 				_hitbox.buttonLeft.visible = false;
 				_hitbox.buttonDown.visible = false;
 				_hitbox.buttonUp.visible = false;
@@ -1723,9 +1728,7 @@ class PlayState extends funkin.states.MusicBeatState {
 	private function onPlayerNoteHit(note:Note):Void {
 		var _pressedAt:Float = inputHandler.pressSongPos[note.noteData];
 		// FIX bot: el bot siempre golpea perfecto → noteDiff = 0 garantiza SICK
-		var noteDiff:Float = funkin.gameplay.PlayState.isBotPlay
-			? 0.0
-			: Math.abs(note.strumTime - (_pressedAt >= 0 ? _pressedAt : Conductor.songPosition));
+		var noteDiff:Float = funkin.gameplay.PlayState.isBotPlay ? 0.0 : Math.abs(note.strumTime - (_pressedAt >= 0 ? _pressedAt : Conductor.songPosition));
 		inputHandler.pressSongPos[note.noteData] = -1;
 
 		var rating:String = gameState.processNoteHit(noteDiff, note.isSustainNote);
@@ -1780,7 +1783,8 @@ class PlayState extends funkin.states.MusicBeatState {
 
 	private function onPlayerNoteMiss(missedNote:funkin.gameplay.notes.Note):Void {
 		// FIX bot: el bot nunca falla — segunda línea de defensa además del continue en NoteManager
-		if (funkin.gameplay.PlayState.isBotPlay) return;
+		if (funkin.gameplay.PlayState.isBotPlay)
+			return;
 		if (scriptsEnabled) {
 			ScriptHandler._argsNote[0] = missedNote;
 			ScriptHandler._argsNote[1] = null;
@@ -2476,7 +2480,9 @@ class PlayState extends funkin.states.MusicBeatState {
 		// switchState paths that bypass destroy(), dummy Characters in _precachePool
 		// were never freed. Calling it unconditionally here — with a guard — ensures
 		// the pool is always released regardless of the scriptsEnabled flag.
-		try { funkin.scripting.events.EventManager.clear(); } catch (_:Dynamic) {}
+		try {
+			funkin.scripting.events.EventManager.clear();
+		} catch (_:Dynamic) {}
 
 		funkin.audio.CoreAudio.stopAll();
 

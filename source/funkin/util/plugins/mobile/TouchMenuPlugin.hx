@@ -18,56 +18,59 @@ import funkin.gameplay.controls.Controls.Control;
 import data.PlayerSettings;
 
 /**
- * TouchMenuPlugin — navegación 100% táctil en menús sin VirtualPad.
+ * TouchMenuPlugin — 100% touch navigation for menus without VirtualPad.
  *
- * ── GESTOS SOPORTADOS ───────────────────────────────────────────────
+ * ── GESTURES ────────────────────────────────────────────────────────
  *
- *  ↑  Deslizar hacia arriba    → UP     (subir en el menú)
- *  ↓  Deslizar hacia abajo     → DOWN   (bajar en el menú)
- *  ←  Deslizar hacia izquierda → LEFT   (ajustar valor / tab anterior)
- *  →  Deslizar hacia derecha   → RIGHT  (ajustar valor / tab siguiente)
- *  ☞  Toque rápido (tap)       → ACCEPT (confirmar / seleccionar)
- *  ←  Deslizar desde borde derecho → BACK  (volver)
- *  ⏱  Mantener ~0.7 s quieto   → BACK  (volver)
+ *  ↕  Drag finger up/down   → UP / DOWN  (wheel-style, fires every scrollPixels)
+ *  ←→  Swipe left/right      → LEFT / RIGHT  (sliders / tabs)
+ *  ☞  Quick tap              → ACCEPT
+ *  🔙  Back button (bottom-left) → BACK  (alpha 0.3 at rest → 1.0 when pressed)
  *
- * ── USO ────────────────────────────────────────────────────────────
+ * ── USAGE ───────────────────────────────────────────────────────────
  *
- *  Desde MusicBeatState (sustituto directo de addVirtualPad):
+ *  addTouchMenuControls();           // UP/DOWN/LEFT/RIGHT + ACCEPT + BACK
+ *  addTouchMenuControls(false);      // no BACK (e.g. PlayState)
  *
- *    addTouchMenuControls();           // UP/DOWN/LEFT/RIGHT + ACCEPT + BACK
- *    addTouchMenuControls(false);      // sin BACK (p.ej. PlayState)
+ * ── TUNING ──────────────────────────────────────────────────────────
  *
- *  El sistema de controles (controls.UP_P / controls.LEFT_P / controls.ACCEPT …)
- *  funciona exactamente igual que con VirtualPad — no hay que cambiar nada
- *  en el código de cada menú.
- *
- * ── PERSONALIZACIÓN ─────────────────────────────────────────────────
- *
- *  TouchMenuPlugin.swipeMinDist   → px mínimos para considerar swipe  (def: 55)
- *  TouchMenuPlugin.swipeMaxTime   → s máximos del swipe               (def: 0.45)
- *  TouchMenuPlugin.tapMaxDist     → px máximos de movimiento para tap (def: 22)
- *  TouchMenuPlugin.tapMaxTime     → s máximos de un tap               (def: 0.32)
- *  TouchMenuPlugin.holdBackTime   → s para BACK por mantener          (def: 0.70)
- *  TouchMenuPlugin.backEdgeZone   → anchura del borde derecho p/BACK  (def: 55)
- *  TouchMenuPlugin.vertBias       → ratio para resolver swipes diagonales (def: 1.2)
- *  TouchMenuPlugin.showHint       → mostrar texto de ayuda             (def: true)
+ *  TouchMenuPlugin.scrollPixels   → px per UP/DOWN tick      (def: 28)
+ *  TouchMenuPlugin.swipeMinDist   → px min for L/R swipe     (def: 55)
+ *  TouchMenuPlugin.swipeMaxTime   → s max for L/R swipe      (def: 0.75)
+ *  TouchMenuPlugin.tapMaxDist     → px max for tap/ACCEPT    (def: 10)
+ *  TouchMenuPlugin.tapMaxTime     → s max for tap            (def: 0.36)
+ *  TouchMenuPlugin.backBtnSize    → back button size in px   (def: 90)
+ *  TouchMenuPlugin.backBtnAlpha   → idle alpha               (def: 0.3)
+ *  TouchMenuPlugin.showHint       → show hint text on start  (def: true)
  */
 class TouchMenuPlugin extends FlxBasic
 {
-	// ── Configuración pública ───────────────────────────────────────────
-	public static var swipeMinDist:Float  = 32.0;  // px mínimos para considerar swipe (bajado de 48 — más sensible)
-	public static var swipeMaxTime:Float  = 0.75;  // s máximos del swipe (subido de 0.5 — más margen para swipes lentos)
-	public static var tapMaxDist:Float    = 10.0;  // px máximos para un tap (bajado de 28 — evita confundir swipes con ACCEPT)
-	public static var tapMaxTime:Float    = 0.36;  // s máximos de un tap
-	public static var holdBackTime:Float  = 1.20;  // s para BACK por mantener (subido de 1.0)
-	/** Si el dedo se movió más de este umbral en cualquier momento, hold-back no se lanza. */
-	public static var holdBackMoveGuard:Float = 14.0;
-	public static var backEdgeZone:Float  = 55.0;
-	/** Ratio mínimo para que un eje domine. |dy|/|dx| >= vertBias → vertical. */
-	public static var vertBias:Float      = 1.2;
+	// ── Public tuning ──────────────────────────────────────────────────
+
+	/** Pixels of vertical drag needed to fire one UP or DOWN (like a mouse-wheel notch). */
+	public static var scrollPixels:Float  = 28.0;
+
+	/** Minimum horizontal px for a LEFT/RIGHT swipe. */
+	public static var swipeMinDist:Float  = 55.0;
+
+	/** Maximum seconds for a LEFT/RIGHT swipe. */
+	public static var swipeMaxTime:Float  = 0.75;
+
+	/** Maximum finger movement in px to count as a tap (ACCEPT). */
+	public static var tapMaxDist:Float    = 10.0;
+
+	/** Maximum seconds for a tap. */
+	public static var tapMaxTime:Float    = 0.36;
+
+	/** Back button rendered size in screen pixels (square). */
+	public static var backBtnSize:Float   = 90.0;
+
+	/** Idle (non-pressed) alpha of the back button. */
+	public static var backBtnAlpha:Float  = 0.3;
+
 	public static var showHint:Bool       = true;
 
-	// ── Inputs de gesto (uno por acción) ────────────────────────────────
+	// ── Gesture inputs ─────────────────────────────────────────────────
 	var _upInput:GestureInput     = new GestureInput();
 	var _downInput:GestureInput   = new GestureInput();
 	var _leftInput:GestureInput   = new GestureInput();
@@ -75,26 +78,32 @@ class TouchMenuPlugin extends FlxBasic
 	var _acceptInput:GestureInput = new GestureInput();
 	var _backInput:GestureInput   = new GestureInput();
 
-	// ── Seguimiento de cada dedo ─────────────────────────────────────────
+	// ── Per-finger state ───────────────────────────────────────────────
 	var _touchData:Map<Int, TouchData> = new Map();
 
-	// ── Hint visual ──────────────────────────────────────────────────────
+	// ── Back button ────────────────────────────────────────────────────
+	var _backBtn:FlxSprite     = null;
+	var _backBtnCam:FlxCamera  = null;
+	var _backBtnTween:FlxTween = null;
+	/** Touch ID currently pressing the back button (-1 = none). */
+	var _backBtnTouchId:Int    = -1;
+
+	// ── Hint text ─────────────────────────────────────────────────────
 	var _hint:FlxText       = null;
 	var _hintTween:FlxTween = null;
 	var _hintCam:FlxCamera  = null;
 
 	static var _hintShown:Bool = false;
 
-	// ── Flags de qué acciones incluir ───────────────────────────────────
+	// ── Flags ─────────────────────────────────────────────────────────
 	var _includeBack:Bool      = true;
 	var _includeLeftRight:Bool = true;
 
-	// ────────────────────────────────────────────────────────────────────
+	// ─────────────────────────────────────────────────────────────────
 
 	/**
-	 * @param includeBack       Si true, swipe desde borde / hold largo = BACK.
-	 * @param includeLeftRight  Si true, swipes horizontales generan LEFT/RIGHT.
-	 *                          Necesario para OptionsMenu (sliders, tabs).
+	 * @param includeBack       Show back button + fire BACK action.
+	 * @param includeLeftRight  Enable horizontal swipe for LEFT/RIGHT.
 	 */
 	public function new(includeBack:Bool = true, includeLeftRight:Bool = true)
 	{
@@ -103,12 +112,8 @@ class TouchMenuPlugin extends FlxBasic
 		_includeLeftRight = includeLeftRight;
 	}
 
-	// ── Inyección en Controls ────────────────────────────────────────────
+	// ── Controls binding ──────────────────────────────────────────────
 
-	/**
-	 * Registra los GestureInputs en el sistema de controles del jugador.
-	 * Llamar después de new() y antes de add().
-	 */
 	public function bindToControls(?controls:Controls):Void
 	{
 		if (controls == null)
@@ -126,13 +131,67 @@ class TouchMenuPlugin extends FlxBasic
 			controls.bindGestureInput(Control.BACK, _backInput);
 	}
 
-	// ── Update ───────────────────────────────────────────────────────────
+	// ── Back button (lazy init — stage is ready on first update) ──────
+
+	function _ensureBackButton():Void
+	{
+		if (_backBtn != null || !_includeBack) return;
+
+		// Dedicated camera so the button stays fixed regardless of game camera
+		_backBtnCam = new FlxCamera();
+		_backBtnCam.bgColor.alpha = 0;
+		FlxG.cameras.add(_backBtnCam, false);
+
+		_backBtn = new FlxSprite();
+
+		try
+		{
+			var frames = Paths.getSparrowAtlas("mobile/backButton");
+			if (frames != null)
+			{
+				_backBtn.frames = frames;
+				// The atlas uses "back0000" … "back0022" — addByPrefix picks them all
+				_backBtn.animation.addByPrefix("idle",  "back", 18, true);
+				_backBtn.animation.play("idle");
+			}
+			else
+				_makeBackButtonFallback();
+		}
+		catch (_e:Dynamic)
+		{
+			_makeBackButtonFallback();
+		}
+
+		// Scale to configured size
+		_backBtn.setGraphicSize(Std.int(backBtnSize), Std.int(backBtnSize));
+		_backBtn.updateHitbox();
+
+		// Position: bottom-left corner, small margin
+		var margin:Float  = 16;
+		var screenH:Float = FlxG.stage != null ? FlxG.stage.stageHeight : FlxG.height;
+		_backBtn.x = margin;
+		_backBtn.y = screenH - backBtnSize - margin;
+
+		_backBtn.scrollFactor.set(0, 0);
+		_backBtn.alpha   = backBtnAlpha;
+		_backBtn.cameras = [_backBtnCam];
+
+		FlxG.state.add(_backBtn);
+	}
+
+	inline function _makeBackButtonFallback():Void
+	{
+		// Simple white rounded square if the atlas is unavailable
+		_backBtn.makeGraphic(Std.int(backBtnSize), Std.int(backBtnSize), 0xFFFFFFFF);
+	}
+
+	// ── Main update ───────────────────────────────────────────────────
 
 	override public function update(elapsed:Float):Void
 	{
 		super.update(elapsed);
 
-		// Avanzar estado de cada input (limpia justPressed del frame anterior)
+		// Advance each input one frame (clears justPressed set last frame)
 		_upInput.tick();
 		_downInput.tick();
 		_leftInput.tick();
@@ -140,19 +199,22 @@ class TouchMenuPlugin extends FlxBasic
 		_acceptInput.tick();
 		_backInput.tick();
 
-		// Procesar todos los toques activos
+		// Lazy-init the back button on the first update
+		_ensureBackButton();
+
+		// Process every active touch
 		for (touch in FlxG.touches.list)
 		{
 			if (touch == null) continue;
 			_processTouch(touch, elapsed);
 		}
 
-		// Eliminar datos de toques que ya terminaron
+		// Clean up data for touches that have fully ended
 		for (id => _ in _touchData)
 			if (!_isTouchActive(id))
 				_touchData.remove(id);
 
-		// Hint: mostrar la primera vez
+		// Show the one-shot hint
 		if (showHint && !_hintShown)
 		{
 			_hintShown = true;
@@ -160,30 +222,58 @@ class TouchMenuPlugin extends FlxBasic
 		}
 	}
 
-	// ── Procesado de cada dedo ───────────────────────────────────────────
+	// ── Per-touch logic ───────────────────────────────────────────────
 
 	function _processTouch(touch:FlxTouch, elapsed:Float):Void
 	{
 		var id = touch.touchPointID;
 
-		// ── Inicio de toque ────────────────────────────────────────────
+		// ── Finger down ────────────────────────────────────────────────
 		if (touch.justPressed)
 		{
+			// Check whether the finger lands on the back button hit-zone
+			if (_includeBack && _backBtn != null && _isOnBackButton(touch))
+			{
+				_backBtnTouchId = id;
+				_setBackBtnPressed(true);
+				return; // do NOT register as a menu-scroll touch
+			}
+
 			_touchData.set(id, {
-				startX:    touch.screenX,
-				startY:    touch.screenY,
-				duration:  0.0,
-				maxDist:   0.0,
-				backFired: false,
-				gestFired: false
+				startX:       touch.screenX,
+				startY:       touch.screenY,
+				lastY:        touch.screenY,
+				lastX:        touch.screenX,
+				duration:     0.0,
+				maxDist:      0.0,
+				scrollAccumY: 0.0,
+				gestFired:    false
 			});
 			return;
 		}
 
+		// ── Back button release ────────────────────────────────────────
+		if (id == _backBtnTouchId)
+		{
+			if (touch.justReleased)
+			{
+				var wasOnBtn = _isOnBackButton(touch);
+				_setBackBtnPressed(false);
+				_backBtnTouchId = -1;
+
+				if (wasOnBtn)
+				{
+					_backInput.fire();
+					_pulseHint("BACK");
+				}
+			}
+			return;
+		}
+
+		// ── Regular menu touch ─────────────────────────────────────────
 		var data = _touchData.get(id);
 		if (data == null) return;
 
-		// ── Actualizar métricas del toque ──────────────────────────────
 		data.duration += elapsed;
 
 		var dx   = touch.screenX - data.startX;
@@ -192,108 +282,102 @@ class TouchMenuPlugin extends FlxBasic
 		if (dist > data.maxDist)
 			data.maxDist = dist;
 
-		// ── BACK por mantener quieto ───────────────────────────────────
-		// holdBackMoveGuard impide que el hold-back se lance si el dedo
-		// se movió aunque sea un poco — evita BACK accidental al inicio de un swipe lento.
-		if (_includeBack && !data.backFired
-		 && data.duration >= holdBackTime
-		 && data.maxDist  <  holdBackMoveGuard)
+		// ── Wheel-style vertical scroll ────────────────────────────────
+		// Accumulate the raw per-frame pixel delta.
+		// Every `scrollPixels` of movement fires one UP or DOWN —
+		// exactly like turning a mouse wheel one notch at a time.
+		var frameDY  = touch.screenY - data.lastY;
+		data.scrollAccumY += frameDY;
+		data.lastY = touch.screenY;
+
+		while (data.scrollAccumY <= -scrollPixels)
 		{
-			data.backFired = true;
-			data.gestFired = true;
-			_backInput.fire();
-			_pulseHint("BACK ←");
+			data.scrollAccumY += scrollPixels;
+			data.gestFired     = true;
+			_upInput.fire();
+			_pulseHint("↑");
+		}
+		while (data.scrollAccumY >= scrollPixels)
+		{
+			data.scrollAccumY -= scrollPixels;
+			data.gestFired     = true;
+			_downInput.fire();
+			_pulseHint("↓");
 		}
 
-		// ── Al soltar el dedo ──────────────────────────────────────────
+		// ── On release: tap or horizontal swipe ────────────────────────
 		if (touch.justReleased)
 		{
-			if (!data.backFired)
-				_classifyGesture(data, dx, dy, dist);
+			if (!data.gestFired)
+				_classifyRelease(data, dx, dy, dist);
 			_touchData.remove(id);
 		}
 	}
 
-	function _classifyGesture(data:TouchData, dx:Float, dy:Float, dist:Float):Void
+	/**
+	 * Called on finger release when no wheel-scroll event was fired.
+	 * Classifies the gesture as a tap (ACCEPT) or horizontal swipe (LEFT/RIGHT).
+	 */
+	function _classifyRelease(data:TouchData, dx:Float, dy:Float, dist:Float):Void
 	{
-		// ── BACK desde borde derecho ───────────────────────────────────
-		var screenW:Float = FlxG.stage != null ? FlxG.stage.stageWidth : FlxG.width;
-		if (_includeBack
-		 && data.startX > screenW - backEdgeZone
-		 && dx < -45
-		 && Math.abs(dx) > Math.abs(dy))
-		{
-			_backInput.fire();
-			_pulseHint("BACK ←");
-			return;
-		}
-
-		var absDx = Math.abs(dx);
-		var absDy = Math.abs(dy);
-
-		// ── Swipe ──────────────────────────────────────────────────────
-		// Se considera swipe si el dedo alcanzó la distancia mínima en el tiempo permitido.
-		// Si el tiempo se excedió pero el movimiento es grande y claro, también se acepta
-		// como swipe lento (evita que swipes deliberados caigan a ACCEPT o BACK).
-		var isSwipe    = data.maxDist >= swipeMinDist && data.duration <= swipeMaxTime;
-		var isSlowSwipe = data.maxDist >= swipeMinDist * 1.8 && !isSwipe; // swipe lento pero grande y claro
-
-		if (isSwipe || isSlowSwipe)
-		{
-			// Si el dedo volvió atrás más del 60%, el vector final es poco fiable.
-			// Solo descartamos si el gesto no es lo suficientemente claro.
-			if (dist < swipeMinDist * 0.35 && !isSlowSwipe)
-				return;
-
-			// Para swipes lentos, usamos la posición del máximo desplazamiento implícito
-			// (el vector dx/dy sigue siendo la mejor aproximación de la dirección).
-			// Si el pullback es extremo en swipe lento, también descartamos.
-			if (isSlowSwipe && dist < swipeMinDist * 0.25)
-				return;
-
-			// Eje vertical domina → UP / DOWN
-			if (absDy >= absDx * vertBias)
-			{
-				if (dy < 0) { _upInput.fire();  _pulseHint("↑"); }
-				else        { _downInput.fire(); _pulseHint("↓"); }
-				return;
-			}
-
-			// Eje horizontal domina → LEFT / RIGHT
-			if (_includeLeftRight && absDx >= absDy * vertBias)
-			{
-				if (dx < 0) { _leftInput.fire();  _pulseHint("←"); }
-				else        { _rightInput.fire(); _pulseHint("→"); }
-				return;
-			}
-
-			// Diagonal: resolver al eje dominante (nunca silenciar el gesto)
-			if (absDy >= absDx)
-			{
-				if (dy < 0) { _upInput.fire();  _pulseHint("↑"); }
-				else        { _downInput.fire(); _pulseHint("↓"); }
-			}
-			else if (_includeLeftRight)
-			{
-				if (dx < 0) { _leftInput.fire();  _pulseHint("←"); }
-				else        { _rightInput.fire(); _pulseHint("→"); }
-			}
-			return; // fue un swipe — nunca convertir a tap
-		}
-
 		// ── Tap → ACCEPT ───────────────────────────────────────────────
-		// tapMaxDist es pequeño (10px) para que solo los taps deliberados
-		// disparen ACCEPT — cualquier intento de swipe queda fuera de este umbral.
 		if (data.maxDist <= tapMaxDist && data.duration <= tapMaxTime)
 		{
 			_acceptInput.fire();
 			_pulseHint("✓");
+			return;
 		}
-		// Si maxDist está entre tapMaxDist y swipeMinDist: gesto ambiguo → ignorar.
-		// Mejor no hacer nada que disparar la acción equivocada.
+
+		// ── Horizontal swipe → LEFT / RIGHT ───────────────────────────
+		if (!_includeLeftRight) return;
+
+		var absDx = Math.abs(dx);
+		var absDy = Math.abs(dy);
+
+		// X must clearly dominate Y (ratio 1.4×) and reach the minimum distance
+		if (absDx >= swipeMinDist && absDx >= absDy * 1.4 && data.duration <= swipeMaxTime)
+		{
+			if (dx < 0) { _leftInput.fire();  _pulseHint("←"); }
+			else        { _rightInput.fire(); _pulseHint("→"); }
+		}
+		// Anything else (ambiguous gesture) → silently ignored
 	}
 
-	// ── Helpers ──────────────────────────────────────────────────────────
+	// ── Back button helpers ────────────────────────────────────────────
+
+	/** Returns true if the touch is within the back button hit area. */
+	function _isOnBackButton(touch:FlxTouch):Bool
+	{
+		if (_backBtn == null) return false;
+		// Use a slightly larger hit zone than the visual size for comfort
+		var hitPad:Float = 20;
+		var bx = _backBtn.x - hitPad;
+		var by = _backBtn.y - hitPad;
+		var bw = backBtnSize + hitPad * 2;
+		var bh = backBtnSize + hitPad * 2;
+		return touch.screenX >= bx && touch.screenX <= bx + bw
+		    && touch.screenY >= by && touch.screenY <= by + bh;
+	}
+
+	/** Tweens the back button alpha and switches animation on press/release. */
+	function _setBackBtnPressed(pressed:Bool):Void
+	{
+		if (_backBtn == null) return;
+
+		if (_backBtnTween != null)
+		{
+			_backBtnTween.cancel();
+			_backBtnTween = null;
+		}
+
+		var targetAlpha = pressed ? 1.0 : backBtnAlpha;
+		_backBtnTween = FlxTween.tween(_backBtn, {alpha: targetAlpha}, 0.10, {
+			ease: FlxEase.quadOut,
+			onComplete: function(_) { _backBtnTween = null; }
+		});
+	}
+
+	// ── Generic helpers ───────────────────────────────────────────────
 
 	function _isTouchActive(id:Int):Bool
 	{
@@ -303,7 +387,7 @@ class TouchMenuPlugin extends FlxBasic
 		return false;
 	}
 
-	// ── Hint visual ──────────────────────────────────────────────────────
+	// ── Hint ─────────────────────────────────────────────────────────
 
 	function _spawnHint():Void
 	{
@@ -312,15 +396,15 @@ class TouchMenuPlugin extends FlxBasic
 		FlxG.cameras.add(_hintCam, false);
 
 		var hintStr = _includeLeftRight
-			? "UP/DOWN Scroll - LEFT/RIGHT Adjust - Touch (check) - Hold ← Back"
-			: "UP/DOWN Slide - Touch (check) - Hold ←  Back";
+			? "Drag up/down to scroll  •  Swipe left/right to adjust  •  Tap to confirm"
+			: "Drag up/down to scroll  •  Tap to confirm";
 
 		_hint = new FlxText(0, FlxG.height - 80, FlxG.width, hintStr, 13);
 		_hint.setFormat("VCR OSD Mono", 13, FlxColor.WHITE,
 			CENTER, FlxTextBorderStyle.OUTLINE, FlxColor.BLACK);
 		_hint.scrollFactor.set(0, 0);
 		_hint.cameras = [_hintCam];
-		_hint.alpha = 0;
+		_hint.alpha   = 0;
 
 		FlxG.state.add(_hint);
 
@@ -328,7 +412,7 @@ class TouchMenuPlugin extends FlxBasic
 			ease: FlxEase.quadOut,
 			onComplete: function(_) {
 				FlxTween.tween(_hint, {alpha: 0}, 0.6, {
-					startDelay: 2.5,
+					startDelay: 3.0,
 					ease: FlxEase.quadIn,
 					onComplete: function(_) { _hint.kill(); }
 				});
@@ -348,13 +432,12 @@ class TouchMenuPlugin extends FlxBasic
 				_hintCam.bgColor.alpha = 0;
 				FlxG.cameras.add(_hintCam, false);
 			}
-
 			_hint = new FlxText(0, FlxG.height / 2 - 30, FlxG.width, label, 36);
 			_hint.setFormat("VCR OSD Mono", 36, FlxColor.WHITE,
 				CENTER, FlxTextBorderStyle.OUTLINE, FlxColor.BLACK);
 			_hint.scrollFactor.set(0, 0);
 			_hint.cameras = [_hintCam];
-			_hint.alpha = 0.0;
+			_hint.alpha   = 0.0;
 			FlxG.state.add(_hint);
 		}
 		else
@@ -368,7 +451,7 @@ class TouchMenuPlugin extends FlxBasic
 			ease: FlxEase.quadOut,
 			onComplete: function(_) {
 				_hintTween = FlxTween.tween(_hint, {alpha: 0.0}, 0.35, {
-					startDelay: 0.3,
+					startDelay: 0.25,
 					ease: FlxEase.quadIn,
 					onComplete: function(_) { _hintTween = null; }
 				});
@@ -376,50 +459,52 @@ class TouchMenuPlugin extends FlxBasic
 		});
 	}
 
-	// ── Destroy ──────────────────────────────────────────────────────────
+	// ── Destroy ──────────────────────────────────────────────────────
 
 	override public function destroy():Void
 	{
 		_touchData.clear();
-		if (_hintTween != null) { _hintTween.cancel(); _hintTween = null; }
-		if (_hint != null)      { _hint.kill(); _hint = null; }
+
+		if (_backBtnTween != null) { _backBtnTween.cancel(); _backBtnTween = null; }
+		if (_hintTween    != null) { _hintTween.cancel();    _hintTween    = null; }
+		if (_backBtn      != null) { _backBtn.kill();        _backBtn      = null; }
+		if (_hint         != null) { _hint.kill();           _hint         = null; }
+
+		if (_backBtnCam != null)
+		{
+			FlxG.cameras.remove(_backBtnCam);
+			_backBtnCam = null;
+		}
 		if (_hintCam != null)
 		{
 			FlxG.cameras.remove(_hintCam);
 			_hintCam = null;
 		}
+
 		super.destroy();
 	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  GestureInput — IFlxInput accionado manualmente por el detector de gestos
+//  GestureInput — synthetic IFlxInput fired manually by the gesture detector
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Input sintético compatible con IFlxInput / FlxActionInputDigitalIFlxInput.
+ * Frame lifecycle:
  *
- * Ciclo de vida en frames:
+ *  Frame 0  (fire() called during update):
+ *    justPressed = true,  pressed = true
  *
- *  Frame 0 (fire() llamado en update):
- *    justPressed = true   pressed = true   justReleased = false   released = false
+ *  Frame 1  (tick() at start of update):
+ *    justReleased = true, released = true
  *
- *  Frame 1 (tick() al inicio del update):
- *    justPressed = false  pressed = false  justReleased = true    released = true
- *
- *  Frame 2+:
- *    todo = false
+ *  Frame 2+: all false / idle
  */
 class GestureInput implements IFlxInput
 {
-	// ── Estado interno (máquina de 3 estados) ────────────────────────────
-	// 0 = idle, 1 = triggered-this-frame, 2 = releasing
-
-	var _state:Int = 0;
+	var _state:Int = 0;  // 0 = idle | 1 = triggered | 2 = releasing
 
 	public var ID(default, null):Int = 0;
-
-	// ── IFlxInput API ────────────────────────────────────────────────────
 
 	public var justPressed  (get, never):Bool;
 	public var pressed      (get, never):Bool;
@@ -433,41 +518,44 @@ class GestureInput implements IFlxInput
 
 	public function new() {}
 
-	// ── API para el plugin ───────────────────────────────────────────────
-
-	/** Dispara el gesto — llámalo una vez cuando el gesto se detecta. */
+	/** Trigger the gesture. Call once when the gesture is detected. */
 	public inline function fire():Void
 		_state = 1;
 
 	/**
-	 * Avanza el estado en un frame.
-	 * Llama esto al inicio de cada update() del plugin,
-	 * ANTES de procesar nuevos toques.
+	 * Advance one frame.
+	 * Call at the very start of each update(), before processing new touches.
 	 */
 	public inline function tick():Void
 	{
 		switch (_state)
 		{
-			case 1: _state = 2;  // triggered → releasing
-			case 2: _state = 0;  // releasing → idle
-			default:             // idle → idle
+			case 1: _state = 2;
+			case 2: _state = 0;
+			default:
 		}
 	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  TouchData — datos internos de cada toque en vuelo
+//  TouchData — per-finger state for the duration of a touch
 // ═══════════════════════════════════════════════════════════════════════════
 
 private typedef TouchData =
 {
-	startX:    Float,
-	startY:    Float,
-	duration:  Float,
-	maxDist:   Float,
-	backFired: Bool,
-	/** true si ya se clasificó un gesto (swipe o hold-back) — impide que el
-	 *  mismo toque también dispare ACCEPT al soltarse. */
-	gestFired: Bool,
+	/** Screen X/Y where the finger first landed. */
+	startX:       Float,
+	startY:       Float,
+	/** Position from the previous frame — used for wheel-delta. */
+	lastY:        Float,
+	lastX:        Float,
+	/** Seconds since touch start. */
+	duration:     Float,
+	/** Maximum distance ever reached from start (used for tap detection). */
+	maxDist:      Float,
+	/** Sub-tick vertical accumulator for the wheel simulation. */
+	scrollAccumY: Float,
+	/** True if any directional event was already fired for this touch. */
+	gestFired:    Bool,
 }
 #end

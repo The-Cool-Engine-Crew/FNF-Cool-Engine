@@ -1,7 +1,6 @@
 package ui;
 
 import flixel.graphics.FlxGraphic;
-
 import flixel.FlxSprite;
 import flixel.FlxG;
 import flixel.graphics.frames.FlxTileFrames;
@@ -16,64 +15,66 @@ import flixel.ui.FlxVirtualPad;
 import flixel.tweens.FlxTween;
 import flixel.tweens.FlxEase;
 
-class Hitbox extends FlxSpriteGroup
-{
-    var sizex:Int;
+class Hitbox extends FlxSpriteGroup {
+	var sizex:Int;
 
-    public var buttonLeft:FlxButton;
-    public var buttonDown:FlxButton;
-    public var buttonUp:FlxButton;
-    public var buttonRight:FlxButton;
+	public var buttonLeft:FlxButton;
+	public var buttonDown:FlxButton;
+	public var buttonUp:FlxButton;
+	public var buttonRight:FlxButton;
 
-    public function new(?widthScreen:Int)
-    {
-        super();
+	public function new(?widthScreen:Int) {
+		super();
 
-        sizex = widthScreen != null ? Std.int(widthScreen / 4) : Std.int(FlxG.width / 4);
+		sizex = widthScreen != null ? Std.int(widthScreen / 4) : Std.int(FlxG.width / 4);
 
-        var hitbox_hint:FlxSprite = new FlxSprite(0, 0).loadGraphic(Paths.image('hitbox/hitbox_hint'));
-        hitbox_hint.alpha = 0.2;
-        add(hitbox_hint);
+		var hitbox_hint:FlxSprite = new FlxSprite(0, 0).loadGraphic(Paths.image('mobile/hitbox/hitbox_hint'));
+		hitbox_hint.alpha = 0.2;
+		add(hitbox_hint);
 
-        add(buttonLeft  = createhitbox(0,         "left"));
-        add(buttonDown  = createhitbox(sizex,      "down"));
-        add(buttonUp    = createhitbox(sizex * 2,  "up"));
-        add(buttonRight = createhitbox(sizex * 3,  "right"));
-    }
+		add(buttonLeft = createhitbox(0, "left"));
+		add(buttonDown = createhitbox(sizex, "down"));
+		add(buttonUp = createhitbox(sizex * 2, "up"));
+		add(buttonRight = createhitbox(sizex * 3, "right"));
+	}
 
-    public function createhitbox(X:Float, framestring:String):FlxButton
-    {
-        var button = new FlxButton(X, 0);
+	public function createhitbox(X:Float, framestring:String):FlxButton {
+		var button = new FlxButton(X, 0);
 
-        var frames = Paths.getSparrowAtlas('hitbox/hitbox');
-        var graphic:FlxGraphic = FlxGraphic.fromFrame(frames.getByName(framestring));
+		var frames = Paths.getSparrowAtlas('mobile/hitbox/hitbox');
+		var graphic:FlxGraphic = FlxGraphic.fromFrame(frames.getByName(framestring));
 
-        button.loadGraphic(graphic);
-        button.alpha = 0;
-        button.scrollFactor.set();
+		button.loadGraphic(graphic);
+		button.alpha = 0;
+		button.scrollFactor.set();
 
-        button.onDown.callback = function() {
-            FlxTween.num(0, 0.75, .075, {ease: FlxEase.circInOut}, function(a:Float) { button.alpha = a; });
-        };
+		button.onDown.callback = function() {
+			FlxTween.num(0, 0.75, .075, {ease: FlxEase.circInOut}, function(a:Float) {
+				button.alpha = a;
+			});
+		};
 
-        button.onUp.callback = function() {
-            FlxTween.num(0.75, 0, .1, {ease: FlxEase.circInOut}, function(a:Float) { button.alpha = a; });
-        };
+		button.onUp.callback = function() {
+			FlxTween.num(0.75, 0, .1, {ease: FlxEase.circInOut}, function(a:Float) {
+				button.alpha = a;
+			});
+		};
 
-        button.onOut.callback = function() {
-            FlxTween.num(button.alpha, 0, .2, {ease: FlxEase.circInOut}, function(a:Float) { button.alpha = a; });
-        };
+		button.onOut.callback = function() {
+			FlxTween.num(button.alpha, 0, .2, {ease: FlxEase.circInOut}, function(a:Float) {
+				button.alpha = a;
+			});
+		};
 
-        return button;
-    }
+		return button;
+	}
 
-    override public function destroy():Void
-    {
-        super.destroy();
+	override public function destroy():Void {
+		super.destroy();
 
-        buttonLeft  = null;
-        buttonDown  = null;
-        buttonUp    = null;
-        buttonRight = null;
-    }
+		buttonLeft = null;
+		buttonDown = null;
+		buttonUp = null;
+		buttonRight = null;
+	}
 }

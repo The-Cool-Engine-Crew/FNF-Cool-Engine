@@ -397,6 +397,7 @@ class HealthIcon extends FunkinSprite
 
 		if (graphic == null)
 		{
+			FlxG.log.warn('[HealthIcon] No se encontró ningún icono para "$char" — usando gráfico vacío.');
 			makeGraphic(150, 150, 0x00000000);
 			return;
 		}
@@ -472,10 +473,17 @@ class HealthIcon extends FunkinSprite
 		// Si empieza por "assets/", quitar ese prefijo
 		if (path.startsWith('assets/'))
 			path = path.substr(7);
+		// Quitar prefijo "images/" para evitar el doble images/images/ que
+		// ocurre cuando Paths.image() vuelve a anteponer "images/" a la clave
+		if (path.startsWith('images/'))
+			path = path.substr(7);
 		// Si empieza por "mods/{mod}/", quitar ese prefijo también
 		var modRoot = ModManager.modRoot();
 		if (modRoot != null && path.startsWith(modRoot + '/'))
 			path = path.substr(modRoot.length + 1);
+		// Quitar prefijo "images/" que pueda quedar tras stripping del mod root
+		if (path.startsWith('images/'))
+			path = path.substr(7);
 		return path;
 	}
 
@@ -486,13 +494,22 @@ class HealthIcon extends FunkinSprite
 	function _resolveAsset(relPath:String):Null<String>
 	{
 		#if sys
-		// mod override
+		// mod override — buscar primero sin prefijo images/, luego con él
 		var modPath = ModManager.resolveInMod(relPath);
 		if (modPath != null)
 			return modPath;
-		// base assets
+		modPath = ModManager.resolveInMod('images/$relPath');
+		if (modPath != null)
+			return modPath;
+
+		// base assets — sin prefijo images/
 		var basePath = 'assets/$relPath';
-		return FileSystem.exists(basePath) ? basePath : null;
+		if (FileSystem.exists(basePath))
+			return basePath;
+
+		// base assets — con prefijo images/ (ubicación estándar de FNF)
+		var imagesPath = 'assets/images/$relPath';
+		return FileSystem.exists(imagesPath) ? imagesPath : null;
 		#else
 		return null;
 		#end

@@ -150,6 +150,8 @@ jobs:
 
       - name: Build (macOS release)
         run: arch -arm64 haxelib run lime build mac -final
+        env:
+          HXCPP_COMPILE_EXTRA: "-fno-digraphs"
 
       - name: Upload macOS build
         uses: actions/upload-artifact@v4

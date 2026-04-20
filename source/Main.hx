@@ -211,6 +211,21 @@ class Main extends Sprite
 		// ── WindowManager ──────────────────────────────────────────────────────
 		WindowManager.init(/* mode    */ LETTERBOX, /* minW    */ 960, /* minH    */ 540, /* baseW   */ GAME_WIDTH, /* baseH   */ GAME_HEIGHT);
 
+		// ── FIX (Android widescreen): display cutout / notch support ──────────
+		// Móviles modernos tienen un recorte en pantalla (punch-hole/notch) que en
+		// landscape queda en el lateral izquierdo. Sin este fix, Android restringe
+		// el área de render a la "safe area" (excluye el notch), causando que el
+		// juego aparezca desplazado a la derecha con una franja negra a la izquierda.
+		// _applyAndroidCutoutMode() usa JNI para activar
+		// LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES (API 28+), que permite que el
+		// juego renderice detrás del recorte y ocupe toda la pantalla física.
+		// Se difiere al primer ENTER_FRAME porque la ventana Android necesita estar
+		// completamente inicializada (el contexto EGL ya está listo) para que el
+		// cambio de WindowManager.LayoutParams tenga efecto.
+		#if android
+		stage.addEventListener(openfl.events.Event.ENTER_FRAME, _applyCutoutDeferred);
+		#end
+
 		// ── FIX: Tamaño inicial de ventana más grande (solo desktop) ──────────
 		// En Android window.resize() interfiere con la superficie SDL y puede
 		// provocar que el contexto EGL quede en estado inválido.
@@ -396,10 +411,83 @@ class Main extends Sprite
 	}
 	#end
 
-	#if mobileC
-	/** Deferred init for StickerTransition on mobile — waits for the OpenGL context. */
-	private function _initStickersDeferred(_:openfl.events.Event):Void
+	#if android
+	/** Deferred wrapper: espera el primer frame para que la ventana EGL esté lista. */
+	private function _applyCutoutDeferred(_:openfl.events.Event):Void
 	{
+		stage.removeEventListener(openfl.events.Event.ENTER_FRAME, _applyCutoutDeferred);
+		_applyAndroidCutoutMode();
+	}
+
+	private function _applyAndroidCutoutMode():Void
+	{
+		try
+		{
+			// ── 1. Obtener la Activity ────────────────────────────────────────
+			var getInstance = lime.system.JNI.createStaticMethod(
+				"org/haxe/lime/GameActivity", "getInstance",
+				"()Lorg/haxe/lime/GameActivity;");
+			var activity:Dynamic = getInstance();
+			if (activity == null) return;
+
+			// ── 2. Obtener la Window ──────────────────────────────────────────
+			var getWindow = lime.system.JNI.createMemberMethod(
+				"android/app/Activity", "getWindow",
+				"()Landroid/view/Window;");
+			var win:Dynamic = getWindow(activity);
+			if (win == null) return;
+
+			// ── 3. Obtener LayoutParams ───────────────────────────────────────
+			var getAttribs = lime.system.JNI.createMemberMethod(
+				"android/view/Window", "getAttributes",
+				"()Landroid/view/WindowManager/$LayoutParams;");
+			var attribs:Dynamic = getAttribs(win);
+			if (attribs == null) return;
+
+			// ── 4. Reflexión: campo layoutInDisplayCutoutMode ─────────────────
+			// Usamos reflexión porque el campo es público en la API de Android pero
+			// Lime/JNI no tiene acceso directo a campos — solo a métodos.
+			var getClass_ = lime.system.JNI.createMemberMethod(
+				"java/lang/Object", "getClass",
+				"()Ljava/lang/Class;");
+			var cls:Dynamic = getClass_(attribs);
+
+			var getField_ = lime.system.JNI.createMemberMethod(
+				"java/lang/Class", "getField",
+				"(Ljava/lang/String;)Ljava/lang/reflect/Field;");
+			var field:Dynamic = getField_(cls, "layoutInDisplayCutoutMode");
+			if (field == null) return;
+
+			// Asegurar acceso (no debería ser necesario para campos públicos, pero por si acaso)
+			var setAccessible = lime.system.JNI.createMemberMethod(
+				"java/lang/reflect/AccessibleObject", "setAccessible", "(Z)V");
+			setAccessible(field, true);
+
+			// ── 5. Asignar valor: 1 = SHORT_EDGES ────────────────────────────
+			// WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES = 1
+			var setInt_ = lime.system.JNI.createMemberMethod(
+				"java/lang/reflect/Field", "setInt",
+				"(Ljava/lang/Object;I)V");
+			setInt_(field, attribs, 1);
+
+			// ── 6. Aplicar LayoutParams actualizados ─────────────────────────
+			var setAttribs = lime.system.JNI.createMemberMethod(
+				"android/view/Window", "setAttributes",
+				"(Landroid/view/WindowManager/$LayoutParams;)V");
+			setAttribs(win, attribs);
+
+			trace('[Main] Android display cutout mode → SHORT_EDGES. El juego ahora renderiza detrás del notch.');
+		}
+		catch (e:Dynamic)
+		{
+			// API < 28 (Android < 9) no tiene este campo — no es un error.
+			trace('[Main] _applyAndroidCutoutMode: no aplicado (API<28 o error): $e');
+		}
+	}
+	#end
+
+	#if mobileC
+	private function _initStickersDeferred(_:openfl.events.Event):Void {
 		stage.removeEventListener(openfl.events.Event.ENTER_FRAME, _initStickersDeferred);
 		StickerTransition.init();
 	}
@@ -460,7 +548,20 @@ class Main extends Sprite
 		#if android
 		var rawW:Int = Lib.current.stage.stageWidth;
 		var rawH:Int = Lib.current.stage.stageHeight;
-		// Forzar landscape en Android (el stage puede reportar portrait antes de la orientación)
+
+		if (rawW <= 0 || rawH <= 0)
+		{
+			final display = lime.system.System.getDisplay(0);
+			if (display?.currentMode != null)
+			{
+				rawW = display.currentMode.width;
+				rawH = display.currentMode.height;
+				trace('[Main] calculateZoom: stage=0, usando display hwinfo → ${rawW}×${rawH}');
+			}
+		}
+
+		// Forzar landscape: el stage puede reportar portrait antes de que la
+		// orientación del sistema se confirme.
 		var stageW:Int = Std.int(Math.max(rawW, rawH));
 		var stageH:Int = Std.int(Math.min(rawW, rawH));
 
@@ -482,6 +583,18 @@ class Main extends Sprite
 		// reales del dispositivo en landscape (UIInterfaceOrientationLandscape).
 		var rawW:Int = Lib.current.stage.stageWidth;
 		var rawH:Int = Lib.current.stage.stageHeight;
+
+		if (rawW <= 0 || rawH <= 0)
+		{
+			final display = lime.system.System.getDisplay(0);
+			if (display?.currentMode != null)
+			{
+				rawW = display.currentMode.width;
+				rawH = display.currentMode.height;
+				trace('[Main] calculateZoom iOS: stage=0, usando display hwinfo → ${rawW}×${rawH}');
+			}
+		}
+
 		var stageW:Int = Std.int(Math.max(rawW, rawH));
 		var stageH:Int = Std.int(Math.min(rawW, rawH));
 

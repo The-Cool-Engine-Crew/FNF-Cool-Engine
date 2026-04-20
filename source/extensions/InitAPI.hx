@@ -154,8 +154,8 @@ class InitAPI
 #elseif (mac && cpp)
 @:buildXml('
 <target id="haxe">
-    <compilerflag value="-ObjC++" if="mac" />
-    <compilerflag value="-fno-digraphs" if="mac" />
+    <flag value="-ObjC++" if="mac" />
+    <flag value="-fno-digraphs" if="mac" />
     <vflag name="-framework" value="AppKit" if="mac" />
 </target>
 ')
