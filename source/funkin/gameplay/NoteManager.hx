@@ -188,6 +188,13 @@ class NoteManager {
 
 	// ── Callbacks ────────────────────────────────────────────────────────────
 	public var onNoteMiss:Note->Void = null;
+
+	/**
+	 * Ventana de gracia extra (ms) añadida al hit-window de miss-detection
+	 * cuando PlayState detecta un lag spike. Se decae en update() cada frame.
+	 * PlayState lo setea; NoteManager lo consume.
+	 */
+	public var lagGraceMs:Float = 0.0;
 	public var onCPUNoteHit:Note->Void = null;
 	public var onNoteHit:Note->Void = null;
 	public var onBotNoteHit:Note->Void = null;
@@ -361,6 +368,12 @@ class NoteManager {
 	}
 
 	public function update(songPosition:Float):Void {
+		// ── Lag-grace decay ───────────────────────────────────────────────────
+		// Reducimos la ventana de gracia cada frame a velocidad de audio (1ms/ms)
+		// para que no proteja notas genuinamente tardías.
+		if (lagGraceMs > 0.0)
+			lagGraceMs = Math.max(0.0, lagGraceMs - FlxG.elapsed * 1000.0);
+
 		// ── Scroll speed lerp ─────────────────────────────────────────────────
 		final targetSpeed:Float = 0.45 * FlxMath.roundDecimal(songSpeed * targetScrollRate, 2);
 		final speedDiff:Float = targetSpeed - _scrollSpeed;
@@ -547,7 +560,10 @@ class NoteManager {
 	}
 
 	private function updateActiveNotes(songPosition:Float):Void {
-		final hitWindow:Float = Conductor.safeZoneOffset;
+		// lagGraceMs es seteado por PlayState cuando detecta un lag spike.
+		// Extender el hitWindow por ese valor evita misses injustos causados
+		// por frames perdidos — el grace decae en update() a velocidad real.
+		final hitWindow:Float = Conductor.safeZoneOffset + lagGraceMs;
 
 		if (_scrollSpeed != _lastSustainSpeed) {
 			_lastSustainSpeed = _scrollSpeed;

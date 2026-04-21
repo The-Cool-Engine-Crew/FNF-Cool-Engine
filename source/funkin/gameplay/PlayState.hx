@@ -301,6 +301,13 @@ class PlayState extends funkin.states.MusicBeatState {
 	private var _rewindFromPos:Float = 0;
 	private var _rewindToPos:Float = 0;
 
+	// ── Stutter / lag-spike protection ────────────────────────────────────────
+	// Si entre dos frames el audio avanza más de STUTTER_THRESHOLD_MS, es un
+	// lag spike. En ese caso damos a las notas cercanas una ventana de gracia
+	// igual al tiempo perdido para que no se pierdan combos por culpa del motor.
+	private static inline var STUTTER_THRESHOLD_MS:Float = 80.0; // ~5 frames a 60fps
+	private var _prevSongPosition:Float = 0.0;
+
 	public var countdown:Countdown;
 
 	// ─── Resync cooldown ───────────────────────────────────────
@@ -1475,6 +1482,17 @@ class PlayState extends funkin.states.MusicBeatState {
 				Conductor.songPosition += FlxG.elapsed * 1000;
 			else if (FlxG.sound.music != null && FlxG.sound.music.playing)
 				Conductor.songPosition = FlxG.sound.music.time;
+
+			// ── Stutter detection ──────────────────────────────────────────
+			// Si el audio saltó más de STUTTER_THRESHOLD_MS en un solo frame
+			// (lag spike), damos a las notas una ventana de gracia proporcional
+			// al tiempo perdido para que no se generen misses injustos.
+			if (!isRewinding && noteManager != null && generatedMusic) {
+				final posJump = Conductor.songPosition - _prevSongPosition;
+				if (posJump > STUTTER_THRESHOLD_MS)
+					noteManager.lagGraceMs = Math.max(noteManager.lagGraceMs, posJump - (1000.0 / 60.0));
+			}
+			_prevSongPosition = Conductor.songPosition;
 		}
 
 		for (hook in _updateHookArr)
@@ -1580,6 +1598,9 @@ class PlayState extends funkin.states.MusicBeatState {
 		persistentUpdate = false;
 		persistentDraw = true;
 		paused = true;
+
+		// Congelar la cámara para que no siga transitando durante el pause
+		//cameraController?.freeze();
 
 		if (gameplayTweens != null)
 			gameplayTweens.active = false;
@@ -1991,6 +2012,9 @@ class PlayState extends funkin.states.MusicBeatState {
 					resyncVocals();
 			}
 			paused = false;
+
+			// Descongelar la cámara para que continúe la transición
+			//cameraController?.unfreeze();
 
 			if (gameplayTweens != null)
 				gameplayTweens.active = true;

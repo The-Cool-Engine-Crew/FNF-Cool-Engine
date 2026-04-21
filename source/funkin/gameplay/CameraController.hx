@@ -69,6 +69,20 @@ class CameraController {
 	private var _panOnComplete:Void->Void;
 	private var _panKeepLocked:Bool = false;
 
+	// Freeze — congela la transición de cámara durante el pause.
+	// freeze() desconecta el follow de Flixel; unfreeze() lo reconecta.
+	private var _frozen:Bool = false;
+
+	// Snapshot completo del estado de cámara al momento del freeze,
+	// para que unfreeze() restaure EXACTAMENTE lo que había antes del pause
+	// sin importar qué modifiquen los callbacks (onPause, onResume, scripts, etc.).
+	private var _frozenFollowLerp:Float   = 0.04;
+	private var _frozenSavedLerp:Float    = 0.04;
+	private var _frozenLocked:Bool        = false;
+	private var _frozenLockedX:Float      = 0.0;
+	private var _frozenLockedY:Float      = 0.0;
+	private var _frozenPanActive:Bool     = false;
+
 	// === NOTE MOVEMENT OFFSETS ===
 	public var dadOffsetX:Int = 0;
 	public var dadOffsetY:Int = 0;
@@ -468,10 +482,75 @@ class CameraController {
 	 * Ya NO recibe mustHitSection — el target se controla por eventos.
 	 */
 	public function update(elapsed:Float):Void {
+		if (_frozen) return; // Congelado durante pause — no mover nada
 		if (_panActive)
 			_tickPan(elapsed);
 		updateFollowPosition(elapsed);
 		lerpZoom(elapsed);
+	}
+
+	/**
+	 * Congela la cámara durante el pause.
+	 * Desconecta el follow de Flixel para que el lerp nativo no siga
+	 * deslizando la cámara mientras el juego está pausado.
+	 * Toma un snapshot COMPLETO del estado actual para que unfreeze()
+	 * restaure exactamente la misma situación, sin importar qué modifiquen
+	 * los callbacks de scripts (onPause, onResume, Lua, HScript, etc.)
+	 * entre freeze() y unfreeze().
+	 */
+	public function freeze():Void {
+		if (_frozen) return;
+		_frozen = true;
+
+		// ── Snapshot completo del estado en el momento del pause ─────────
+		_frozenPanActive = _panActive;
+		_frozenLocked    = locked;
+		_frozenLockedX   = _lockedPos.x;
+		_frozenLockedY   = _lockedPos.y;
+		_frozenSavedLerp = _savedLerp;
+
+		if (camGame != null) {
+			_frozenFollowLerp = camGame.followLerp; // guardar ANTES de desconectar
+			camGame.target = null; // desconecta el follow nativo de Flixel
+		}
+	}
+
+	/**
+	 * Descongela la cámara al reanudar el juego.
+	 * Restaura desde el snapshot tomado en freeze() para garantizar que
+	 * el estado sea EXACTAMENTE el que había antes del pause, ignorando
+	 * cualquier modificación hecha por scripts/callbacks durante la pausa.
+	 *
+	 *   - Pan activo al freezear  → re-afirma target=null + followLerp=0 (pan sigue en update).
+	 *   - Locked al freezear      → restaura locked, _lockedPos, _savedLerp y fuerza
+	 *                               camGame.target=null para que el lock no se pierda.
+	 *   - Follow normal           → reconecta camGame con el lerp exacto del snapshot.
+	 */
+	public function unfreeze():Void {
+		if (!_frozen) return;
+		_frozen = false;
+		if (camGame == null) return;
+
+		if (_frozenPanActive) {
+			// Pan estaba en curso al freezearse → mantener desconectado; _tickPan lo gestiona.
+			camGame.target = null;
+			camGame.followLerp = 0;
+		} else if (_frozenLocked) {
+			// Estaba bloqueada al freezearse → restaurar el lock COMPLETO desde el snapshot.
+			// Esto revierte cualquier unlock() / forceCancel() que hayan llamado
+			// scripts o callbacks durante la pausa.
+			locked       = true;
+			_savedLerp   = _frozenSavedLerp;
+			_lockedPos.set(_frozenLockedX, _frozenLockedY);
+			camFollow.setPosition(_frozenLockedX, _frozenLockedY);
+			camGame.target = null;
+			camGame.scroll.set(_frozenLockedX - camGame.width * 0.5, _frozenLockedY - camGame.height * 0.5);
+		} else {
+			// Follow normal → reconectar con el lerp exacto del snapshot.
+			// También asegurarse de que locked no quedó true por un script durante la pausa.
+			locked = false;
+			camGame.follow(camFollow, FlxCameraFollowStyle.LOCKON, _frozenFollowLerp);
+		}
 	}
 
 	// ─────────────────────────────────────────────────────────────

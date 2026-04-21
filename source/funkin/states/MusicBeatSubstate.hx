@@ -15,10 +15,8 @@ import data.PlayerSettings;
 import funkin.gameplay.controls.Controls;
 import funkin.scripting.StateScriptHandler;
 
-class MusicBeatSubstate extends FlxSubState
-{
-	public function new()
-	{
+class MusicBeatSubstate extends FlxSubState {
+	public function new() {
 		super();
 	}
 
@@ -71,39 +69,37 @@ class MusicBeatSubstate extends FlxSubState
 	 * @param includeBack      Si false, no se genera BACK con gestos.
 	 * @param includeLeftRight Si false, los swipes horizontales se ignoran.
 	 */
-	public function addTouchMenuControls(includeBack:Bool = true, includeLeftRight:Bool = true):Void
-	{
-		if (_touchPlugin != null) return;
+	public function addTouchMenuControls(includeBack:Bool = true, includeLeftRight:Bool = true):Void {
+		if (_touchPlugin != null)
+			return;
 		_touchPlugin = new TouchMenuPlugin(includeBack, includeLeftRight);
 		_touchPlugin.bindToControls(controls);
 		add(_touchPlugin);
 	}
-	
+
 	override function destroy() {
 		controls.removeFlxInput(trackedinputs);
-		if (_touchPlugin != null)
-		{
+		if (_touchPlugin != null) {
 			_touchPlugin.destroy();
 			_touchPlugin = null;
 		}
 		_onSubDestroy();
 		super.destroy();
 	}
+
 	#else
-	public function addVirtualPad(?DPad, ?Action){};
+	public function addVirtualPad(?DPad, ?Action) {};
 
 	/** No-op en plataformas no-mobile. */
 	public function addTouchMenuControls(includeBack:Bool = true, includeLeftRight:Bool = true):Void {}
 
-	override function destroy():Void
-	{
+	override function destroy():Void {
 		_onSubDestroy();
 		super.destroy();
 	}
 	#end
 
-	override function create()
-	{
+	override function create() {
 		_bpmIdx = 0;
 		super.create();
 
@@ -113,8 +109,7 @@ class MusicBeatSubstate extends FlxSubState
 			_autoLoadSubScripts();
 	}
 
-	override function update(elapsed:Float)
-	{
+	override function update(elapsed:Float) {
 		var oldStep:Int = curStep;
 
 		updateCurStep();
@@ -124,8 +119,7 @@ class MusicBeatSubstate extends FlxSubState
 			stepHit();
 
 		#if HSCRIPT_ALLOWED
-		if (Lambda.count(StateScriptHandler.scripts) > 0)
-		{
+		if (Lambda.count(StateScriptHandler.scripts) > 0) {
 			StateScriptHandler.callOnScripts('onUpdate', [elapsed]);
 			super.update(elapsed);
 			StateScriptHandler.callOnScripts('onUpdatePost', [elapsed]);
@@ -146,18 +140,17 @@ class MusicBeatSubstate extends FlxSubState
 	 * scripts activos, abrirlos aquí los reemplazará. Esto es intencional —
 	 * los substates tienen su propio contexto de scripting mientras están abiertos.
 	 */
-	function _autoLoadSubScripts():Void
-	{
+	function _autoLoadSubScripts():Void {
 		#if HSCRIPT_ALLOWED
-		if (Lambda.count(StateScriptHandler.scripts) > 0) return;
+		if (Lambda.count(StateScriptHandler.scripts) > 0)
+			return;
 
 		final className = Type.getClassName(Type.getClass(this)).split('.').pop();
 
 		StateScriptHandler.init();
 		StateScriptHandler.loadStateScripts(className, this);
 
-		if (Lambda.count(StateScriptHandler.scripts) > 0)
-		{
+		if (Lambda.count(StateScriptHandler.scripts) > 0) {
 			StateScriptHandler.refreshStateFields(this);
 			StateScriptHandler.callOnScripts('onCreate', []);
 			StateScriptHandler.callOnScripts('postCreate', []);
@@ -166,9 +159,10 @@ class MusicBeatSubstate extends FlxSubState
 		#end
 	}
 
-	function _onSubDestroy():Void
-	{
+	function _onSubDestroy():Void {
 		#if HSCRIPT_ALLOWED
+		if (Std.isOfType(FlxG.state, funkin.scripting.ScriptableState))
+			return;
 		StateScriptHandler.callOnScripts('onDestroy', []);
 		StateScriptHandler.clearStateScripts();
 		#end
@@ -179,14 +173,12 @@ class MusicBeatSubstate extends FlxSubState
 	/**
 	 * Búsqueda incremental O(1) amortizado — igual que MusicBeatState.
 	 */
-	private function updateCurStep():Void
-	{
+	private function updateCurStep():Void {
 		final map = Conductor.bpmChangeMap;
 		final pos = Conductor.songPosition;
 		final len = map.length;
 
-		if (len == 0)
-		{
+		if (len == 0) {
 			curStep = Math.floor(pos / Conductor.stepCrochet);
 			return;
 		}
@@ -201,8 +193,7 @@ class MusicBeatSubstate extends FlxSubState
 		curStep = ev.stepTime + Math.floor((pos - ev.songTime) / Conductor.stepCrochet);
 	}
 
-	public function stepHit():Void
-	{
+	public function stepHit():Void {
 		#if HSCRIPT_ALLOWED
 		if (Lambda.count(StateScriptHandler.scripts) > 0)
 			StateScriptHandler.fireRaw('onStepHit', [curStep]);
@@ -212,8 +203,7 @@ class MusicBeatSubstate extends FlxSubState
 			beatHit();
 	}
 
-	public function beatHit():Void
-	{
+	public function beatHit():Void {
 		#if HSCRIPT_ALLOWED
 		if (Lambda.count(StateScriptHandler.scripts) > 0)
 			StateScriptHandler.fireRaw('onBeatHit', [curBeat]);

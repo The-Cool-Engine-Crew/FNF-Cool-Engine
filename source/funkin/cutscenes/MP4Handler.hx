@@ -57,10 +57,12 @@ class MP4Handler
 	var _killed:Bool = false;
 	var _filters:Array<BitmapFilter> = [];
 
-	// Deferred fps restore: how many ENTER_FRAME ticks remain before restoring fps.
-	// Set to N when video starts; _update() counts it down and restores on 0.
+	// Deferred fps restore.
 	var _bootFrames:Int = 0;
 	var _bootSavedFps:Int = 0;
+
+	// Volume throttle: solo sincronizamos con libvlc cuando el valor cambia.
+	var _lastVolume:Int = -1;
 
 	public function new() {}
 
@@ -70,34 +72,44 @@ class MP4Handler
 	                        ?outputTo:Null<FlxSprite> = null, ?isWindow:Bool = false,
 	                        ?isFullscreen:Bool = false):Void
 	{
-		_killed  = false;
-		_filters = [];
+		_killed     = false;
+		_filters    = [];
+		_lastVolume = -1;
 
 		if (!midSong && FlxG.sound.music != null)
 			FlxG.sound.music.stop();
 
 		// FIX SampleDataEvent crash (OpenFL 9.3.0): lower fps briefly so the audio
 		// backend initialises its buffer with ≥ 2048 samples.
-		// We only need this for the first few frames; after that the buffer size is
-		// locked in and we can restore the user's target fps.
-		// Using AudioConfig.frequency for the exact safe-fps calculation so that
-		// non-44100 Hz configurations (e.g. 48 kHz → safe fps = 23) dip less.
-		_bootSavedFps = FlxG.save.data.fpsTarget != null ? Std.int(FlxG.save.data.fpsTarget) : 60;
-		final safeFps:Int = Std.int(Math.floor(funkin.audio.AudioConfig.frequency / 2048));
-		final main = cast(openfl.Lib.current.getChildAt(0), Main);
-		if (main != null) main.setMaxFps(safeFps);
-		#if lime
-		final _limeWin = lime.app.Application.current?.window;
-		if (_limeWin != null) _limeWin.frameRate = safeFps;
-		#end
-		_bootFrames = 4; // restore after 4 rendered frames (~66 ms at safe fps)
+		// SOLO necesario cuando se detiene la música (midSong=false) en modo
+		// pantalla completa, porque es cuando OpenFL reinicializa su backend de
+		// audio. En modo sprite (outputTo != null) no se toca el backend de OpenFL
+		// así que saltamos el throttle entero → la carga es ~300 ms más rápida.
+		final needsFpsThrottle = (outputTo == null && !midSong);
+		if (needsFpsThrottle)
+		{
+			_bootSavedFps = FlxG.save.data.fpsTarget != null ? Std.int(FlxG.save.data.fpsTarget) : 60;
+			final safeFps:Int = Std.int(Math.floor(funkin.audio.AudioConfig.frequency / 2048));
+			final main = cast(openfl.Lib.current.getChildAt(0), Main);
+			if (main != null) main.setMaxFps(safeFps);
+			#if lime
+			final _limeWin = lime.app.Application.current?.window;
+			if (_limeWin != null) _limeWin.frameRate = safeFps;
+			#end
+			_bootFrames = 4;
+		}
 
-		// Cover negro mientras el decoder arranca
-		_cover = new Shape();
-		_cover.graphics.beginFill(0x000000);
-		_cover.graphics.drawRect(0, 0, FlxG.stage.stageWidth, FlxG.stage.stageHeight);
-		_cover.graphics.endFill();
-		try FlxG.addChildBelowMouse(_cover) catch (_:Dynamic) {}
+		// Cover negro mientras el decoder arranca — solo en modo pantalla completa.
+		// En modo sprite (outputTo != null) el cover no tiene sentido y es lo que
+		// causaba el cuadrado negro tapando el menú entero.
+		if (outputTo == null)
+		{
+			_cover = new Shape();
+			_cover.graphics.beginFill(0x000000);
+			_cover.graphics.drawRect(0, 0, FlxG.stage.stageWidth, FlxG.stage.stageHeight);
+			_cover.graphics.endFill();
+			try FlxG.addChildBelowMouse(_cover) catch (_:Dynamic) {}
+		}
 
 		// ── FlxVideo ──────────────────────────────────────────────────────────
 		_video = new FlxVideo();
@@ -125,9 +137,11 @@ class MP4Handler
 			_video.x = (sw - vw) / 2;
 			_video.y = (sh - vh) / 2;
 
-			// Si se usa como outputTo, copiar el primer frame
+			// Si se usa como outputTo, hacer el loadGraphic inicial una sola vez.
+			// Usamos fromBitmapData con unique=false para compartir la referencia
+			// in-place que hxvlc actualiza cada frame (el dirty en _update hará el resto).
 			if (sprite != null && _video.bitmapData != null)
-				try sprite.loadGraphic(_video.bitmapData) catch (_:Dynamic) {}
+				try sprite.loadGraphic(flixel.graphics.FlxGraphic.fromBitmapData(_video.bitmapData, false, null, false)) catch (_:Dynamic) {}
 
 			// Quitar cover — en hxvlc el primer frame ya está renderizado en onFormatSetup
 			_removeCover();
@@ -159,19 +173,36 @@ class MP4Handler
 		if (outputTo == null)
 			try FlxG.addChildBelowMouse(_video) catch (_:Dynamic) {}
 
-		// Cargar y reproducir — esperar 3 frames para que stage.frameRate=60 esté activo
-		// antes de que hxvlc registre su SampleDataEvent listener.
-		new FlxTimer().start(0.1, function(_)
+		// Cargar y reproducir.
+		// En modo pantalla completa esperamos un tick para que el cambio de FPS
+		// esté activo antes de que hxvlc registre su SampleDataEvent listener.
+		// En modo sprite no hubo cambio de FPS, así que cargamos directo.
+		if (outputTo != null)
 		{
-			if (_video == null || _killed) return;
-			if (_video.load(path))
+			// Modo sprite: sin throttle, sin espera — carga inmediata.
+			if (_video != null && !_killed && _video.load(path))
 				new FlxTimer().start(0.001, function(_) { if (_video != null && !_killed) _video.play(); });
-			else
+			else if (_video != null)
 			{
 				trace('[MP4Handler] hxvlc: no se pudo cargar "$path"');
 				_finish();
 			}
-		});
+		}
+		else
+		{
+			// Modo pantalla completa: esperamos a que el FPS bajo esté activo.
+			new FlxTimer().start(0.1, function(_)
+			{
+				if (_video == null || _killed) return;
+				if (_video.load(path))
+					new FlxTimer().start(0.001, function(_) { if (_video != null && !_killed) _video.play(); });
+				else
+				{
+					trace('[MP4Handler] hxvlc: no se pudo cargar "$path"');
+					_finish();
+				}
+			});
+		}
 	}
 
 	// ── Shader / Filter API ───────────────────────────────────────────────────
@@ -246,9 +277,12 @@ class MP4Handler
 
 		_syncVolume();
 
-		// Copiar frame al sprite si se usa como outputTo
+		// Refrescar el sprite si se usa como outputTo.
+		// hxvlc actualiza el bitmapData in-place cada frame, así que NO hay que
+		// llamar loadGraphic() cada tick (crea FlxGraphic nuevos innecesariamente).
+		// Solo marcamos dirty para que Flixel reenvíe la textura a la GPU.
 		if (sprite != null && _video != null && _video.bitmapData != null)
-			try sprite.loadGraphic(_video.bitmapData) catch (_:Dynamic) {}
+			sprite.dirty = true;
 
 		// Notificar tiempo actual a listeners externos (p.ej. SRT player)
 		if (onTick != null && _video != null)
@@ -258,9 +292,13 @@ class MP4Handler
 	function _syncVolume():Void
 	{
 		if (_video == null) return;
-		// hxvlc volume: 0-200 (100 = nivel normal)
-		final vol:Float = FlxG.sound.muted ? 0.0 : FlxG.sound.volume;
-		try _video.volume = Std.int(vol * 100) catch (_:Dynamic) {}
+		// hxvlc volume: 0-200 (100 = nivel normal).
+		// Solo llamamos al setter nativo cuando el valor realmente cambió
+		// (evita un call nativo innecesario a libvlc 60 veces por segundo).
+		final vol:Int = Std.int((FlxG.sound.muted ? 0.0 : FlxG.sound.volume) * 100);
+		if (vol == _lastVolume) return;
+		_lastVolume = vol;
+		try _video.volume = vol catch (_:Dynamic) {}
 	}
 
 	function _finish():Void

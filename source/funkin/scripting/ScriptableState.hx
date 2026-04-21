@@ -3,6 +3,7 @@ package funkin.scripting;
 import flixel.FlxG;
 import funkin.states.MusicBeatState;
 import funkin.scripting.StateScriptHandler;
+import funkin.transitions.StateTransition;
 
 /**
  * ScriptableState — estado completo definido en HScript.
@@ -67,35 +68,50 @@ import funkin.scripting.StateScriptHandler;
  *       ui.zoom(1.05, 0.1);
  *   }
  */
-class ScriptableState extends MusicBeatState
-{
+class ScriptableState extends MusicBeatState {
 	/** Nombre del estado (busca carpeta assets/states/{name}/). */
 	public var scriptName:String;
 
 	/** Scripts cargados para este estado. */
 	var _scripts:Array<HScriptInstance> = [];
 
-	public function new(scriptName:String)
-	{
+	public function new(scriptName:String) {
 		super();
 		this.scriptName = scriptName;
 	}
 
-	override function create():Void
-	{
+	override function create():Void {
+		autoScriptLoad = false;
 		super.create();
 
 		StateScriptHandler.init();
 		_scripts = StateScriptHandler.loadStateScripts(scriptName, this);
 
-		// Exponer helpers estándar
 		StateScriptHandler.exposeElement('FlxG', FlxG);
 
 		StateScriptHandler.callOnScripts('onCreate', []);
+
+		#if sys
+		if (mods.ModManager.developerMode)
+			_initScriptWatcher();
+		#end
 	}
 
-	override function update(elapsed:Float):Void
-	{
+	override private function _hotReloadRestart():Void {
+		StateScriptHandler.callOnScripts('onDestroy', []);
+		StateScriptHandler.clearStateScripts();
+
+		#if HSCRIPT_ALLOWED
+		funkin.scripting.ScriptHandler.clearSongScripts();
+		funkin.scripting.ScriptHandler.clearStageScripts();
+		funkin.scripting.ScriptHandler.clearCharScripts();
+		funkin.scripting.ScriptHandler.clearMenuScripts();
+		#end
+
+		StateTransition.switchState(new ScriptableState(scriptName));
+	}
+
+	override function update(elapsed:Float):Void {
 		StateScriptHandler.callOnScripts('onUpdate', [elapsed]);
 
 		// Propagación de input a scripts (cancelable)
@@ -109,20 +125,17 @@ class ScriptableState extends MusicBeatState
 		StateScriptHandler.callOnScripts('onUpdatePost', [elapsed]);
 	}
 
-	override function beatHit():Void
-	{
+	override function beatHit():Void {
 		super.beatHit();
 		StateScriptHandler.callOnScripts('onBeatHit', [curBeat]);
 	}
 
-	override function stepHit():Void
-	{
+	override function stepHit():Void {
 		super.stepHit();
 		StateScriptHandler.callOnScripts('onStepHit', [curStep]);
 	}
 
-	override function destroy():Void
-	{
+	override function destroy():Void {
 		StateScriptHandler.callOnScripts('onDestroy', []);
 		StateScriptHandler.clearStateScripts();
 		super.destroy();
@@ -131,14 +144,12 @@ class ScriptableState extends MusicBeatState
 	// ─── Helpers internos ─────────────────────────────────────────────────────
 
 	/** Devuelve las teclas presionadas este frame como strings. */
-	static function _getPressedKeys():Array<String>
-	{
+	static function _getPressedKeys():Array<String> {
 		final keys:Array<String> = [];
 		#if !mobile
 		// getIsDown() returns all currently-held FlxKeyInput objects.
 		// We filter to those that were just pressed this frame.
-		for (keyInput in FlxG.keys.getIsDown())
-		{
+		for (keyInput in FlxG.keys.getIsDown()) {
 			if (keyInput.justPressed)
 				keys.push(keyInput.ID.toString());
 		}
@@ -170,18 +181,15 @@ class ScriptableState extends MusicBeatState
  *           close(); // cierra el substate
  *   }
  */
-class ScriptableSubState extends flixel.FlxSubState
-{
+class ScriptableSubState extends flixel.FlxSubState {
 	public var scriptName:String;
 
-	public function new(scriptName:String)
-	{
+	public function new(scriptName:String) {
 		super();
 		this.scriptName = scriptName;
 	}
 
-	override function create():Void
-	{
+	override function create():Void {
 		super.create();
 
 		StateScriptHandler.init();
@@ -189,20 +197,18 @@ class ScriptableSubState extends flixel.FlxSubState
 
 		// Exponer `close` al script
 		StateScriptHandler.setOnScripts('close', () -> close());
-		StateScriptHandler.setOnScripts('FlxG',  FlxG);
+		StateScriptHandler.setOnScripts('FlxG', FlxG);
 
 		StateScriptHandler.callOnScripts('onCreate', []);
 	}
 
-	override function update(elapsed:Float):Void
-	{
+	override function update(elapsed:Float):Void {
 		StateScriptHandler.callOnScripts('onUpdate', [elapsed]);
 		super.update(elapsed);
 		StateScriptHandler.callOnScripts('onUpdatePost', [elapsed]);
 	}
 
-	override function destroy():Void
-	{
+	override function destroy():Void {
 		StateScriptHandler.callOnScripts('onDestroy', []);
 		StateScriptHandler.clearStateScripts();
 		super.destroy();
