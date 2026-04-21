@@ -82,6 +82,7 @@ class CameraController {
 	private var _frozenLockedX:Float      = 0.0;
 	private var _frozenLockedY:Float      = 0.0;
 	private var _frozenPanActive:Bool     = false;
+	private var _frozenExplicitLock:Bool  = false;
 
 	// === NOTE MOVEMENT OFFSETS ===
 	public var dadOffsetX:Int = 0;
@@ -136,6 +137,8 @@ class CameraController {
 	private var _pendingLock:Bool = false;
 	private var _pendingLockX:Float = Math.NaN;
 	private var _pendingLockY:Float = Math.NaN;
+
+	private var _explicitLock:Bool = false;
 
 	// ─────────────────────────────────────────────────────────────
 
@@ -222,7 +225,9 @@ class CameraController {
 		_pendingLock = false;
 		_pendingLockX = Math.NaN;
 		_pendingLockY = Math.NaN;
-		locked = false;
+
+		if (!_explicitLock)
+			locked = false;
 	}
 
 	/**
@@ -235,6 +240,7 @@ class CameraController {
 		_pendingLock = false;
 		_pendingLockX = Math.NaN;
 		_pendingLockY = Math.NaN;
+		_explicitLock = false;
 		locked = false;
 	}
 
@@ -275,6 +281,7 @@ class CameraController {
 		_pendingLockY = Math.NaN;
 
 		locked = true;
+		_explicitLock = true; // lock() llamado directamente → inmune a cancelPan()
 
 		final actualX:Float = (camGame != null) ? camGame.scroll.x + camGame.width * 0.5 : camFollow.x;
 		final actualY:Float = (camGame != null) ? camGame.scroll.y + camGame.height * 0.5 : camFollow.y;
@@ -297,6 +304,7 @@ class CameraController {
 	 */
 	public function unlock():Void {
 		locked = false;
+		_explicitLock = false;
 
 		if (camGame != null) {
 			camGame.follow(camFollow, FlxCameraFollowStyle.LOCKON, _savedLerp);
@@ -332,6 +340,7 @@ class CameraController {
 		_panOnComplete = null;
 
 		locked = true;
+		_explicitLock = false;
 		_savedLerp = followLerp;
 
 		camGame.target = null;
@@ -440,6 +449,7 @@ class CameraController {
 		_panOnComplete = null;
 
 		locked = false;
+		_explicitLock = false;
 		_pendingLock = false;
 		_pendingLockX = Math.NaN;
 		_pendingLockY = Math.NaN;
@@ -503,11 +513,12 @@ class CameraController {
 		_frozen = true;
 
 		// ── Snapshot completo del estado en el momento del pause ─────────
-		_frozenPanActive = _panActive;
-		_frozenLocked    = locked;
-		_frozenLockedX   = _lockedPos.x;
-		_frozenLockedY   = _lockedPos.y;
-		_frozenSavedLerp = _savedLerp;
+		_frozenPanActive    = _panActive;
+		_frozenLocked       = locked;
+		_frozenLockedX      = _lockedPos.x;
+		_frozenLockedY      = _lockedPos.y;
+		_frozenSavedLerp    = _savedLerp;
+		_frozenExplicitLock = _explicitLock;
 
 		if (camGame != null) {
 			_frozenFollowLerp = camGame.followLerp; // guardar ANTES de desconectar
@@ -539,8 +550,9 @@ class CameraController {
 			// Estaba bloqueada al freezearse → restaurar el lock COMPLETO desde el snapshot.
 			// Esto revierte cualquier unlock() / forceCancel() que hayan llamado
 			// scripts o callbacks durante la pausa.
-			locked       = true;
-			_savedLerp   = _frozenSavedLerp;
+			locked        = true;
+			_explicitLock = _frozenExplicitLock;
+			_savedLerp    = _frozenSavedLerp;
 			_lockedPos.set(_frozenLockedX, _frozenLockedY);
 			camFollow.setPosition(_frozenLockedX, _frozenLockedY);
 			camGame.target = null;

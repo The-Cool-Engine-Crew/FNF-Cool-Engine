@@ -265,8 +265,10 @@ class CacheState extends funkin.states.MusicBeatState
                     {
                         if (bmp != null)
                         {
-                            // Registrar en PathsCache usando la misma ruta que getGraphic()
-                            Paths.cache.getGraphic(path, bmp, true);
+                            var optimized = funkin.assets.AssetOptimizer.optimizeBitmapData(bmp);
+                            if (optimized != bmp)
+                                try { funkin.cache.FunkinCache.instance.setBitmapData(path, optimized); } catch (_:Dynamic) {}
+                            Paths.cache.getGraphic(path, optimized, true);
                             if (asset.permanent) Paths.cache.addExclusion(path);
                         }
                         onDone();

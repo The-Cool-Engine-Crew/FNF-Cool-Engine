@@ -1600,7 +1600,7 @@ class PlayState extends funkin.states.MusicBeatState {
 		paused = true;
 
 		// Congelar la cámara para que no siga transitando durante el pause
-		//cameraController?.freeze();
+		cameraController?.freeze();
 
 		if (gameplayTweens != null)
 			gameplayTweens.active = false;
@@ -2014,7 +2014,7 @@ class PlayState extends funkin.states.MusicBeatState {
 			paused = false;
 
 			// Descongelar la cámara para que continúe la transición
-			//cameraController?.unfreeze();
+			cameraController?.unfreeze();
 
 			if (gameplayTweens != null)
 				gameplayTweens.active = true;

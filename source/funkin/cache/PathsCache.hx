@@ -942,7 +942,12 @@ class PathsCache {
 		// _forceGPURender suba ya la versión optimizada. Lossless: solo cambia
 		// el formato interno de ARGB a RGB; los pixels visibles son idénticos.
 		if (g.bitmap != null)
+		{
+			final _prevBitmap = g.bitmap;
 			g.bitmap = AssetOptimizer.optimizeBitmapData(g.bitmap);
+			if (g.bitmap != _prevBitmap)
+				try { FunkinCache.instance.setBitmapData(key, g.bitmap); } catch (_:Dynamic) {}
+		}
 
 		// GPU pre-render: llama getTexture() para registrar la textura en el pipeline de OpenFL.
 		// El upload real de pixels ocurre en el PRIMER DRAW CALL del render thread.
