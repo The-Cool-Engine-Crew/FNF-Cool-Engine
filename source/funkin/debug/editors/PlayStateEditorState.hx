@@ -1,4 +1,5 @@
 package funkin.debug.editors;
+
 import funkin.debug.EditorDialogs.UnsavedChangesDialog;
 import coolui.CoolInputText;
 import coolui.CoolNumericStepper;
@@ -6,14 +7,11 @@ import coolui.CoolCheckBox;
 import coolui.CoolDropDown;
 import coolui.CoolTabMenu;
 
-
-// ─── Core ─────────────────────────────────────────────────────────────────────
 import flixel.FlxBasic;
 import flixel.FlxCamera;
 import flixel.FlxG;
 import flixel.FlxSprite;
 import flixel.FlxState;
-
 import flixel.group.FlxGroup;
 import flixel.group.FlxGroup.FlxTypedGroup;
 import flixel.math.FlxMath;
@@ -25,7 +23,7 @@ import flixel.tweens.FlxTween;
 import coolui.CoolButton;
 import flixel.util.FlxColor;
 import flixel.util.FlxTimer;
-// ─── Gameplay ─────────────────────────────────────────────────────────────────
+
 import funkin.data.Conductor;
 import funkin.data.CoolUtil;
 import funkin.data.MetaData;
@@ -48,7 +46,7 @@ import funkin.scripting.ScriptHandler;
 import funkin.scripting.events.EventInfoSystem;
 import funkin.transitions.StateTransition;
 import funkin.menus.FreeplayState.SongMetadata;
-// ─── System ───────────────────────────────────────────────────────────────────
+
 import haxe.Json;
 import openfl.events.Event;
 import openfl.events.IOErrorEvent;
@@ -61,107 +59,143 @@ import sys.io.File;
 using StringTools;
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  Typedefs
+//  Data Typedefs
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** Evento del PlayState Editor — se guarda en el JSON de la canción. */
 typedef PSEEvent =
 {
-	var id          : String;        // UUID único
-	var stepTime    : Float;         // Step en que ocurre
-	var type        : String;        // Nombre del tipo de evento
-	var value       : String;        // Valor (v1|v2)
-	var difficulties: Array<String>; // ["easy","normal","hard"] o ["*"] = todos
-	var trackIndex  : Int;           // Pista visual en la timeline
-	@:optional var label : String;   // Etiqueta opcional
+	var id           : String;
+	var stepTime     : Float;
+	var type         : String;
+	var value        : String;
+	var difficulties : Array<String>;
+	var trackIndex   : Int;
+	@:optional var label    : String;
+	@:optional var duration : Float;   // duration in steps (for block display)
+	@:optional var params   : Dynamic; // structured params per event type
 }
 
-/** Script inline del PlayState Editor. */
 typedef PSEScript =
 {
 	var id          : String;
 	var name        : String;
-	var code        : String;
-	var triggerStep : Float;         // -1 = solo manual
+	var code        : String;     // código inline (siempre actualizado como caché)
+	var triggerStep : Float;
 	var difficulties: Array<String>;
 	var enabled     : Bool;
 	var autoTrigger : Bool;
+	/** Dónde guardar/leer el script:
+	 *  null / 'inline'  → embebido en el PSE JSON (por defecto)
+	 *  'song'           → assets/songs/<song>/scripts/<name>.hx
+	 *  'events'         → assets/data/scripts/events/<name>.hx
+	 *  'global'         → assets/data/scripts/global/<name>.hx
+	 *  Cualquier otra cadena → ruta literal de archivo
+	 */
+	@:optional var savePath : String;
 }
 
-/** Datos persistentes del editor guardados junto al chart. */
+typedef PSETrack =
+{
+	var id     : String;
+	var name   : String;
+	var color  : Int;
+	var visible: Bool;
+	var locked : Bool;
+	var height : Int;
+}
+
 typedef PSEData =
 {
 	@:optional var events  : Array<PSEEvent>;
 	@:optional var scripts : Array<PSEScript>;
+	@:optional var tracks  : Array<PSETrack>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  PlayStateEditorState
+//  PlayStateEditorState  v2.0 — FL Studio–style block timeline
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * PlayState Editor v1.0
+ * PlayState Editor — redesigned with a proper block-style event timeline.
  *
- * Editor visual completo del PlayState sin strums.
- * Muestra Stage + Personajes + HUD en tiempo real.
- * Permite insertar Eventos y Scripts con soporte de dificultad,
- * probarlos en tiempo real y guardar en el JSON de la canción.
+ * Layout:
+ *   ┌─────────────────── MENU BAR ──────────────────────────────────────┐
+ *   │ File  View  Playback  Generate  Edit  Help          [transport]   │
+ *   ├──────────────────────────────────────────────────┬────────────────┤
+ *   │                                                  │  INSPECTOR     │
+ *   │            GAME VIEWPORT                         │  (event props) │
+ *   │          (stage + characters)                    │                │
+ *   │                                                  │                │
+ *   ├──────────────────────────────────────────────────┤                │
+ *   │  TIMELINE                                        │                │
+ *   │  [Track labels col] [Event blocks on tracks]     │                │
+ *   │  [Ruler — bars:beats]                            │                │
+ *   │  [Scrubber / progress]                           │                │
+ *   └──────────────────────────────────────────────────┴────────────────┘
  *
- * Controles:
- *   SPACE         — Play / Pause
- *   R             — Reiniciar desde el principio
- *   T             — Toggle timeline
- *   H             — Toggle panel derecho
- *   F5            — Guardar
- *   ESC           — Volver al menú anterior
- *   Click timeline — Seek a esa posición
+ * Controls:
+ *   SPACE       — Play / Pause
+ *   R           — Restart
+ *   Ctrl+Z      — Undo
+ *   Ctrl+S      — Save (F5 also works)
+ *   ESC         — Back
+ *   Scroll      — Horizontal scroll timeline (Ctrl+Scroll = zoom)
+ *   Click ruler — Seek
+ *   Double-click track — Create event at cursor
+ *   Click event block — Select + show in Inspector
  */
 class PlayStateEditorState extends funkin.states.MusicBeatState
 {
-	// ── Layout ────────────────────────────────────────────────────────────────
-	static inline final SW         : Int = 1280;
-	static inline final SH         : Int = 720;
-	static inline final TOP_H      : Int = 36;
-	static inline final STATUS_H   : Int = 22;
-	static inline final RIGHT_W    : Int = 292;
-	static inline final TL_H       : Int = 236;  // TL_RULER_H(24) + 6*TL_TRACK_H2(22)=132 + HScroll(12) + TL_SCRUB_H(32) + TL_TRANS_H(36) = 236
-	static inline final TL_RULER_H : Int = 24;
-	static inline final TL_TRACK_H : Int = 28;
-	static inline final TL_LABEL_W : Int = 110;
+	// ── Layout constants ──────────────────────────────────────────────────────
+	static inline final SW           : Int = 1280;
+	static inline final SH           : Int = 720;
+	static inline final MENU_H       : Int = 22;   // menu bar
+	static inline final TOPBAR_H     : Int = 38;   // transport bar
+	static inline final STATUS_H     : Int = 20;
+	static inline final INSP_W       : Int = 270;  // right inspector width
+	static inline final TL_LABEL_W   : Int = 108;  // track label column
+	static inline final TL_RULER_H   : Int = 22;   // ruler height
+	static inline final TL_SCRUB_H   : Int = 24;   // scrubber height
+	static inline final TL_TRACK_H   : Int = 30;   // each track row height
+	static inline final TL_MAX_TRACKS: Int = 8;    // max track rows visible
+	static inline final HEADER_H     : Int = 60;   // MENU_H + TOPBAR_H
 
-	// ── Colores del editor ────────────────────────────────────────────────────
-	static inline final C_BG        : Int = 0xFF1A1A2A;
-	static inline final C_PANEL     : Int = 0xFF23233A;
-	static inline final C_TOPBAR    : Int = 0xFF16162A;
-	static inline final C_BORDER    : Int = 0xFF3A3A5A;
-	static inline final C_ACCENT    : Int = 0xFF00D9FF;
-	static inline final C_TEXT      : Int = 0xFFDDDDFF;
-	static inline final C_SUBTEXT   : Int = 0xFF8888AA;
-	static inline final C_PLAYHEAD  : Int = 0xFFFF4444;
-	static inline final C_TIMELINE  : Int = 0xFF0F0F1E;
-	static inline final C_RULER     : Int = 0xFF1E1E38;
-	static inline final C_UNSAVED   : Int = 0xFFFFAA00;
-	static inline final C_SAVED     : Int = 0xFF00FF88;
+	// ── Colors ────────────────────────────────────────────────────────────────
+	static inline final C_BG         : Int = 0xFF1C1C28;
+	static inline final C_MENU       : Int = 0xFF141420;
+	static inline final C_TOPBAR     : Int = 0xFF1A1A2C;
+	static inline final C_PANEL      : Int = 0xFF202030;
+	static inline final C_INSP       : Int = 0xFF1E1E2E;
+	static inline final C_BORDER     : Int = 0xFF383850;
+	static inline final C_ACCENT     : Int = 0xFF00C8F0;
+	static inline final C_ACCENT2    : Int = 0xFF00F0A0;
+	static inline final C_TEXT       : Int = 0xFFDDDDEE;
+	static inline final C_SUBTEXT    : Int = 0xFF7878A0;
+	static inline final C_PLAYHEAD   : Int = 0xFFFF3A3A;
+	static inline final C_TL_BG      : Int = 0xFF111120;
+	static inline final C_TL_RULER   : Int = 0xFF191928;
+	static inline final C_UNSAVED    : Int = 0xFFFFAA00;
+	static inline final C_SELECT     : Int = 0xFFFFFFFF;
+	static inline final C_MENU_HOVER : Int = 0xFF2A2A44;
 
-	// Colores por pista
-	static final TRACK_COLORS : Array<Int> = [
-		0xFF4488FF, // Camera
-		0xFF44FF88, // Character
-		0xFFFF8844, // Visual
-		0xFFCC44FF, // Script
-		0xFFFFCC00, // Song
-		0xFF44FFCC, // Custom
+	// Default track definitions (can be extended)
+	static final DEFAULT_TRACKS : Array<PSETrack> = [
+		{ id:'camera',    name:'Camera',    color:0xFF4488FF, visible:true, locked:false, height:TL_TRACK_H },
+		{ id:'character', name:'Character', color:0xFF44FF88, visible:true, locked:false, height:TL_TRACK_H },
+		{ id:'visual',    name:'Visual',    color:0xFFFF8844, visible:true, locked:false, height:TL_TRACK_H },
+		{ id:'script',    name:'Script',    color:0xFFCC44FF, visible:true, locked:false, height:TL_TRACK_H },
+		{ id:'song',      name:'Song',      color:0xFFFFCC00, visible:true, locked:false, height:TL_TRACK_H },
+		{ id:'custom',    name:'Custom',    color:0xFF44FFCC, visible:true, locked:false, height:TL_TRACK_H },
 	];
 
-	static final TRACK_NAMES : Array<String> = [
-		"Camera", "Character", "Visual", "Script", "Song", "Custom"
-	];
-
-	// ── Cámaras ───────────────────────────────────────────────────────────────
+	// ── Cameras ───────────────────────────────────────────────────────────────
 	var camGame   : FlxCamera;
 	var camHUD    : FlxCamera;
-	var camUI     : FlxCamera;  // cameras[0], zoom=1 fixed, used by coolui.CoolUIGroup for hit detection
-	var _gameZoom : Float = 1.0; // current zoom of the game viewport
+	var camUI     : FlxCamera;
+	var _gameZoom : Float = 1.0;
+	var _freeCam  : Bool  = false;
+	var _freeCamX : Float = 0;
+	var _freeCamY : Float = 0;
 
 	// ── Gameplay ──────────────────────────────────────────────────────────────
 	var currentStage        : Stage;
@@ -179,168 +213,152 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	var vocals    : FlxSound;
 	var vocalsBf  : FlxSound;
 	var vocalsDad : FlxSound;
+	var vocalsMap : Map<String, FlxSound> = new Map();
 	var _perCharVocals : Bool = false;
 
-	// ── Reproducción ──────────────────────────────────────────────────────────
+	// ── Playback ──────────────────────────────────────────────────────────────
 	var isPlaying      : Bool  = false;
 	var songLength     : Float = 0;
-	var autoSeekTime   : Float = -1;  // si != -1, hacer seek en próximo frame
+	var autoSeekTime   : Float = -1;
 	var _lastBeat      : Int   = -1;
 	var _lastStep      : Int   = -1;
-	var _nextEventIdx  : Int   = 0;   // puntero para eventos del editor
+	var _nextEventIdx  : Int   = 0;
 	var _nextScriptIdx : Int   = 0;
 
-	// ── Datos del editor ──────────────────────────────────────────────────────
+	// ── Editor data ───────────────────────────────────────────────────────────
 	var pseData        : PSEData;
+	var tracks         : Array<PSETrack> = [];
 	var sortedEvents   : Array<PSEEvent>  = [];
 	var sortedScripts  : Array<PSEScript> = [];
 	var hasUnsaved     : Bool = false;
 	var currentSong    : String = '';
-	var currentDiff    : String = 'normal';  // dificultad activa para filtrar
-	var allDiffs       : Array<String> = []; // se rellena en _refreshDiffList()
+	var currentDiff    : String = 'normal';
+	var allDiffs       : Array<String> = [];
+	var selectedEventId: String = '';
+	var _hoveredEventId: String = '';
+	var scriptInstances: Map<String, HScriptInstance> = new Map();
 
-	// Scripts en ejecución (HScriptInstance instanciados)
-	var scriptInstances : Map<String, HScriptInstance> = new Map();
+	// Undo stack
+	var _undoStack     : Array<String> = []; // JSON snapshots
+	var _redoStack     : Array<String> = [];
+	static inline final MAX_UNDO : Int = 50;
 
-	// ── UI - Top Bar ──────────────────────────────────────────────────────────
-	var topBar        : FlxSprite;
-	var songTitleTxt  : FlxText;
-	var playBtn       : MiniBtn2;
-	var stopBtn       : MiniBtn2;
-	var restartBtn    : MiniBtn2;
-	var saveBtn       : MiniBtn2;
-	var toggleTLBtn   : MiniBtn2;
-	var togglePanelBtn: MiniBtn2;
-	var diffDropdown  : CoolDropDown;
-	var timeTxt       : FlxText;
-	var unsavedDot    : FlxSprite;
-	var statusTxt     : FlxText;
-	var _unsavedDlg   : UnsavedChangesDialog = null;
-	var _windowCloseFn : Void->Void = null;
+	// ── UI — Menu bar ─────────────────────────────────────────────────────────
+	var menuBg         : FlxSprite;
+	var menuItems      : Array<PSEMenuBtn> = [];
+	var _activeMenu    : Int = -1;
+	var _menuDropdowns : Array<PSEDropdownPanel> = [];
 
-	// ── UI - Timeline ─────────────────────────────────────────────────────────
-	var timelineGroup  : FlxGroup;
+	// ── UI — Top transport bar ────────────────────────────────────────────────
+	var topBg          : FlxSprite;
+	var songTitleTxt   : FlxText;
+	var playBtn        : PSEBtn;
+	var stopBtn        : PSEBtn;
+	var restartBtn     : PSEBtn;
+	var timeTxt        : FlxText;
+	var diffDropdown   : CoolDropDown;
+	var unsavedDot     : FlxSprite;
+	var freeCamBtn     : PSEBtn;
+	var snapCheck      : CoolCheckBox;
+	var zoomSlider     : PSESlider;
+	var _snapEnabled   : Bool = true;
+
+	// ── UI — Timeline ─────────────────────────────────────────────────────────
 	var tlBg           : FlxSprite;
-	var tlRuler        : FlxSprite;
-	var rulerTxt       : FlxTypedGroup<FlxText>;
+	var tlRulerBg      : FlxSprite;
+	var rulerLabels    : Array<FlxText>   = [];
+	var rulerTicks     : Array<FlxSprite> = [];
 	var tlPlayhead     : FlxSprite;
-	var tlPlayheadTop  : FlxSprite;
-	var tlTrackBgs     : Array<FlxSprite> = [];
-	var tlTrackLabels  : Array<FlxText>   = [];
-	var tlEventSprites : Array<TLEventSprite> = [];
-	var timelineVisible: Bool = true;
-	var tlScrollX      : Float = 0;    // desplazamiento horizontal en ms
-	var tlZoom         : Float = 0.08; // px por ms
-	var tlDragSeek     : Bool  = false;
-
-	// ── UI - Right Panel ──────────────────────────────────────────────────────
-	var rightPanel         : CoolTabMenu;
-	var panelBg            : FlxSprite;
-	var rightPanelVisible  : Bool = true;
-
-	// Events tab
-	var evtTypeDropdown    : CoolDropDown;
-	var evtValueInput      : CoolInputText;
-	var evtStepStepper     : CoolNumericStepper;
-	var evtTrackStepper    : CoolNumericStepper;
-	var evtLabelInput      : CoolInputText;
-	var evtDiffChecks      : Array<CoolCheckBox> = [];
-	var evtAddBtn          : MiniBtn2;
-	var evtDeleteBtn       : MiniBtn2;
-	var step_nowBtn        : MiniBtn2;       // Botón "insert at playhead"
-	var evtListTxt         : FlxText;
-	var evtListScroll      : Int = 0;
-	var selectedEventId    : String = '';
-
-	// Scripts tab
-	var scrNameInput    : CoolInputText;
-	var scrStepStepper  : CoolNumericStepper;
-	var scrAutoCheck    : CoolCheckBox;
-	var scrEnabledCheck : CoolCheckBox;
-	var scrDiffChecks   : Array<CoolCheckBox> = [];
-	var scrCodeInput    : CoolInputText;
-	var scrAddBtn       : MiniBtn2;
-	var scrDeleteBtn    : MiniBtn2;
-	var scrRunBtn       : MiniBtn2;
-	var scrListTxt      : FlxText;
-	var scrListScroll   : Int = 0;
-	var selectedScriptId: String = '';
-
-	// ── Layout presets ────────────────────────────────────────────────────────
-	var _layoutPreset  : Int   = 1;  // 0=full, 1=normal, 2=compact, 3=side-by-side
-	var layoutPresetBtn: MiniBtn2;
-
-	// ── Floating Game Viewport (tipo ZGameVisualizer) ─────────────────────────
-	// Cuando _vpFloating=true, la cámara de juego se muestra en una sub-ventana
-	// arrastrable y redimensionable en lugar de ocupar todo el fondo.
-	var _vpFloating    : Bool  = false;
-	var _vpX           : Float = 20;
-	var _vpY           : Float = TOP_H + 10;
-	var _vpW           : Int   = 640;   // se calcula en _initGameViewport
-	var _vpH           : Int   = 360;
-	var _vpDragging    : Bool  = false;
-	var _vpResizing    : Bool  = false;
-	var _vpResizeDir   : String = '';   // 'se' | 'sw' | 'ne' | 'nw' | 'e' | 'w' | 's' | 'n'
-	var _vpDragOffX    : Float = 0;
-	var _vpDragOffY    : Float = 0;
-	var _vpResStartX   : Float = 0;
-	var _vpResStartY   : Float = 0;
-	var _vpResStartW   : Int   = 0;
-	var _vpResStartH   : Int   = 0;
-	var _vpMinW        : Int   = 200;
-	var _vpMinH        : Int   = 150;
-	// Sprites del marco de la ventana flotante (todos en camHUD)
-	var _vpBorder      : FlxSprite;
-	var _vpTitleBar    : FlxSprite;
-	var _vpTitleTxt    : FlxText;
-	var _vpHandleCorner: FlxSprite;    // esquina SE de resize
-	var _vpFloatBtn    : MiniBtn2;     // botón en top bar para toggle
-
-	// ── Timeline horizontal scrollbar ─────────────────────────────────────────
-	// Un scrollbar delgado (12px) encima de la scrubber progress bar para
-	// scrollear la zona de tracks sin usar la rueda del ratón.
+	var tlPlayheadHead : FlxSprite;  // triangle on top
+	var tlScrubBg      : FlxSprite;
+	var tlScrubFill    : FlxSprite;
+	var tlScrubHandle  : FlxSprite;
+	var tlLabelColBg   : FlxSprite;
+	var trackBgs       : Array<FlxSprite> = [];
+	var trackLabels    : Array<FlxText>   = [];
+	var trackLocks     : Array<PSEBtn>    = [];
+	var trackColors    : Array<FlxSprite> = [];
+	var eventBlocks    : Array<PSEEventBlock> = [];
+	var gridLines      : Array<FlxSprite>  = [];
+	var tlScrollX      : Float = 0;   // scroll offset in ms
+	var tlZoom         : Float = 0.08; // px/ms
+	var _scrubDrag     : Bool  = false;
+	var _hScrollDrag   : Bool  = false;
+	var _hScrollDragOff: Float = 0;
 	var tlHScrollBg    : FlxSprite;
 	var tlHScrollThumb : FlxSprite;
-	var _tlHScrollDrag : Bool  = false;
-	var _tlHScrollDragOff : Float = 0;
+	var _dragEvent     : PSEEventBlock = null;
+	var _dragEvtOffMs  : Float = 0;
+	var _dragEvtOffY   : Float = 0;
+	var _resizeEvent   : PSEEventBlock = null;
+	var _resizeEvtOrigDur : Float = 0;
+	var _resizeStartX  : Float = 0;
 
-	// ── Multi-personaje vocals ────────────────────────────────────────────────
-	// Soporta vocals por personaje: vocalsMap["bf"] = FlxSound, etc.
-	var vocalsMap      : Map<String, FlxSound> = new Map();
+	// ── UI — Inspector (right panel) ──────────────────────────────────────────
+	var inspBg         : FlxSprite;
+	var inspTitle      : FlxText;
+	var inspTabs       : CoolTabMenu;
+	var _inspElements  : Array<flixel.FlxBasic> = [];
 
-	// ── Skin de notas ─────────────────────────────────────────────────────────
-	var _currentNoteSkin : String = 'default';
-	var noteSkinDropdown : CoolDropDown;
+	// Inspector — Event properties
+	var ipEventType    : CoolDropDown;
+	var ipEventLabel   : CoolInputText;
+	var ipEventStep    : CoolNumericStepper;
+	var ipEventDur     : CoolNumericStepper;
+	var ipEventTrack   : CoolNumericStepper;
+	var ipEventValue   : CoolInputText;
+	var ipEventDiffChecks : Array<CoolCheckBox> = [];
 
-	// ── Drag de personajes en el viewport ─────────────────────────────────────
-	var _dragChar      : Character = null;
-	var _dragCharOffX  : Float = 0;
-	var _dragCharOffY  : Float = 0;
-	var _showCharHandles : Bool = false;
-	// Handles visuales de los personajes (uno por slot)
-	var _charHandles   : Array<{spr:FlxSprite, char:Character}> = [];
+	// Camera event properties
+	var ipCamZoom      : CoolNumericStepper;
+	var ipCamMode      : CoolDropDown;
+	var ipCamDuration  : CoolNumericStepper;
+	var ipCamEaseType  : CoolDropDown;
+	var ipCamEaseDir   : CoolDropDown;
+	var ipCamCurve     : FlxSprite;   // ease curve preview (64×64)
 
-	// ── Tween event builder ───────────────────────────────────────────────────
-	var _tweenTargetInput  : CoolInputText;
-	var _tweenPropInput    : CoolInputText;
-	var _tweenFromInput    : CoolInputText;
-	var _tweenToInput      : CoolInputText;
-	var _tweenDurInput     : CoolInputText;
-	var _tweenEaseDropdown : CoolDropDown;
-	var _tweenBuilderGroup : Array<flixel.FlxBasic> = [];
+	// Script inspector
+	var ipScrName      : CoolInputText;
+	var ipScrCode      : CoolInputText;
+	var ipScrStep      : CoolNumericStepper;
+	var ipScrAuto      : CoolCheckBox;
+	var ipScrEnabled   : CoolCheckBox;
 
-	// ── Status message ────────────────────────────────────────────────────────
-	var _statusTimer : Float = 0;
-	var _statusMsg   : String = '';
+	// Song tab info
+	var ipSongInfoTxt  : FlxText;
+
+	// ── Status bar ────────────────────────────────────────────────────────────
+	var statusBg       : FlxSprite;
+	var statusTxt      : FlxText;
+	var _statusTimer   : Float = 0;
+	var cursorInfoTxt  : FlxText;  // right side: "Bar 2.3 | Step 12 | 0:03.26"
+
+	// ── Context menu ──────────────────────────────────────────────────────────
+	var _ctxMenu       : PSEContextMenu = null;
+
+	// ── Track management ──────────────────────────────────────────────────────
+	var _trackScrollY  : Int  = 0;  // first visible track index
 
 	// ── Internal ──────────────────────────────────────────────────────────────
 	var _songMeta      : SongMetadata;
-	static var _uidCounter : Int = 0;
+	var _unsavedDlg    : UnsavedChangesDialog = null;
+	static var _uid    : Int = 0;
+	var _windowCloseFn : Void->Void = null;
+
+	// ── Computed layout helpers ───────────────────────────────────────────────
+	inline function _tlY()     : Int  return HEADER_H + _gameH();
+	inline function _gameH()   : Int  return SH - HEADER_H - STATUS_H - _tlH();
+	inline function _tlH()     : Int
+	{
+		var n = Std.int(Math.min(tracks.length - _trackScrollY, TL_MAX_TRACKS));
+		return TL_RULER_H + n * TL_TRACK_H + TL_SCRUB_H + 12; // 12 = scrollbar
+	}
+	inline function _tlAreaW() : Int  return SW - TL_LABEL_W - INSP_W;
+	inline function _gameW()   : Int  return SW - INSP_W;
 
 	// ─────────────────────────────────────────────────────────────────────────
 	//  Constructor
 	// ─────────────────────────────────────────────────────────────────────────
-
 	public function new(?meta:SongMetadata)
 	{
 		super();
@@ -350,90 +368,68 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	// ─────────────────────────────────────────────────────────────────────────
 	//  Create
 	// ─────────────────────────────────────────────────────────────────────────
-
 	override public function create():Void
 	{
 		funkin.system.CursorManager.show();
-		persistentDraw = true;
+		persistentDraw   = true;
 		persistentUpdate = true;
 
-		// Validar SONG
 		if (PlayState.SONG == null)
 		{
-			trace('[PSEditor] ERROR: PlayState.SONG es null — volviendo al menú');
 			StateTransition.switchState(new FreeplayEditorState());
 			return;
 		}
+		currentSong = PlayState.SONG.song ?? 'unknown';
 
-		currentSong = PlayState.SONG.song != null ? PlayState.SONG.song : 'unknown';
+		if (FlxG.sound.music != null) { FlxG.sound.music.stop(); FlxG.sound.music = null; }
 
-		// Stop any music playing from previous menus (freeplay preview, etc.)
-		if (FlxG.sound.music != null)
-		{
-			FlxG.sound.music.stop();
-			FlxG.sound.music = null;
-		}
-
-		// Cámaras
-		setupCameras();
-
-		// GameState
-		gameState = GameState.get();
-		gameState.reset();
-		gameState.health = 1.0; // keep health bar visible
-
-		// Stage + Personajes
-		loadStageAndCharacters();
-
-		// MetaData
+		_setupCameras();
+		gameState = GameState.get(); gameState.reset(); gameState.health = 1.0;
+		_loadStageAndCharacters();
 		metaData = MetaData.load(currentSong, CoolUtil.difficultySuffix());
+		_setupHUD();
+		_loadPSEData();
+		_setupAudio();
 
-		// HUD
-		setupHUD();
+		// ── Cargar scripts de la canción + eventos del chart (igual que PlayState) ──
+		// Esto permite que los .hx/.lua de la canción reciban onBeatHit/onStepHit/
+		// onUpdate en el editor, y que los eventos del chart se disparen durante
+		// la reproducción en tiempo real.
+		ScriptHandler.init();
+		ScriptHandler.loadSongScripts(currentSong);
+		EventManager.loadEventsFromSong();
+		ScriptHandler.setOnScripts('SONG',    PlayState.SONG);
+		ScriptHandler.setOnScripts('camGame', camGame);
+		ScriptHandler.setOnScripts('camHUD',  camHUD);
+		ScriptHandler.callOnScripts('onCreate', ScriptHandler._argsEmpty);
 
-		// Cargar datos del editor (pse_events, pse_scripts desde JSON)
-		loadPSEData();
+		// Registrar handlers de eventos de cámara del chart para que usen el
+		// cameraController del editor (PlayState.instance es null aquí).
+		_registerEditorEventHandlers();
 
-		// Audio
-		setupAudio();
+		// ── Build UI ──
+		_buildBackground();
+		_buildMenuBar();
+		_buildTopBar();
+		_buildTimeline();
+		_buildInspector();
+		_buildStatusBar();
 
-		// UI del editor
-		setupTopBar();
-		setupTimeline();
-		setupRightPanel();
-		setupStatusBar();
-
-		// ── CRÍTICO: Inicializar posición al inicio de la canción ──────────────
-		// Conductor.songPosition puede ser un valor residual de un estado anterior.
-		// Forzar a 0 para que la timebar aparezca al inicio.
 		Conductor.songPosition = 0;
 		if (FlxG.sound.music != null) FlxG.sound.music.time = 0;
 		_doSeek(0);
-		rebuildTimelineRuler();
-		rebuildTimelineEventSprites();
+		_rebuildRuler();
+		_rebuildEventBlocks();
+		_refreshInspector();
 
-		// ── Viewport flotante: calcular tamaño inicial ────────────────────────
-		_initGameViewport();
-		_setupCharHandles();
-
-		// ── Importar secciones mustHitSection como eventos de cámara ──────────
-		_importSectionCameraEvents();
-
-		// Exponer a scripts
 		ScriptHandler.setOnScripts('playStateEditor', this);
 		ScriptHandler.setOnScripts('game', this);
 
-		// Empezar pausa (el usuario decide cuándo reproducir)
 		isPlaying = false;
-		showStatus('PlayState Editor listo. SPACE=play  T=timeline  H=panel  G=viewport flotante  C=drag personajes');
+		_showStatus('PlayState Editor v2  |  SPACE=play  Ctrl+S=save  ESC=back  Dbl-click track=add event');
 
-		// Window-close guard
 		#if sys
-		_windowCloseFn = function()
-		{
-			if (hasUnsaved)
-				try { savePSEData(); } catch (_) {}
-		};
+		_windowCloseFn = function() { if (hasUnsaved) try { _savePSEData(); } catch (_) {} };
 		lime.app.Application.current.window.onClose.add(_windowCloseFn);
 		#end
 
@@ -443,37 +439,34 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	// ─────────────────────────────────────────────────────────────────────────
 	//  Cameras
 	// ─────────────────────────────────────────────────────────────────────────
-
-	function setupCameras():Void
+	function _setupCameras():Void
 	{
-		// ── CRITICAL: camUI must be cameras[0] = FlxG.camera ─────────────────────
-		// coolui.CoolUIGroup / CoolTabMenu / CoolInputText use cameras[0] to map screen coords
-		// to world coords for click detection. If cameras[0] has zoom != 1 (camGame
-		// does after a Camera Zoom event fires), every button/input hitbox is offset.
-		// Fix: same pattern as StageEditor and AnimationDebug — transparent camUI at
-		// zoom=1 sits at cameras[0]; camGame and camHUD are added on top.
-		camUI = new FlxCamera();
-		camUI.bgColor.alpha = 0;
-		FlxG.cameras.reset(camUI);      // cameras[0] → FlxG.camera = camUI (zoom=1 fixed)
+		camUI = new FlxCamera(); camUI.bgColor.alpha = 0;
+		FlxG.cameras.reset(camUI);
 
-		// camGame — game world (zoom changes with Camera Zoom events)
-		camGame = new FlxCamera();
-		camGame.bgColor = FlxColor.BLACK;
+		camGame = new FlxCamera(); camGame.bgColor = FlxColor.BLACK;
 		FlxG.cameras.add(camGame, false);
 
-		// camHUD — health bar, score, icons (transparent bg, renders above camGame)
-		camHUD = new FlxCamera();
-		camHUD.bgColor.alpha = 0;
+		camHUD = new FlxCamera(); camHUD.bgColor.alpha = 0;
 		FlxG.cameras.add(camHUD, false);
 
 		@:privateAccess FlxCamera._defaultCameras = [camGame];
+		_applyGameViewport();
+	}
+
+	function _applyGameViewport():Void
+	{
+		if (camGame == null) return;
+		camGame.x      = 0;
+		camGame.y      = HEADER_H;
+		camGame.width  = _gameW();
+		camGame.height = _gameH();
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
 	//  Stage + Characters
 	// ─────────────────────────────────────────────────────────────────────────
-
-	function loadStageAndCharacters():Void
+	function _loadStageAndCharacters():Void
 	{
 		var SONG = PlayState.SONG;
 		if (SONG.stage == null) SONG.stage = 'stage_week1';
@@ -482,125 +475,98 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 
 		currentStage = new Stage(SONG.stage);
 		currentStage.cameras = [camGame];
-		_assignStageCameras(currentStage, [camGame]);
+		_assignCams(currentStage, [camGame]);
 		add(currentStage);
 
-		loadCharacters();
-
+		_loadCharacters();
 		if (currentStage.aboveCharsGroup != null && currentStage.aboveCharsGroup.length > 0)
 			add(currentStage.aboveCharsGroup);
 
-		// Asignar refs legacy
 		for (slot in characterSlots)
 		{
-			if (slot.isGFSlot       && gf       == null) gf       = slot.character;
-			else if (slot.isOpponentSlot && dad  == null) dad      = slot.character;
+			if (slot.isGFSlot       && gf == null)        gf        = slot.character;
+			else if (slot.isOpponentSlot && dad == null)   dad       = slot.character;
 			else if (slot.isPlayerSlot   && boyfriend == null) boyfriend = slot.character;
 		}
 
 		if (currentStage.hideGirlfriend)
-		{
 			for (slot in characterSlots)
 				if (slot.isGFSlot && slot.character != null)
 					slot.character.visible = false;
-		}
 
-		// Camera controller
 		if (boyfriend != null && dad != null)
 		{
 			cameraController = new CameraController(camGame, camHUD, boyfriend, dad, gf);
 			if (currentStage != null)
 			{
-				if (currentStage.defaultCamZoom > 0)
-					cameraController.defaultZoom = currentStage.defaultCamZoom;
+				if (currentStage.defaultCamZoom > 0) cameraController.defaultZoom = currentStage.defaultCamZoom;
 				cameraController.stageOffsetBf.set(currentStage.cameraBoyfriend.x, currentStage.cameraBoyfriend.y);
 				cameraController.stageOffsetDad.set(currentStage.cameraDad.x, currentStage.cameraDad.y);
 				cameraController.stageOffsetGf.set(currentStage.cameraGirlfriend.x, currentStage.cameraGirlfriend.y);
 				cameraController.lerpSpeed = CameraController.BASE_LERP_SPEED * currentStage.cameraSpeed;
 			}
-			// Snapshot AFTER stage overrides so resetToInitial() returns to correct state.
 			cameraController.snapshotInitialState();
 		}
 
-		// Character controller
 		characterController = new CharacterController();
 		characterController.initFromSlots(characterSlots);
 	}
 
-	function loadCharacters():Void
+	function _loadCharacters():Void
 	{
 		var SONG = PlayState.SONG;
 		if (SONG.characters == null || SONG.characters.length == 0)
 		{
 			SONG.characters = [];
-			SONG.characters.push({ name: SONG.gfVersion ?? 'gf',  x:0,y:0, visible:true, isGF:true, type:'Girlfriend', strumsGroup:'gf_strums_0' });
-			SONG.characters.push({ name: SONG.player2  ?? 'dad',  x:0,y:0, visible:true, type:'Opponent',   strumsGroup:'cpu_strums_0' });
-			SONG.characters.push({ name: SONG.player1  ?? 'bf',   x:0,y:0, visible:true, type:'Player',     strumsGroup:'player_strums_0' });
+			SONG.characters.push({ name:SONG.gfVersion ?? 'gf',  x:0,y:0, visible:true, isGF:true,  type:'Girlfriend', strumsGroup:'gf_strums_0' });
+			SONG.characters.push({ name:SONG.player2  ?? 'dad',  x:0,y:0, visible:true, type:'Opponent',   strumsGroup:'cpu_strums_0' });
+			SONG.characters.push({ name:SONG.player1  ?? 'bf',   x:0,y:0, visible:true, type:'Player',     strumsGroup:'player_strums_0' });
 		}
-
 		for (i in 0...SONG.characters.length)
 		{
-			var charData = SONG.characters[i];
-			var slot = new CharacterSlot(charData, i);
-
-			if (charData.x == 0 && charData.y == 0)
-			{
+			var cd   = SONG.characters[i];
+			var slot = new CharacterSlot(cd, i);
+			if (cd.x == 0 && cd.y == 0)
 				switch (slot.charType)
 				{
-					case 'Girlfriend': slot.character.setPosition(currentStage.gfPosition.x, currentStage.gfPosition.y);
-					case 'Opponent':   slot.character.setPosition(currentStage.dadPosition.x, currentStage.dadPosition.y);
-					case 'Player':     slot.character.setPosition(currentStage.boyfriendPosition.x, currentStage.boyfriendPosition.y);
+					case 'Girlfriend': slot.character.setPosition(currentStage.gfPosition.x,        currentStage.gfPosition.y);
+					case 'Opponent':   slot.character.setPosition(currentStage.dadPosition.x,        currentStage.dadPosition.y);
+					case 'Player':     slot.character.setPosition(currentStage.boyfriendPosition.x,  currentStage.boyfriendPosition.y);
 					default:
 				}
-			}
 			else
-			{
-				slot.character.setPosition(charData.x, charData.y);
-			}
+				slot.character.setPosition(cd.x, cd.y);
 
 			if (slot.character.characterData != null)
 			{
-				var posOff = slot.character.characterData.positionOffset;
-				if (posOff != null && posOff.length >= 2)
-				{
-					slot.character.x += posOff[0];
-					slot.character.y += posOff[1];
-				}
+				var po = slot.character.characterData.positionOffset;
+				if (po != null && po.length >= 2) { slot.character.x += po[0]; slot.character.y += po[1]; }
 			}
-
 			characterSlots.push(slot);
 			add(slot.character);
 		}
 	}
 
-	function _assignStageCameras(obj:flixel.FlxBasic, cams:Array<FlxCamera>):Void
+	function _assignCams(obj:FlxBasic, cams:Array<FlxCamera>):Void
 	{
 		obj.cameras = cams;
 		if (Std.isOfType(obj, FlxGroup))
-		{
-			var grp:FlxGroup = cast obj;
-			for (member in grp.members)
-				if (member != null)
-					_assignStageCameras(member, cams);
-		}
+			for (m in (cast obj:FlxGroup).members)
+				if (m != null) _assignCams(m, cams);
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
 	//  HUD
 	// ─────────────────────────────────────────────────────────────────────────
-
-	function setupHUD():Void
+	function _setupHUD():Void
 	{
-		var icons:Array<String> = [PlayState.SONG.player1 ?? 'bf', PlayState.SONG.player2 ?? 'dad'];
-		if (boyfriend != null && dad != null
-			&& boyfriend.healthIcon != null && dad.healthIcon != null)
+		var icons = [PlayState.SONG.player1 ?? 'bf', PlayState.SONG.player2 ?? 'dad'];
+		if (boyfriend != null && dad != null && boyfriend.healthIcon != null && dad.healthIcon != null)
 			icons = [boyfriend.healthIcon, dad.healthIcon];
 
 		uiManager = new UIScriptedManager(camHUD, gameState, metaData);
 		uiManager.setIcons(icons[0], icons[1]);
 		uiManager.setStage(PlayState.curStage);
-		// Assign camHUD explicitly: defaultCameras=[camGame] in this editor, so without
-		// this the group wouldn't be drawn in the camHUD render pass → HUD invisible.
 		uiManager.cameras = [camHUD];
 		add(uiManager);
 	}
@@ -608,18 +574,11 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	// ─────────────────────────────────────────────────────────────────────────
 	//  Audio
 	// ─────────────────────────────────────────────────────────────────────────
-
-	function setupAudio():Void
+	function _setupAudio():Void
 	{
 		var SONG = PlayState.SONG;
 		Conductor.changeBPM(SONG.bpm);
-
-		// Parar cualquier música que venga de menús anteriores
-		if (FlxG.sound.music != null)
-		{
-			FlxG.sound.music.stop();
-			FlxG.sound.music = null;
-		}
+		if (FlxG.sound.music != null) { FlxG.sound.music.stop(); FlxG.sound.music = null; }
 
 		var diffSuffix = (SONG.instSuffix != null && SONG.instSuffix != '')
 			? '-' + SONG.instSuffix : CoolUtil.difficultySuffix();
@@ -629,1376 +588,1248 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		{
 			FlxG.sound.music.volume = 1;
 			FlxG.sound.music.pause();
-			FlxG.sound.music.onComplete = _onSongComplete;
+			FlxG.sound.music.onComplete = _onSongEnd;
 			songLength = FlxG.sound.music.length;
 		}
 
-		if (SONG.needsVoices)
+		if (!SONG.needsVoices) return;
+		var loadedAny = false;
+		if (SONG.characters != null)
 		{
-			// ── Vocales multi-personaje (nuevo sistema) ───────────────────────
-			// Prioridad: por personaje (bf, dad, gf, etc.) → merged → base vocals
-			var loadedAny = false;
-
-			// 1. Intentar cargar vocales por cada personaje definido en SONG.characters
-			if (SONG.characters != null)
+			for (cd in SONG.characters)
 			{
-				for (charData in SONG.characters)
+				final cn = cd.name ?? ''; if (cn == '') continue;
+				for (alias in [cn, _vocalAlias(cn)])
 				{
-					final cname = charData.name ?? '';
-					if (cname == '') continue;
-					// Alias comunes
-					final aliases = [cname, _charVocalAlias(cname)];
-					for (alias in aliases)
-					{
-						var snd = Paths.loadVoicesForChar(SONG.song, alias, diffSuffix);
-						if (snd != null)
-						{
-							vocalsMap.set(alias, snd);
-							FlxG.sound.list.add(snd);
-							_perCharVocals = true;
-							loadedAny = true;
-							break;
-						}
-					}
+					var snd = Paths.loadVoicesForChar(SONG.song, alias, diffSuffix);
+					if (snd != null) { vocalsMap.set(alias, snd); FlxG.sound.list.add(snd); _perCharVocals = true; loadedAny = true; break; }
 				}
-			}
-
-			// 2. Fallback legacy: bf / dad por nombre
-			if (!loadedAny)
-			{
-				var bfSnd  = Paths.loadVoicesForChar(SONG.song, 'bf',  diffSuffix);
-				var dadSnd = Paths.loadVoicesForChar(SONG.song, 'dad', diffSuffix);
-
-				if (bfSnd != null)
-				{
-					_perCharVocals = true;
-					vocalsBf  = bfSnd;
-					vocalsDad = dadSnd ?? Paths.loadVoices(SONG.song, diffSuffix);
-					if (vocalsBf  != null) FlxG.sound.list.add(vocalsBf);
-					if (vocalsDad != null) FlxG.sound.list.add(vocalsDad);
-					loadedAny = true;
-				}
-			}
-
-			// 3. Fallback: archivo vocals unificado
-			if (!loadedAny)
-			{
-				vocals = Paths.loadVoices(SONG.song, diffSuffix);
-				if (vocals != null) FlxG.sound.list.add(vocals);
 			}
 		}
-	}
-
-	/**
-	 * Resuelve el alias de vocal para un nombre de personaje.
-	 * "boyfriend" → "bf", "pico" → "pico", etc.
-	 */
-	function _charVocalAlias(name:String):String
-	{
-		return switch (name.toLowerCase())
+		if (!loadedAny)
 		{
-			case 'boyfriend' | 'bf-pixel' | 'bf-car' | 'bf-holding-gs': 'bf';
-			case 'dad' | 'daddy-dearest': 'dad';
-			case 'gf' | 'gf-christmas' | 'gf-car' | 'gf-pixel': 'gf';
-			default: name;
-		};
+			var bfS = Paths.loadVoicesForChar(SONG.song, 'bf', diffSuffix);
+			if (bfS != null) { _perCharVocals = true; vocalsBf = bfS; vocalsDad = Paths.loadVoicesForChar(SONG.song, 'dad', diffSuffix) ?? Paths.loadVoices(SONG.song, diffSuffix); FlxG.sound.list.add(vocalsBf); if (vocalsDad != null) FlxG.sound.list.add(vocalsDad); loadedAny = true; }
+		}
+		if (!loadedAny) { vocals = Paths.loadVoices(SONG.song, diffSuffix); if (vocals != null) FlxG.sound.list.add(vocals); }
 	}
 
-	function _onSongComplete():Void
+	function _vocalAlias(n:String):String
+		return switch(n.toLowerCase()) { case 'boyfriend'|'bf-pixel'|'bf-car': 'bf'; case 'dad'|'daddy-dearest': 'dad'; case 'gf'|'gf-christmas'|'gf-pixel': 'gf'; default: n; }
+
+	function _onSongEnd():Void
 	{
-		isPlaying = false;
-		syncAudio(false);
-		showStatus('♪ Canción terminada');
+		isPlaying = false; _syncAudio(false);
+		_showStatus('♪ Canción terminada — pulsa ▶ o SPACE para reproducir de nuevo');
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
-	//  PSE Data  (load / save)
+	//  PSE Data
 	// ─────────────────────────────────────────────────────────────────────────
-
-	function loadPSEData():Void
+	function _loadPSEData():Void
 	{
-		pseData = { events: [], scripts: [] };
-
-		// ── 1. Bloque pse del .level (nuevo) ─────────────────────────────
+		pseData = { events:[], scripts:[], tracks:[] };
 		#if sys
-		final parsed : Dynamic = funkin.data.LevelFile.loadPSE(currentSong);
+		final parsed:Dynamic = funkin.data.LevelFile.loadPSE(currentSong);
 		if (parsed != null)
 		{
 			if (parsed.events  != null) pseData.events  = parsed.events;
 			if (parsed.scripts != null) pseData.scripts = parsed.scripts;
-			trace('[PSEditor] PSE data cargado desde .level');
+			if (parsed.tracks  != null) pseData.tracks  = parsed.tracks;
 		}
 		else
 		{
-			// ── 2. Fallback: -playstate.json legacy ───────────────────────
-			var path = _pseLegacyPath();
-			if (FileSystem.exists(path))
-			{
-				try
-				{
-					var raw     = File.getContent(path);
-					var legacy  : PSEData = cast Json.parse(raw);
-					if (legacy.events  != null) pseData.events  = legacy.events;
-					if (legacy.scripts != null) pseData.scripts = legacy.scripts;
-					trace('[PSEditor] PSE data cargado desde legacy $path');
-				}
-				catch (e:Dynamic)
-				{
-					trace('[PSEditor] Error cargando PSE legacy: $e');
-				}
-			}
+			var path = Paths.resolve('songs/${currentSong.toLowerCase()}/${currentSong.toLowerCase()}-playstate.json');
+			if (FileSystem.exists(path)) try { var ld:PSEData = cast Json.parse(File.getContent(path)); if (ld.events != null) pseData.events = ld.events; if (ld.scripts != null) pseData.scripts = ld.scripts; } catch(_) {}
 		}
 		#end
+
+		// Build track list: merge saved tracks with defaults
+		tracks = [];
+		if (pseData.tracks != null && pseData.tracks.length > 0)
+			tracks = pseData.tracks;
+		else
+		{
+			for (t in DEFAULT_TRACKS) tracks.push({ id:t.id, name:t.name, color:t.color, visible:t.visible, locked:t.locked, height:t.height });
+			pseData.tracks = tracks;
+		}
+
+		// Always have at least one custom track slot at end
+		if (!tracks.exists(t -> t.id == 'custom2'))
+			tracks.push({ id:'custom2', name:'Custom 2', color:0xFF88CCFF, visible:true, locked:false, height:TL_TRACK_H });
 
 		_rebuildSorted();
 		_refreshDiffList();
+		_importSectionCamEvents();
 	}
 
-	function savePSEData():Void
+	function _savePSEData():Void
 	{
+		pseData.tracks = tracks;
 		#if sys
 		final ok = funkin.data.LevelFile.savePSE(currentSong, pseData);
-		if (ok)
-		{
-			hasUnsaved = false;
-			_updateUnsavedDot();
-			showStatus('✓ Guardado en ${currentSong.toLowerCase()}.level');
-		}
-		else
-		{
-			showStatus('✗ Error al guardar (ver consola)');
-		}
+		if (ok) { hasUnsaved = false; _updateUnsavedDot(); _showStatus('✓ Guardado en ${currentSong.toLowerCase()}.level'); }
+		else    _showStatus('✗ Error al guardar — ver consola');
 		#else
-		showStatus('✗ Guardado solo disponible en desktop');
+		_showStatus('✗ Guardado solo disponible en desktop');
 		#end
-	}
-
-	/** Ruta del archivo -playstate.json legacy (solo para leer datos viejos). */
-	function _pseLegacyPath():String
-	{
-		var name = currentSong.toLowerCase();
-		return Paths.resolve('songs/$name/$name-playstate.json');
 	}
 
 	function _rebuildSorted():Void
 	{
-		sortedEvents  = (pseData.events  ?? []).copy();
-		sortedScripts = (pseData.scripts ?? []).copy();
-		sortedEvents.sort( (a, b) -> Std.int(a.stepTime - b.stepTime) );
-		sortedScripts.sort((a, b) -> Std.int(a.triggerStep - b.triggerStep) );
-		_nextEventIdx  = 0;
-		_nextScriptIdx = 0;
-		rebuildTimelineEventSprites();
+		sortedEvents  = (pseData.events  ?? []).copy(); sortedEvents.sort( (a,b) -> Std.int(a.stepTime - b.stepTime));
+		sortedScripts = (pseData.scripts ?? []).copy(); sortedScripts.sort((a,b) -> Std.int(a.triggerStep - b.triggerStep));
+		_nextEventIdx = 0; _nextScriptIdx = 0;
 	}
 
 	function _refreshDiffList():Void
 	{
-		// Obtener las dificultades reales de la canción (del .level o de los .json)
-		final songDiffPairs = funkin.data.LevelFile.getAvailableDifficulties(currentSong);
+		final pairs = funkin.data.LevelFile.getAvailableDifficulties(currentSong);
+		var set:Map<String,Bool> = new Map();
+		for (p in pairs) { final s = p[1]; set.set(s == '' ? 'normal' : s.substr(1), true); }
+		for (e in (pseData.events ?? [])) for (d in e.difficulties) if (d != '*') set.set(d, true);
+		for (s in (pseData.scripts ?? [])) for (d in s.difficulties) if (d != '*') set.set(d, true);
+		allDiffs = [for (k in set.keys()) k];
+		final prio = ['easy','normal','hard'];
+		final ordered:Array<String> = []; for (p in prio) if (allDiffs.contains(p)) ordered.push(p);
+		final rest = allDiffs.filter(d -> !prio.contains(d)); rest.sort((a,b) -> a < b ? -1 : 1);
+		allDiffs = ordered.concat(rest);
+		if (allDiffs.length == 0) allDiffs = ['easy','normal','hard'];
+		if (!allDiffs.contains(currentDiff)) currentDiff = allDiffs[0];
+	}
 
-		// Construir set: diffs reales + las que aparecen en los datos PSE
-		var set : Map<String, Bool> = new Map();
+	function _pushUndo():Void
+	{
+		_undoStack.push(Json.stringify(pseData));
+		if (_undoStack.length > MAX_UNDO) _undoStack.shift();
+		_redoStack = [];
+	}
 
-		// Siempre incluir las diffs reales de la canción
-		for (pair in songDiffPairs)
+	function _doUndo():Void
+	{
+		if (_undoStack.length == 0) { _showStatus('Nothing to undo'); return; }
+		_redoStack.push(Json.stringify(pseData));
+		pseData = cast Json.parse(_undoStack.pop());
+		_rebuildSorted(); _refreshDiffList(); _rebuildEventBlocks(); _refreshInspector();
+		hasUnsaved = true; _updateUnsavedDot();
+		_showStatus('Undo');
+	}
+
+	function _doRedo():Void
+	{
+		if (_redoStack.length == 0) { _showStatus('Nothing to redo'); return; }
+		_undoStack.push(Json.stringify(pseData));
+		pseData = cast Json.parse(_redoStack.pop());
+		_rebuildSorted(); _refreshDiffList(); _rebuildEventBlocks(); _refreshInspector();
+		hasUnsaved = true; _updateUnsavedDot();
+		_showStatus('Redo');
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	//  Background
+	// ─────────────────────────────────────────────────────────────────────────
+	function _buildBackground():Void
+	{
+		// Dark overlay between game area and the UI
+		var bg = new FlxSprite(0, 0).makeGraphic(SW, SH, C_BG);
+		bg.cameras = [camHUD]; bg.scrollFactor.set(); bg.alpha = 0.0; // game shows through
+		add(bg);
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	//  Menu Bar
+	// ─────────────────────────────────────────────────────────────────────────
+	function _buildMenuBar():Void
+	{
+		menuBg = new FlxSprite(0, 0).makeGraphic(SW, MENU_H, C_MENU);
+		menuBg.cameras = [camHUD]; menuBg.scrollFactor.set(); add(menuBg);
+
+		// Bottom separator
+		var sep = new FlxSprite(0, MENU_H - 1).makeGraphic(SW, 1, C_BORDER);
+		sep.cameras = [camHUD]; sep.scrollFactor.set(); add(sep);
+
+		final entries = ['File', 'View', 'Playback', 'Generate', 'Edit', 'Help'];
+		var mx = 6.0;
+		for (i in 0...entries.length)
 		{
-			// pair[1] es el sufijo: '', '-easy', '-hard', etc.
-			// Lo convertimos al nombre corto: '' → 'normal', '-hard' → 'hard'
-			final suffix = pair[1];
-			final name   = suffix == '' ? 'normal' : suffix.substr(1); // quitar '-'
-			set.set(name, true);
+			var btn = new PSEMenuBtn(mx, 0, entries[i], C_MENU, C_MENU_HOVER, C_TEXT, i, function(idx:Int, bx:Float)
+			{
+				_activeMenu = idx;
+				_closeMenuDropdowns();
+				_openMenuDropdown(idx, bx);
+			});
+			btn.cameras = [camHUD]; btn.scrollFactor.set();
+			btn.label.cameras = [camHUD]; btn.label.scrollFactor.set();
+			menuItems.push(btn);
+			add(btn); add(btn.label);
+			mx += btn.width + 2;
 		}
 
-		// Agregar cualquier diff mencionada en eventos/scripts pero no en la canción
-		for (e in (pseData.events ?? []))
-			for (d in e.difficulties)
-				if (d != '*') set.set(d, true);
-		for (s in (pseData.scripts ?? []))
-			for (d in s.difficulties)
-				if (d != '*') set.set(d, true);
+		// Song name in center of menu bar
+		var snTxt = new FlxText(0, 3, SW, currentSong.toUpperCase(), 11);
+		snTxt.setFormat(Paths.font('vcr.ttf'), 11, C_ACCENT, CENTER);
+		snTxt.scrollFactor.set(); snTxt.cameras = [camHUD]; add(snTxt);
 
-		allDiffs = [for (k in set.keys()) k];
+		// Right-side: "PROTOTYPE" badge
+		var proto = new FlxText(SW - 260, 4, 250, 'PROTOTYPE  Functionality is subject to change.', 9);
+		proto.setFormat(Paths.font('vcr.ttf'), 9, C_SUBTEXT, RIGHT);
+		proto.scrollFactor.set(); proto.cameras = [camHUD]; add(proto);
+	}
 
-		// Orden: easy, normal, hard, resto alfabético
-		final priority = ['easy', 'normal', 'hard'];
-		final ordered : Array<String> = [];
-		for (p in priority)
-			if (allDiffs.contains(p)) ordered.push(p);
-		final rest = allDiffs.filter(d -> !priority.contains(d));
-		rest.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
-		allDiffs = ordered.concat(rest);
+	function _openMenuDropdown(idx:Int, bx:Float):Void
+	{
+		var items:Array<{label:String, cb:Void->Void, sep:Bool}> = switch(idx)
+		{
+			case 0: [ // File
+				{ label:'Save  Ctrl+S', sep:false, cb:_savePSEData },
+				{ label:'Import Camera Sections', sep:false, cb:() -> { _importSectionCamEvents(); _rebuildEventBlocks(); _showStatus('Secciones importadas como eventos de cámara'); } },
+				{ label:'---', sep:true, cb:null },
+				{ label:'Exit  ESC', sep:false, cb:_goBack },
+			];
+			case 1: [ // View
+				{ label:'Toggle Inspector', sep:false, cb:() -> { inspBg.visible = !inspBg.visible; _rebuildRuler(); _rebuildEventBlocks(); } },
+				{ label:'Toggle HUD', sep:false, cb:() -> { if (uiManager != null) uiManager.visible = !uiManager.visible; } },
+				{ label:'Free Camera (F)', sep:false, cb:_toggleFreeCam },
+			];
+			case 2: [ // Playback
+				{ label:'Play / Pause  SPACE', sep:false, cb:_onPlayPause },
+				{ label:'Stop  .', sep:false, cb:_onStop },
+				{ label:'Restart  R', sep:false, cb:_onRestart },
+				{ label:'---', sep:true, cb:null },
+				{ label:'Jump to Start  Home', sep:false, cb:() -> autoSeekTime = 0 },
+				{ label:'Jump to End  End', sep:false, cb:() -> autoSeekTime = songLength - 50 },
+			];
+			case 3: [ // Generate
+				{ label:'Add Camera Follow Event', sep:false, cb:() -> _createEventAtPlayhead('Camera Follow', 'bf', 0) },
+				{ label:'Add Camera Zoom Event', sep:false, cb:() -> _createEventAtPlayhead('Zoom Camera', '1.0', 0) },
+				{ label:'Add Script Event', sep:false, cb:() -> _createEventAtPlayhead('Script', '', 3) },
+				{ label:'---', sep:true, cb:null },
+				{ label:'Add Track', sep:false, cb:_addTrack },
+			];
+			case 4: [ // Edit
+				{ label:'Undo  Ctrl+Z', sep:false, cb:_doUndo },
+				{ label:'Redo  Ctrl+Y', sep:false, cb:_doRedo },
+				{ label:'---', sep:true, cb:null },
+				{ label:'Delete Selected  Del', sep:false, cb:_deleteSelected },
+				{ label:'Duplicate Selected', sep:false, cb:_duplicateSelected },
+			];
+			case 5: [ // Help
+				{ label:'SPACE  Play/Pause', sep:false, cb:null },
+				{ label:'R  Restart', sep:false, cb:null },
+				{ label:'F  Free Camera', sep:false, cb:null },
+				{ label:'Ctrl+Z/Y  Undo/Redo', sep:false, cb:null },
+				{ label:'Ctrl+S / F5  Save', sep:false, cb:null },
+				{ label:'Scroll  Pan timeline', sep:false, cb:null },
+				{ label:'Ctrl+Scroll  Zoom timeline', sep:false, cb:null },
+				{ label:'Dbl-click track  New event', sep:false, cb:null },
+				{ label:'Drag event  Move event', sep:false, cb:null },
+				{ label:'Drag event right edge  Resize', sep:false, cb:null },
+			];
+			default: [];
+		}
 
-		// Si no hay ninguna, fallback
-		if (allDiffs.length == 0) allDiffs = ['easy', 'normal', 'hard'];
+		var dd = new PSEDropdownPanel(bx, MENU_H, 200, items);
+		dd.cameras = [camHUD]; dd.scrollFactor.set();
+		_menuDropdowns.push(dd);
+		add(dd);
+	}
 
-		// Validar que currentDiff siga existiendo
-		if (!allDiffs.contains(currentDiff))
-			currentDiff = allDiffs[0];
+	function _closeMenuDropdowns():Void
+	{
+		for (dd in _menuDropdowns) { remove(dd); dd.destroy(); }
+		_menuDropdowns = [];
+		_activeMenu = -1;
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
-	//  Top Bar UI
+	//  Top Transport Bar
 	// ─────────────────────────────────────────────────────────────────────────
-
-	function setupTopBar():Void
+	function _buildTopBar():Void
 	{
-		topBar = new FlxSprite(0, 0).makeGraphic(SW, TOP_H, C_TOPBAR);
-		topBar.scrollFactor.set();
-		topBar.cameras = [camHUD];
-		add(topBar);
+		var ty = MENU_H;
+		topBg = new FlxSprite(0, ty).makeGraphic(SW, TOPBAR_H, C_TOPBAR);
+		topBg.cameras = [camHUD]; topBg.scrollFactor.set(); add(topBg);
+		var sep = new FlxSprite(0, ty + TOPBAR_H - 1).makeGraphic(SW, 1, C_ACCENT);
+		sep.cameras = [camHUD]; sep.scrollFactor.set(); sep.alpha = 0.4; add(sep);
 
-		// Borde inferior del topbar
-		var topBorder = new FlxSprite(0, TOP_H - 2).makeGraphic(SW, 2, C_ACCENT);
-		topBorder.scrollFactor.set(); topBorder.alpha = 0.5;
-		topBorder.cameras = [camHUD]; add(topBorder);
+		var bx = 6.0; var by = ty + 4.0;
 
-		// Título
-		songTitleTxt = new FlxText(8, 5, 260, '▶ PLAYSTATE EDITOR — ${currentSong.toUpperCase()}', 11);
-		songTitleTxt.setFormat(Paths.font('vcr.ttf'), 11, C_ACCENT, LEFT);
-		songTitleTxt.scrollFactor.set(); songTitleTxt.cameras = [camHUD]; add(songTitleTxt);
+		// Transport buttons
+		restartBtn = _mkBtn(bx, by, '⏮', 28, 29, C_PANEL, function() _onRestart()); bx += 32;
+		stopBtn    = _mkBtn(bx, by, '⏹', 28, 29, C_PANEL, function() _onStop());    bx += 32;
+		playBtn    = _mkBtn(bx, by, '▶', 36, 29, 0xFF1A3A1A, function() _onPlayPause()); bx += 42;
 
-		// Punto de cambios no guardados
-		unsavedDot = new FlxSprite(276, 12).makeGraphic(8, 8, C_UNSAVED);
-		unsavedDot.scrollFactor.set(); unsavedDot.cameras = [camHUD];
-		unsavedDot.visible = false; add(unsavedDot);
+		// Separator
+		var s1 = new FlxSprite(bx, by + 3).makeGraphic(1, 22, C_BORDER); s1.cameras = [camHUD]; s1.scrollFactor.set(); add(s1); bx += 8;
 
-		// Botones de transporte
-		var bx = 295.0;
-		restartBtn   = _makeTopBtn(bx,      '⏮', C_PANEL,   _onRestart);   bx += 36;
-		playBtn      = _makeTopBtn(bx,      '▶', 0xFF224422, _onPlayPause); bx += 36;
-		stopBtn      = _makeTopBtn(bx,      '⏹', C_PANEL,   _onStop);      bx += 42;
+		// Time display
+		timeTxt = new FlxText(bx, by + 7, 140, '0:00.00 / 0:00.00', 11);
+		timeTxt.setFormat(Paths.font('vcr.ttf'), 11, C_ACCENT, LEFT);
+		timeTxt.cameras = [camHUD]; timeTxt.scrollFactor.set(); add(timeTxt); bx += 148;
 
-		// Dropdown de dificultad
-		var diffLabel = new FlxText(bx, 8, 0, 'DIFF:', 10);
-		diffLabel.setFormat(Paths.font('vcr.ttf'), 10, C_SUBTEXT, LEFT);
-		diffLabel.scrollFactor.set(); diffLabel.cameras = [camHUD]; add(diffLabel);
-		bx += 36;
+		// Separator
+		var s2 = new FlxSprite(bx, by + 3).makeGraphic(1, 22, C_BORDER); s2.cameras = [camHUD]; s2.scrollFactor.set(); add(s2); bx += 8;
 
-		if (diffDropdown != null) remove(diffDropdown);
+		// Difficulty
+		var dlbl = new FlxText(bx, by + 8, 0, 'DIFF:', 9);
+		dlbl.setFormat(Paths.font('vcr.ttf'), 9, C_SUBTEXT, LEFT); dlbl.cameras = [camHUD]; dlbl.scrollFactor.set(); add(dlbl); bx += 30;
 		var ddItems = allDiffs.length > 0 ? allDiffs : ['normal'];
-		diffDropdown = new CoolDropDown(bx, 6, CoolDropDown.makeStrIdLabelArray(ddItems, true), _onDiffChanged);
+		diffDropdown = new CoolDropDown(bx, by + 4, CoolDropDown.makeStrIdLabelArray(ddItems, true), function(id:String) { currentDiff = id; _rebuildEventBlocks(); _refreshInspector(); _showStatus('Dificultad: $id'); });
 		diffDropdown.selectedLabel = currentDiff;
-		diffDropdown.scrollFactor.set(); diffDropdown.cameras = [camHUD];
-		add(diffDropdown); bx += 90;
+		diffDropdown.cameras = [camHUD]; diffDropdown.scrollFactor.set(); add(diffDropdown); bx += 88;
 
-		// Tiempo
-		timeTxt = new FlxText(bx, 8, 120, '0:00 / 0:00', 10);
-		timeTxt.setFormat(Paths.font('vcr.ttf'), 10, C_SUBTEXT, LEFT);
-		timeTxt.scrollFactor.set(); timeTxt.cameras = [camHUD]; add(timeTxt);
+		// Separator
+		var s3 = new FlxSprite(bx, by + 3).makeGraphic(1, 22, C_BORDER); s3.cameras = [camHUD]; s3.scrollFactor.set(); add(s3); bx += 8;
 
-		// Botones de la derecha
-		var rbx = SW - 36.0;
-		saveBtn        = _makeTopBtn(rbx, '💾', 0xFF222244, savePSEData);      rbx -= 40;
-		togglePanelBtn = _makeTopBtn(rbx, '☰',  C_PANEL,   _toggleRightPanel); rbx -= 40;
-		toggleTLBtn    = _makeTopBtn(rbx, '⏤',  C_PANEL,   _toggleTimeline);   rbx -= 44;
-		layoutPresetBtn= _makeTopBtn(rbx, '⊞',  0xFF1A1A40, _cycleLayoutPreset); rbx -= 44;
-		_vpFloatBtn    = _makeTopBtn(rbx, '🎮',  0xFF1A2A1A, _toggleFloatingViewport);
+		// Snap checkbox
+		snapCheck = new CoolCheckBox(bx, by + 7, null, null, 'Snap', 56);
+		snapCheck.checked = true; snapCheck.cameras = [camHUD]; snapCheck.scrollFactor.set(); add(snapCheck); bx += 68;
+
+		// Right-side controls
+		var rbx = SW - INSP_W - 6.0;
+
+		// Unsaved dot
+		unsavedDot = new FlxSprite(rbx - 14, by + 10).makeGraphic(10, 10, C_UNSAVED);
+		unsavedDot.cameras = [camHUD]; unsavedDot.scrollFactor.set(); unsavedDot.visible = false; add(unsavedDot);
+
+		freeCamBtn = _mkBtn(rbx, by, '🎥', 36, 29, 0xFF1A2A3A, function() _toggleFreeCam()); rbx -= 42;
+		var saveB  = _mkBtn(rbx, by, '💾', 36, 29, 0xFF1A2A1A, function() _savePSEData()); rbx -= 42;
+
+		// Zoom label + slider
+		var zlbl = new FlxText(rbx - 86, by + 8, 50, 'Zoom:', 9);
+		zlbl.setFormat(Paths.font('vcr.ttf'), 9, C_SUBTEXT, RIGHT); zlbl.cameras = [camHUD]; zlbl.scrollFactor.set(); add(zlbl);
+		zoomSlider = new PSESlider(rbx - 82, by + 11, 78, 0.005, 2.0, tlZoom, function(v:Float) { tlZoom = v; _rebuildRuler(); _rebuildEventBlocks(); });
+		zoomSlider.cameras = [camHUD]; zoomSlider.scrollFactor.set(); add(zoomSlider);
 	}
 
-	function _makeTopBtn(x:Float, label:String, color:Int, cb:Void->Void):MiniBtn2
+	// ─────────────────────────────────────────────────────────────────────────
+	//  Timeline
+	// ─────────────────────────────────────────────────────────────────────────
+	function _buildTimeline():Void
 	{
-		var btn = new MiniBtn2(x, 3, 34, 29, label, color, C_TEXT, cb);
-		btn.scrollFactor.set(); btn.cameras = [camHUD];
-		btn.label.scrollFactor.set(); btn.label.cameras = [camHUD];
-		add(btn); add(btn.label);
-		return btn;
+		// We create static bg elements here; ruler / tracks rebuild dynamically
+		var tlY = _tlY();
+
+		// TL background
+		tlBg = new FlxSprite(0, tlY).makeGraphic(SW, _tlH() + 100, C_TL_BG);
+		tlBg.cameras = [camHUD]; tlBg.scrollFactor.set(); add(tlBg);
+
+		// Top separator
+		var topSep = new FlxSprite(0, tlY).makeGraphic(SW, 2, C_ACCENT);
+		topSep.cameras = [camHUD]; topSep.scrollFactor.set(); topSep.alpha = 0.5; add(topSep);
+
+		// Ruler background
+		tlRulerBg = new FlxSprite(0, tlY).makeGraphic(SW, TL_RULER_H, C_TL_RULER);
+		tlRulerBg.cameras = [camHUD]; tlRulerBg.scrollFactor.set(); add(tlRulerBg);
+
+		// Ruler bottom separator
+		var rulSep = new FlxSprite(0, tlY + TL_RULER_H - 1).makeGraphic(SW, 1, C_BORDER);
+		rulSep.cameras = [camHUD]; rulSep.scrollFactor.set(); rulSep.alpha = 0.5; add(rulSep);
+
+		// Label column background
+		tlLabelColBg = new FlxSprite(0, tlY + TL_RULER_H).makeGraphic(TL_LABEL_W, TL_MAX_TRACKS * TL_TRACK_H + 100, 0xFF0E0E1C);
+		tlLabelColBg.cameras = [camHUD]; tlLabelColBg.scrollFactor.set(); add(tlLabelColBg);
+
+		// Label col right border
+		var lbSep = new FlxSprite(TL_LABEL_W - 1, tlY + TL_RULER_H).makeGraphic(1, TL_MAX_TRACKS * TL_TRACK_H + 100, C_BORDER);
+		lbSep.cameras = [camHUD]; lbSep.scrollFactor.set(); lbSep.alpha = 0.6; add(lbSep);
+
+		// Dynamic ruler / track / event elements
+		_allocRulerLabels(80);
+		_allocGridLines(80);
+		_allocTrackRows();
+
+		// Scrubber
+		var scrY = tlY + TL_RULER_H + Std.int(Math.min(tracks.length, TL_MAX_TRACKS)) * TL_TRACK_H + 12;
+		tlScrubBg = new FlxSprite(0, scrY).makeGraphic(SW, TL_SCRUB_H, 0xFF09091A);
+		tlScrubBg.cameras = [camHUD]; tlScrubBg.scrollFactor.set(); add(tlScrubBg);
+		var scrSep = new FlxSprite(0, scrY).makeGraphic(SW, 1, C_BORDER);
+		scrSep.cameras = [camHUD]; scrSep.scrollFactor.set(); scrSep.alpha = 0.5; add(scrSep);
+
+		// Waveform ticks (aesthetic)
+		for (i in 0...100)
+		{
+			var tw = Std.int(SW / 100);
+			var th = 3 + Std.int(Math.random() * (TL_SCRUB_H - 8));
+			var ty2 = scrY + (TL_SCRUB_H - th) / 2;
+			var tick = new FlxSprite(i * tw, ty2).makeGraphic(tw - 1, th, 0xFF162540);
+			tick.cameras = [camHUD]; tick.scrollFactor.set(); tick.alpha = 0.8; add(tick);
+		}
+
+		tlScrubFill = new FlxSprite(0, scrY + 1).makeGraphic(1, TL_SCRUB_H - 2, 0xFF1A3C5C);
+		tlScrubFill.cameras = [camHUD]; tlScrubFill.scrollFactor.set(); add(tlScrubFill);
+
+		tlScrubHandle = new FlxSprite(0, scrY + TL_SCRUB_H / 2 - 8).makeGraphic(4, 16, C_PLAYHEAD);
+		tlScrubHandle.cameras = [camHUD]; tlScrubHandle.scrollFactor.set(); add(tlScrubHandle);
+
+		// Horizontal scrollbar
+		tlHScrollBg = new FlxSprite(TL_LABEL_W, tlY + TL_RULER_H + Std.int(Math.min(tracks.length, TL_MAX_TRACKS)) * TL_TRACK_H).makeGraphic(_tlAreaW(), 12, 0xFF07071A);
+		tlHScrollBg.cameras = [camHUD]; tlHScrollBg.scrollFactor.set(); add(tlHScrollBg);
+		tlHScrollThumb = new FlxSprite(TL_LABEL_W, tlY + TL_RULER_H + Std.int(Math.min(tracks.length, TL_MAX_TRACKS)) * TL_TRACK_H + 2).makeGraphic(60, 8, C_ACCENT);
+		tlHScrollThumb.cameras = [camHUD]; tlHScrollThumb.scrollFactor.set(); tlHScrollThumb.alpha = 0.5; add(tlHScrollThumb);
+
+		// Playhead (red vertical line through ruler + tracks)
+		var phH = TL_RULER_H + Std.int(Math.min(tracks.length, TL_MAX_TRACKS)) * TL_TRACK_H;
+		tlPlayhead = new FlxSprite(TL_LABEL_W, tlY).makeGraphic(2, phH, C_PLAYHEAD);
+		tlPlayhead.cameras = [camHUD]; tlPlayhead.scrollFactor.set(); tlPlayhead.alpha = 0.9; add(tlPlayhead);
+
+		// Playhead triangle head
+		tlPlayheadHead = new FlxSprite(TL_LABEL_W - 5, tlY).makeGraphic(12, 12, C_PLAYHEAD);
+		tlPlayheadHead.cameras = [camHUD]; tlPlayheadHead.scrollFactor.set(); add(tlPlayheadHead);
+
+		_rebuildRuler();
+		_rebuildEventBlocks();
+	}
+
+	function _allocRulerLabels(n:Int):Void
+	{
+		for (i in 0...n)
+		{
+			var t = new FlxText(0, _tlY() + 4, 50, '', 9);
+			t.setFormat(Paths.font('vcr.ttf'), 9, C_SUBTEXT, CENTER);
+			t.cameras = [camHUD]; t.scrollFactor.set(); t.visible = false;
+			rulerLabels.push(t); add(t);
+		}
+	}
+
+	function _allocGridLines(n:Int):Void
+	{
+		for (i in 0...n)
+		{
+			var gl = new FlxSprite(0, _tlY() + TL_RULER_H).makeGraphic(1, TL_MAX_TRACKS * TL_TRACK_H, 0xFF1E1E38);
+			gl.cameras = [camHUD]; gl.scrollFactor.set(); gl.visible = false;
+			gridLines.push(gl); add(gl);
+		}
+	}
+
+	function _allocTrackRows():Void
+	{
+		var tlY = _tlY();
+		for (i in 0...TL_MAX_TRACKS)
+		{
+			var ty = tlY + TL_RULER_H + i * TL_TRACK_H;
+
+			// Track area background
+			var tbg = new FlxSprite(TL_LABEL_W, ty).makeGraphic(_tlAreaW(), TL_TRACK_H, C_TL_BG);
+			tbg.cameras = [camHUD]; tbg.scrollFactor.set(); tbg.alpha = 0.9;
+			trackBgs.push(tbg); add(tbg);
+
+			// Track separator
+			var tsep = new FlxSprite(0, ty + TL_TRACK_H - 1).makeGraphic(SW, 1, C_BORDER);
+			tsep.cameras = [camHUD]; tsep.scrollFactor.set(); tsep.alpha = 0.2; add(tsep);
+
+			// Color accent bar
+			var tacc = new FlxSprite(0, ty + 3).makeGraphic(3, TL_TRACK_H - 6, 0xFF444466);
+			tacc.cameras = [camHUD]; tacc.scrollFactor.set();
+			trackColors.push(tacc); add(tacc);
+
+			// Track label
+			var tlbl = new FlxText(18, ty + 8, TL_LABEL_W - 40, '', 9);
+			tlbl.setFormat(Paths.font('vcr.ttf'), 9, C_SUBTEXT, LEFT);
+			tlbl.cameras = [camHUD]; tlbl.scrollFactor.set();
+			trackLabels.push(tlbl); add(tlbl);
+
+			// Lock button
+			var lkBtn = _mkBtn(TL_LABEL_W - 22, ty + 6, '🔓', 16, 16, 0xFF0A0A1A, function() {});
+			trackLocks.push(lkBtn);
+		}
+
+		_refreshTrackRows();
+	}
+
+	function _refreshTrackRows():Void
+	{
+		var tlY = _tlY();
+		var visibleTracks = tracks.slice(_trackScrollY, _trackScrollY + TL_MAX_TRACKS);
+		for (i in 0...TL_MAX_TRACKS)
+		{
+			var hasTrack = i < visibleTracks.length;
+			if (trackBgs.length   > i && trackBgs[i]   != null) trackBgs[i].visible   = hasTrack;
+			if (trackColors.length > i && trackColors[i] != null)
+			{
+				trackColors[i].visible = hasTrack;
+				if (hasTrack) trackColors[i].makeGraphic(3, TL_TRACK_H - 6, visibleTracks[i].color);
+			}
+			if (trackLabels.length > i && trackLabels[i] != null)
+			{
+				trackLabels[i].visible = hasTrack;
+				if (hasTrack)
+				{
+					trackLabels[i].text  = visibleTracks[i].name;
+					trackLabels[i].color = visibleTracks[i].color;
+					var ty = tlY + TL_RULER_H + i * TL_TRACK_H;
+					trackLabels[i].y = ty + 9;
+					trackColors[i].y  = ty + 3;
+				}
+			}
+			if (trackLocks.length > i && trackLocks[i] != null)
+			{
+				trackLocks[i].visible = hasTrack;
+				if (hasTrack)
+				{
+					var ty = tlY + TL_RULER_H + i * TL_TRACK_H;
+					var t = visibleTracks[i];
+					final idx2 = i + _trackScrollY;
+					trackLocks[i].y = ty + 6;
+					trackLocks[i].label.text  = t.locked ? '🔒' : '🔓';
+					trackLocks[i].label.color = t.locked ? 0xFFFF6644 : C_SUBTEXT;
+					// Reassign callback
+					final tIdx = idx2;
+					trackLocks[i].onClick = function() { tracks[tIdx].locked = !tracks[tIdx].locked; _refreshTrackRows(); };
+				}
+			}
+		}
+	}
+
+	function _rebuildRuler():Void
+	{
+		for (l in rulerLabels) l.visible = false;
+		for (gl in gridLines) gl.visible = false;
+
+		var tlY      = _tlY();
+		var areaW    = _tlAreaW();
+		var beatMs   = Conductor.crochet;
+		var startMs  = tlScrollX;
+		var endMs    = startMs + areaW / tlZoom;
+		var tracksH  = Std.int(Math.min(tracks.length - _trackScrollY, TL_MAX_TRACKS)) * TL_TRACK_H;
+		var beat     = Math.floor(startMs / beatMs);
+		var li = 0; var gi = 0;
+
+		while (beat * beatMs <= endMs && li < rulerLabels.length && gi < gridLines.length)
+		{
+			var xp = TL_LABEL_W + (beat * beatMs - startMs) * tlZoom;
+			if (xp >= TL_LABEL_W && xp <= TL_LABEL_W + areaW)
+			{
+				var bar  = Math.floor(beat / 4) + 1;
+				var b    = beat % 4;
+				var isBar = (b == 0);
+
+				var lbl = rulerLabels[li];
+				lbl.text    = isBar ? '$bar' : '$bar.${b+1}';
+				lbl.x       = xp - 25;
+				lbl.y       = tlY + 4;
+				lbl.color   = isBar ? 0xFFCCCCEE : C_SUBTEXT;
+				lbl.size    = isBar ? 10 : 8;
+				lbl.visible = true; li++;
+
+				var gl = gridLines[gi];
+				gl.x = xp;
+				gl.y = tlY + TL_RULER_H;
+				var glH = isBar ? tracksH : Std.int(tracksH * 0.5);
+				gl.makeGraphic(isBar ? 1 : 1, glH > 0 ? glH : 1, isBar ? 0xFF2A2A4A : 0xFF1A1A34);
+				gl.alpha   = isBar ? 0.6 : 0.25;
+				gl.visible = true; gi++;
+			}
+			beat++;
+		}
+
+		// Update ruler bg to cover only visible area
+		if (tlRulerBg != null) tlRulerBg.y = tlY;
+		if (tlBg      != null) { tlBg.y = tlY; }
+	}
+
+	function _rebuildEventBlocks():Void
+	{
+		for (b in eventBlocks) { remove(b); if (b.lblTxt != null) { remove(b.lblTxt); b.lblTxt.destroy(); } b.destroy(); }
+		eventBlocks = [];
+		if (pseData == null) return;
+
+		var tlY     = _tlY();
+		var tracksY = tlY + TL_RULER_H;
+		var areaW   = _tlAreaW();
+		var startMs = tlScrollX;
+		var endMs   = startMs + areaW / tlZoom;
+		var visN    = Std.int(Math.min(tracks.length - _trackScrollY, TL_MAX_TRACKS));
+
+		for (evt in (pseData.events ?? []))
+		{
+			if (!_evtForDiff(evt, currentDiff)) continue;
+			var trackI = evt.trackIndex - _trackScrollY;
+			if (trackI < 0 || trackI >= visN) continue;
+			if (!tracks[evt.trackIndex].visible) continue;
+
+			var evtMs  = Conductor.stepCrochet * evt.stepTime;
+			var dur    = (evt.duration != null && evt.duration > 0) ? evt.duration : 4.0;
+			var endEvt = Conductor.stepCrochet * (evt.stepTime + dur);
+			if (endEvt < startMs - 10 || evtMs > endMs + 10) continue;
+
+			var xPos = TL_LABEL_W + (evtMs - startMs) * tlZoom;
+			var wPx  = Std.int(Math.max(10, dur * Conductor.stepCrochet * tlZoom));
+			var yPos = tracksY + trackI * TL_TRACK_H + 2;
+			var col  = tracks[evt.trackIndex].color;
+			var isSel = (evt.id == selectedEventId);
+
+			var block = new PSEEventBlock(xPos, yPos, wPx, TL_TRACK_H - 4, col, evt.id, isSel, evt.type);
+			block.cameras = [camHUD]; block.scrollFactor.set();
+			eventBlocks.push(block); add(block);
+
+			// Label text
+			var lblStr = (evt.label != null && evt.label != '') ? evt.label : evt.type;
+			var lbl = new FlxText(xPos + 5, yPos + 5, Std.int(Math.max(10, wPx - 8)), lblStr, 8);
+			lbl.setFormat(Paths.font('vcr.ttf'), 8, isSel ? FlxColor.WHITE : 0xFFBBBBCC, LEFT);
+			lbl.cameras = [camHUD]; lbl.scrollFactor.set(); lbl.clipRect = null;
+			block.lblTxt = lbl; add(lbl);
+		}
+
+		// Script blocks on script track
+		for (scr in (pseData.scripts ?? []))
+		{
+			if (!_scrForDiff(scr, currentDiff) || !scr.enabled) continue;
+			// Find script track index
+			var trackI = _getScriptTrackVisualIdx();
+			if (trackI < 0) continue;
+
+			var scrMs = scr.triggerStep >= 0 ? Conductor.stepCrochet * scr.triggerStep : -1;
+			if (scrMs < 0 || scrMs < startMs - 10 || scrMs > endMs + 10) continue;
+
+			var xPos = TL_LABEL_W + (scrMs - startMs) * tlZoom;
+			var yPos = _tlY() + TL_RULER_H + trackI * TL_TRACK_H + 2;
+			var col  = 0xFFCC44FF;
+
+			var block = new PSEEventBlock(xPos, yPos, 36, TL_TRACK_H - 4, col, 'script_' + scr.id, false, '📝 ' + scr.name);
+			block.cameras = [camHUD]; block.scrollFactor.set(); block.isScriptBlock = true;
+			eventBlocks.push(block); add(block);
+
+			var lbl = new FlxText(xPos + 5, yPos + 5, 80, scr.name, 8);
+			lbl.setFormat(Paths.font('vcr.ttf'), 8, 0xFFCCBBFF, LEFT);
+			lbl.cameras = [camHUD]; lbl.scrollFactor.set();
+			block.lblTxt = lbl; add(lbl);
+		}
+	}
+
+	function _getScriptTrackVisualIdx():Int
+	{
+		for (i in 0...tracks.length)
+			if (tracks[i].id == 'script') return i - _trackScrollY;
+		return -1;
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	//  Inspector (right panel)
+	// ─────────────────────────────────────────────────────────────────────────
+	function _buildInspector():Void
+	{
+		var ix = SW - INSP_W;
+		// Background
+		inspBg = new FlxSprite(ix, HEADER_H).makeGraphic(INSP_W, SH - HEADER_H - STATUS_H, C_INSP);
+		inspBg.cameras = [camHUD]; inspBg.scrollFactor.set(); add(inspBg);
+		var ibSep = new FlxSprite(ix, HEADER_H).makeGraphic(2, SH - HEADER_H - STATUS_H, C_ACCENT);
+		ibSep.cameras = [camHUD]; ibSep.scrollFactor.set(); ibSep.alpha = 0.3; add(ibSep);
+
+		// Inspector title
+		inspTitle = new FlxText(ix + 8, HEADER_H + 6, INSP_W - 16, 'Inspector', 11);
+		inspTitle.setFormat(Paths.font('vcr.ttf'), 11, C_ACCENT, LEFT);
+		inspTitle.cameras = [camHUD]; inspTitle.scrollFactor.set(); add(inspTitle);
+
+		var titleSep = new FlxSprite(ix, HEADER_H + 22).makeGraphic(INSP_W, 1, C_BORDER);
+		titleSep.cameras = [camHUD]; titleSep.scrollFactor.set(); titleSep.alpha = 0.5; add(titleSep);
+
+		_refreshInspector();
+	}
+
+	function _refreshInspector():Void
+	{
+		// Destroy old inspector elements
+		for (el in _inspElements) { remove(el); el.destroy(); }
+		_inspElements = [];
+
+		var ix = SW - INSP_W + 8;
+		var iy = HEADER_H + 28.0;
+
+		if (selectedEventId == '')
+		{
+			_iLabel('No event selected.\nDouble-click on a track\nto create a new event,\nor click an event block\nto select it.', ix, iy, 0xFFAAAAAA, INSP_W - 16);
+			return;
+		}
+
+		// Find selected event
+		var selEvt:PSEEvent = null;
+		for (e in (pseData.events ?? [])) if (e.id == selectedEventId) { selEvt = e; break; }
+
+		if (selEvt == null)
+		{
+			// Check if it's a script block
+			var scrId = selectedEventId.startsWith('script_') ? selectedEventId.substr(7) : '';
+			var selScr:PSEScript = null;
+			for (s in (pseData.scripts ?? [])) if (s.id == scrId) { selScr = s; break; }
+			if (selScr != null) { _buildScriptInspector(selScr, ix, iy); return; }
+			_iLabel('Event not found', ix, iy, C_SUBTEXT, INSP_W - 16); return;
+		}
+
+		_buildEventInspector(selEvt, ix, iy);
+	}
+
+	function _buildEventInspector(evt:PSEEvent, ix:Float, iy:Float):Void
+	{
+		var iw = INSP_W - 16;
+		var ty = iy;
+
+		// Event type header
+		var hdr = _iLabel(evt.type, ix, ty, C_ACCENT, iw, 12); ty += 20;
+		var sep1 = _iSep(ix, ty, iw); ty += 8;
+
+		// Event type dropdown
+		_iLabel('Event Type:', ix, ty, C_SUBTEXT, iw); ty += 14;
+		var etypes = _getEventTypes();
+		ipEventType = _iDropdown(ix, ty, iw, etypes, evt.type, function(id:String)
+		{
+			var i = Std.parseInt(id); if (i != null && i >= 0 && i < etypes.length) evt.type = etypes[i];
+			_pushUndo(); _rebuildEventBlocks(); _showStatus('Type → ${evt.type}');
+		}); ty += 28;
+
+		// Label
+		_iLabel('Label:', ix, ty, C_SUBTEXT, iw); ty += 13;
+		ipEventLabel = _iInput(ix, ty, iw, evt.label ?? '', function(v:String) { evt.label = v; hasUnsaved = true; _updateUnsavedDot(); }); ty += 26;
+
+		// Value
+		_iLabel('Value (v1|v2):', ix, ty, C_SUBTEXT, iw); ty += 13;
+		ipEventValue = _iInput(ix, ty, iw, evt.value ?? '', function(v:String) { evt.value = v; hasUnsaved = true; _updateUnsavedDot(); }); ty += 26;
+
+		var sep2 = _iSep(ix, ty, iw); ty += 8;
+
+		// Camera-specific section
+		if (evt.type.toLowerCase().contains('camera') || evt.type.toLowerCase().contains('zoom'))
+		{
+			_buildCamEventSection(evt, ix, ty, iw);
+			ty += 170;
+			var sep3 = _iSep(ix, ty, iw); ty += 8;
+		}
+
+		// Step + Duration
+		_iLabel('Step Time:', ix, ty, C_SUBTEXT, Std.int(iw/2 - 4)); ty += 13;
+		ipEventStep = _iStepper(ix, ty, Std.int(iw/2 - 4), evt.stepTime, 0, 99999, 1, function(v:Float) { evt.stepTime = v; _pushUndo(); _rebuildEventBlocks(); });
+		_iLabel('Duration (steps):', ix + iw/2, ty - 13, C_SUBTEXT, Std.int(iw/2));
+		ipEventDur = _iStepper(ix + iw/2, ty, Std.int(iw/2), evt.duration ?? 4.0, 1, 9999, 1, function(v:Float) { evt.duration = v; _pushUndo(); _rebuildEventBlocks(); });
+		ty += 26;
+
+		// At-playhead button
+		var athBtn = _iBtn(ix, ty, '⏱ Set to Playhead', 0xFF1A2A3A, function()
+		{
+			var step = Conductor.songPosition / Conductor.stepCrochet;
+			evt.stepTime = _snapEnabled ? Math.round(step) : step;
+			if (ipEventStep != null) ipEventStep.value = evt.stepTime;
+			_pushUndo(); _rebuildEventBlocks(); _showStatus('Step → ${Std.int(evt.stepTime)}');
+		}, iw); ty += 28;
+
+		// Track
+		_iLabel('Track (0-${tracks.length - 1}):', ix, ty, C_SUBTEXT, iw); ty += 13;
+		ipEventTrack = _iStepper(ix, ty, iw, evt.trackIndex, 0, tracks.length - 1, 1, function(v:Float) { evt.trackIndex = Std.int(v); _pushUndo(); _rebuildEventBlocks(); }); ty += 26;
+
+		var sep4 = _iSep(ix, ty, iw); ty += 8;
+
+		// Difficulty checkboxes
+		_iLabel('Difficulties:', ix, ty, C_SUBTEXT, iw); ty += 14;
+		var dx = ix; ipEventDiffChecks = [];
+		for (diff in allDiffs.concat(['*']))
+		{
+			var chk = new CoolCheckBox(dx, ty, null, null, diff == '*' ? 'all' : diff, 56);
+			chk.checked = evt.difficulties.contains('*') ? (diff == '*') : evt.difficulties.contains(diff);
+			chk.cameras = [camHUD]; chk.scrollFactor.set();
+			add(chk); _inspElements.push(chk); ipEventDiffChecks.push(chk);
+			dx += 60; if (dx > SW - INSP_W + iw + 4) { dx = ix; ty += 22; }
+		}
+		ty += 26;
+
+		var sep5 = _iSep(ix, ty, iw); ty += 8;
+
+		// Action buttons
+		var addBtn = _iBtn(ix, ty, 'UPDATE EVENT', 0xFF1A3A1A, function()
+		{
+			var diffs:Array<String> = [];
+			for (i in 0...ipEventDiffChecks.length)
+			{
+				var d = (i < allDiffs.length) ? allDiffs[i] : '*';
+				if (ipEventDiffChecks[i].checked) { if (d == '*') { diffs = ['*']; break; } diffs.push(d); }
+			}
+			evt.difficulties = diffs.length > 0 ? diffs : ['*'];
+			_pushUndo(); _rebuildSorted(); _rebuildEventBlocks(); hasUnsaved = true; _updateUnsavedDot();
+			_showStatus('✓ Event updated: ${evt.type}');
+		}, Std.int(iw / 2 - 4));
+		var delBtn = _iBtn(ix + iw/2 + 4, ty, 'DELETE', 0xFF3A1A1A, function() _deleteSelected(), Std.int(iw / 2 - 4));
+		ty += 28;
+
+		// Open script editor button for script events
+		if (evt.type.toLowerCase() == 'script')
+		{
+			var scrEdBtn = _iBtn(ix, ty, '📝 Open Script Editor', 0xFF1A1A3A, function()
+			{
+				openSubState(new ScriptEditorSubState(PlayState.SONG, evt.value, camHUD));
+			}, iw); ty += 28;
+		}
+	}
+
+	function _buildCamEventSection(evt:PSEEvent, ix:Float, ty:Float, iw:Int):Void
+	{
+		_iLabel('── Camera Properties ──', ix, ty, C_ACCENT, iw, 9); ty += 14;
+
+		// Zoom
+		_iLabel('Zoom:', ix, ty, C_SUBTEXT, Std.int(iw/2)); ty += 13;
+		var zoomVal = 1.0;
+		if (evt.value != null && evt.value != '') { var pz = Std.parseFloat(evt.value.split('|')[0]); if (!Math.isNaN(pz)) zoomVal = pz; }
+		ipCamZoom = _iStepper(ix, ty, Std.int(iw - 30), zoomVal, 0.1, 5.0, 0.1, function(v:Float)
+		{
+			var parts = (evt.value ?? '1.0').split('|');
+			parts[0] = Std.string(v);
+			evt.value = parts.join('|');
+			hasUnsaved = true; _updateUnsavedDot();
+		});
+		// Zoom slider (visual like the screenshot)
+		var zsld = new PSESlider(ix, ty + 22, iw - 10, 0.1, 3.0, zoomVal, function(v:Float)
+		{
+			var sv = Math.round(v * 10) / 10.0;
+			ipCamZoom.value = sv;
+			var parts = (evt.value ?? '1.0').split('|'); parts[0] = Std.string(sv);
+			evt.value = parts.join('|'); hasUnsaved = true; _updateUnsavedDot();
+		});
+		zsld.cameras = [camHUD]; zsld.scrollFactor.set(); add(zsld); _inspElements.push(zsld);
+		ty += 44;
+
+		// Mode dropdown
+		_iLabel('Mode:', ix, ty, C_SUBTEXT, iw); ty += 13;
+		final camModes = ['Stage Zoom','UI Zoom','Both'];
+		ipCamMode = _iDropdown(ix, ty, iw, camModes, 'Stage Zoom', null); ty += 28;
+
+		// Duration
+		_iLabel('Duration:', ix, ty, C_SUBTEXT, iw); ty += 13;
+		var durVal = evt.duration ?? 10.0;
+		ipCamDuration = _iStepper(ix, ty, iw, durVal, 1, 999, 1, function(v:Float)
+		{
+			evt.duration = v; hasUnsaved = true; _updateUnsavedDot(); _rebuildEventBlocks();
+		}); ty += 26;
+
+		// Ease type + dir side by side
+		_iLabel('Ease Type:', ix, ty, C_SUBTEXT, Std.int(iw/2)); ty += 13;
+		final easeTypes = ['linear','quad','cube','quart','quint','sine','expo','circ','elastic','bounce','back'];
+		final easeDirs  = ['In','Out','InOut'];
+		ipCamEaseType = _iDropdown(ix, ty, Std.int(iw/2 - 2), easeTypes, 'expo', null);
+		_iLabel('Direction:', ix + iw/2, ty - 13, C_SUBTEXT, Std.int(iw/2));
+		ipCamEaseDir = _iDropdown(ix + iw/2, ty, Std.int(iw/2 - 2), easeDirs, 'Out', null); ty += 28;
+
+		// Ease curve preview (64x64 canvas)
+		_drawEaseCurve(ix, ty, iw);
+	}
+
+	function _drawEaseCurve(ix:Float, ty:Float, iw:Int):Void
+	{
+		var w = 64; var h = 64;
+		var cs = new FlxSprite(ix + iw / 2 - w / 2, ty).makeGraphic(w, h, 0xFF0A0A18, true);
+		// Draw a simple ease-out curve
+		for (xi in 0...w)
+		{
+			var t  = xi / w;
+			var yt = 1 - (1 - t) * (1 - t); // ease-out quad
+			var yi = Std.int((1 - yt) * (h - 4) + 2);
+			flixel.util.FlxSpriteUtil.drawRect(cs, xi, yi, 1, h - yi - 2, C_ACCENT);
+		}
+		// Border
+		flixel.util.FlxSpriteUtil.drawRect(cs, 0, 0, w, 1, C_BORDER);
+		flixel.util.FlxSpriteUtil.drawRect(cs, 0, h-1, w, 1, C_BORDER);
+		flixel.util.FlxSpriteUtil.drawRect(cs, 0, 0, 1, h, C_BORDER);
+		flixel.util.FlxSpriteUtil.drawRect(cs, w-1, 0, 1, h, C_BORDER);
+		cs.cameras = [camHUD]; cs.scrollFactor.set();
+		ipCamCurve = cs; add(cs); _inspElements.push(cs);
+	}
+
+	function _buildScriptInspector(scr:PSEScript, ix:Float, ty:Float):Void
+	{
+		var iw = INSP_W - 16;
+		_iLabel('📝 Script: ${scr.name}', ix, ty, C_ACCENT, iw, 11); ty += 20;
+		_iSep(ix, ty, iw); ty += 8;
+
+		_iLabel('Name:', ix, ty, C_SUBTEXT, iw); ty += 13;
+		ipScrName = _iInput(ix, ty, iw, scr.name, function(v:String) { scr.name = v; hasUnsaved = true; _updateUnsavedDot(); }); ty += 26;
+
+		_iLabel('Trigger Step (-1 = manual):', ix, ty, C_SUBTEXT, iw); ty += 13;
+		ipScrStep = _iStepper(ix, ty, iw, scr.triggerStep, -1, 99999, 1, function(v:Float) { scr.triggerStep = v; hasUnsaved = true; _updateUnsavedDot(); _rebuildEventBlocks(); }); ty += 26;
+
+		ipScrAuto    = _iCheckbox(ix, ty, 'Auto-trigger on step', scr.autoTrigger, function(v:Bool) { scr.autoTrigger = v; }); ty += 22;
+		ipScrEnabled = _iCheckbox(ix, ty, 'Enabled', scr.enabled, function(v:Bool) { scr.enabled = v; _rebuildEventBlocks(); }); ty += 26;
+
+		_iSep(ix, ty, iw); ty += 8;
+
+		// ── Save Location ────────────────────────────────────────────────────
+		_iLabel('Save Location:', ix, ty, C_SUBTEXT, iw); ty += 13;
+		var saveLocItems = [
+			{ id:'inline',  label:'Inline (PSE JSON)' },
+			{ id:'song',    label:'Song Scripts' },
+			{ id:'events',  label:'Event Scripts' },
+			{ id:'global',  label:'Global Scripts' },
+			{ id:'custom',  label:'Custom Path...' },
+		];
+		var curLoc = scr.savePath ?? 'inline';
+		// Si savePath es una ruta literal (no una clave conocida), mostramos 'custom'
+		if (curLoc != 'inline' && curLoc != 'song' && curLoc != 'events' && curLoc != 'global')
+			curLoc = 'custom';
+
+		// Texto descriptivo de la ruta resuelta
+		var resolvedPath = _resolveSavePath(scr);
+		var pathHint = resolvedPath ?? '(embebido en PSE JSON)';
+
+		var pathHintTxt = _iLabel(pathHint, ix, ty + 42, 0xFF777799, iw, 8);
+
+		var locDD = new CoolDropDown(ix, ty, saveLocItems.map(function(it) return { id:it.id, label:it.label }),
+			function(id:String)
+			{
+				if (id == 'custom')
+				{
+					// Si ya tiene una ruta literal, la mantenemos; si no, preset
+					if (scr.savePath == null || scr.savePath == '' ||
+					    scr.savePath == 'inline' || scr.savePath == 'song' ||
+					    scr.savePath == 'events' || scr.savePath == 'global')
+						scr.savePath = 'assets/songs/$currentSong/scripts/${scr.name}.hx';
+				}
+				else
+				{
+					scr.savePath = id;
+				}
+				hasUnsaved = true; _updateUnsavedDot();
+				var rp = _resolveSavePath(scr);
+				pathHintTxt.text = rp ?? '(embebido en PSE JSON)';
+				_refreshInspector();
+			});
+		locDD.selectedId = curLoc;
+		locDD.cameras = [camHUD]; locDD.scrollFactor.set(); add(locDD); _inspElements.push(locDD);
+		ty += 26;
+
+		// Hint de ruta (ya añadido arriba con ty+42 adelantado)
+		ty += 20;
+
+		// Input de ruta custom (solo visible si savePath es ruta literal)
+		var isCustom = (scr.savePath != null && scr.savePath != 'inline' &&
+		                scr.savePath != 'song' && scr.savePath != 'events' && scr.savePath != 'global');
+		if (isCustom)
+		{
+			_iLabel('Ruta custom:', ix, ty, C_SUBTEXT, iw); ty += 13;
+			var pathInp = _iInput(ix, ty, iw, scr.savePath ?? '', function(v:String)
+			{
+				scr.savePath = v;
+				var rp2 = _resolveSavePath(scr);
+				pathHintTxt.text = rp2 ?? '(embebido en PSE JSON)';
+				hasUnsaved = true; _updateUnsavedDot();
+			}); ty += 26;
+		}
+
+		_iSep(ix, ty, iw); ty += 8;
+
+		// ── Previsualización del código ──────────────────────────────────────
+		_iLabel('HScript Code (previsualización):', ix, ty, C_SUBTEXT, iw); ty += 13;
+		// Si hay archivo, intentar leer las primeras líneas de él
+		var codePreview = _loadScriptCode(scr);
+		var preview = codePreview.length > 120 ? codePreview.substr(0, 120) + '...' : codePreview;
+		_iLabel(preview, ix, ty, 0xFF9988CC, iw, 8); ty += 70;
+
+		_iSep(ix, ty, iw); ty += 8;
+
+		// ── Botones de acción ────────────────────────────────────────────────
+		var savedLoc = scr.savePath ?? 'inline';
+
+		// Abrir editor de código
+		_iBtn(ix, ty, '📝 Open Full Script Editor', 0xFF1A1A3A, function()
+		{
+			var onSaveCb = function(code:String)
+			{
+				// Actualizar código inline como caché siempre
+				scr.code = code;
+				hasUnsaved = true; _updateUnsavedDot();
+				// Si apunta a fichero, guardarlo en disco
+				#if sys
+				var rp = _resolveSavePath(scr);
+				if (rp != null)
+				{
+					try
+					{
+						var dir = haxe.io.Path.directory(rp);
+						if (dir != '' && !sys.FileSystem.exists(dir)) sys.FileSystem.createDirectory(dir);
+						sys.io.File.saveContent(rp, code);
+						_showStatus('💾 Script guardado: $rp', 3.0);
+					}
+					catch (ex:Dynamic) { _showStatus('⚠ Error al guardar: $ex', 4.0); }
+				}
+				#end
+				// Invalidar instancia en caché para que se recargue con el nuevo código
+				var old = scriptInstances.get(scr.id);
+				if (old != null) { old.active = false; scriptInstances.remove(scr.id); }
+			};
+			openSubState(new ScriptEditorSubState(PlayState.SONG, scr.name, camHUD,
+				_loadScriptCode(scr), onSaveCb));
+		}, iw); ty += 28;
+
+		// Guardar al archivo ahora (solo si no es inline)
+		if (savedLoc != 'inline' && savedLoc != '' && savedLoc != null)
+		{
+			_iBtn(ix, ty, '💾 Save to File Now', 0xFF1A2A1A, function()
+			{
+				#if sys
+				var rp = _resolveSavePath(scr);
+				if (rp != null)
+				{
+					try
+					{
+						var dir = haxe.io.Path.directory(rp);
+						if (dir != '' && !sys.FileSystem.exists(dir)) sys.FileSystem.createDirectory(dir);
+						sys.io.File.saveContent(rp, scr.code ?? '');
+						_showStatus('💾 Guardado: $rp', 3.0);
+					}
+					catch (ex:Dynamic) { _showStatus('⚠ Error: $ex', 4.0); }
+				}
+				#else
+				_showStatus('⚠ File I/O no disponible en esta plataforma');
+				#end
+			}, iw); ty += 28;
+		}
+
+		_iBtn(ix, ty, '▶ Test Run Now', 0xFF1A2A1A, function() _runScript(scr), iw); ty += 28;
+		_iBtn(ix, ty, 'DELETE Script', 0xFF3A1A1A, function() { _deleteSelected(); }, iw);
+	}
+
+	// Inspector builder helpers
+	function _iLabel(text:String, x:Float, y:Float, col:Int, w:Int, ?size:Int = 10):FlxText
+	{
+		var t = new FlxText(x, y, w, text, size);
+		t.setFormat(Paths.font('vcr.ttf'), size, col, LEFT);
+		t.cameras = [camHUD]; t.scrollFactor.set(); add(t); _inspElements.push(t); return t;
+	}
+
+	function _iSep(x:Float, y:Float, w:Int):FlxSprite
+	{
+		var s = new FlxSprite(x, y).makeGraphic(w, 1, C_BORDER); s.alpha = 0.35;
+		s.cameras = [camHUD]; s.scrollFactor.set(); add(s); _inspElements.push(s); return s;
+	}
+
+	function _iInput(x:Float, y:Float, w:Int, val:String, ?onChange:String->Void):CoolInputText
+	{
+		var inp = new CoolInputText(x, y, w, val, 10);
+		if (onChange != null) inp.onChange = onChange;
+		inp.cameras = [camHUD]; inp.scrollFactor.set(); add(inp); _inspElements.push(inp); return inp;
+	}
+
+	function _iStepper(x:Float, y:Float, w:Int, val:Float, min:Float, max:Float, step:Float, ?onChange:Float->Void):CoolNumericStepper
+	{
+		var sp = new CoolNumericStepper(x, y, step, val, min, max, 2);
+		if (onChange != null) sp.onChange = onChange;
+		sp.cameras = [camHUD]; sp.scrollFactor.set(); add(sp); _inspElements.push(sp); return sp;
+	}
+
+	function _iDropdown(x:Float, y:Float, w:Int, items:Array<String>, selected:String, ?onChange:String->Void):CoolDropDown
+	{
+		var dd = new CoolDropDown(x, y, CoolDropDown.makeStrIdLabelArray(items, true), onChange);
+		dd.selectedLabel = selected; dd.cameras = [camHUD]; dd.scrollFactor.set(); add(dd); _inspElements.push(dd); return dd;
+	}
+
+	function _iCheckbox(x:Float, y:Float, label:String, checked:Bool, ?onChange:Bool->Void):CoolCheckBox
+	{
+		var chk = new CoolCheckBox(x, y, null, null, label, 200);
+		chk.checked = checked;
+		if (onChange != null) chk.onChecked = onChange;
+		chk.cameras = [camHUD]; chk.scrollFactor.set(); add(chk); _inspElements.push(chk); return chk;
+	}
+
+	function _iBtn(x:Float, y:Float, label:String, col:Int, cb:Void->Void, ?w:Int = 120):PSEBtn
+	{
+		var btn = new PSEBtn(x, y, w, 22, label, col, C_TEXT, cb);
+		btn.cameras = [camHUD]; btn.scrollFactor.set(); btn.label.cameras = [camHUD]; btn.label.scrollFactor.set();
+		add(btn); add(btn.label); _inspElements.push(btn); _inspElements.push(btn.label); return btn;
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
 	//  Status Bar
 	// ─────────────────────────────────────────────────────────────────────────
-
-	function setupStatusBar():Void
+	function _buildStatusBar():Void
 	{
-		var sbY = SH - STATUS_H;
-		var sb  = new FlxSprite(0, sbY).makeGraphic(SW, STATUS_H, C_TOPBAR);
-		sb.scrollFactor.set(); sb.cameras = [camHUD]; add(sb);
-		var sbBorder = new FlxSprite(0, sbY).makeGraphic(SW, 1, C_BORDER);
-		sbBorder.scrollFactor.set(); sbBorder.cameras = [camHUD]; add(sbBorder);
-
-		statusTxt = new FlxText(8, sbY + 4, SW - 16, '', 10);
-		statusTxt.setFormat(Paths.font('vcr.ttf'), 10, C_SUBTEXT, LEFT);
-		statusTxt.scrollFactor.set(); statusTxt.cameras = [camHUD]; add(statusTxt);
-	}
-
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Timeline  (estilo ChartingState / imagen de referencia)
-	//
-	//  Layout vertical (de arriba abajo, TL_H total):
-	//   ┌─────────────────────────────────────────────────────────────────┐
-	//   │ RULER   (TL_RULER_H=22)  Bar:Beat markers + beat-grid lines     │
-	//   │ SCRUBBER (TL_SCRUB_H=32) Progress fill + waveform ticks         │
-	//   │ TRACKS  (TL_TRACK_H*N)   Label col | event diamonds per track   │
-	//   │ TRANSPORT (TL_TRANS_H=36) |< << ▶/⏸ >> >|  BPM  time remaining │
-	//   └─────────────────────────────────────────────────────────────────┘
-	// ─────────────────────────────────────────────────────────────────────────
-
-	// Extra sub-layout constants
-	// TL_RULER_H already declared above (= 24); use the canonical value.
-	static inline final TL_SCRUB_H  : Int = 32;
-	static inline final TL_TRACK_H2 : Int = 22;   // altura de cada pista en el nuevo layout
-	static inline final TL_TRANS_H  : Int = 36;
-	static inline final TL_HSCROLL_H_REAL : Int = 12; // scrollbar horizontal sobre el scrubber
-
-	// Additional UI elements for the new timeline
-	var tlScrubBg       : FlxSprite;       // fondo del scrubber
-	var tlScrubFill     : FlxSprite;       // relleno de progreso (se redimensiona cada frame)
-	var tlScrubHandle   : FlxSprite;       // círculo del playhead en el scrubber
-	var tlTransportBar  : FlxSprite;       // fondo del transport
-	var tlTimeLbl       : FlxText;         // "00:00" tiempo actual
-	var tlTimeRemLbl    : FlxText;         // "-01:21" tiempo restante
-	var tlBpmLbl        : FlxText;         // "Normal BPM: 100"
-	var tlBeatGridLines : Array<FlxSprite> = [];   // líneas verticales del beat en los tracks
-	var tlTransBtns     : Array<MiniBtn2>  = [];   // botones del transport
-
-	// Dragging scrubber
-	var _scrubDragging  : Bool  = false;
-
-	function setupTimeline():Void
-	{
-		timelineGroup = new FlxGroup();
-
-		var tlY       = _tlY();
-		var trackN    = TRACK_NAMES.length;
-		var tracksH   = trackN * TL_TRACK_H2;
-		var areaW     = _tlAreaW();
-
-		// ── Fondo general de la timeline ─────────────────────────────────────
-		tlBg = new FlxSprite(0, tlY).makeGraphic(SW, TL_H, C_TIMELINE);
-		tlBg.scrollFactor.set(); tlBg.cameras = [camHUD];
-		timelineGroup.add(tlBg); add(tlBg);
-
-		// Línea de separación superior (accent)
-		var topLine = new FlxSprite(0, tlY).makeGraphic(SW, 2, C_ACCENT);
-		topLine.scrollFactor.set(); topLine.cameras = [camHUD]; topLine.alpha = 0.5;
-		timelineGroup.add(topLine); add(topLine);
-
-		// ── Ruler (bar:beat) ─────────────────────────────────────────────────
-		var rulerBg = new FlxSprite(0, tlY).makeGraphic(SW, TL_RULER_H, C_RULER);
-		rulerBg.scrollFactor.set(); rulerBg.cameras = [camHUD];
-		timelineGroup.add(rulerBg); add(rulerBg);
-
-		// Separador bajo el ruler
-		var rulerSep = new FlxSprite(0, tlY + TL_RULER_H - 1).makeGraphic(SW, 1, C_BORDER);
-		rulerSep.scrollFactor.set(); rulerSep.cameras = [camHUD]; rulerSep.alpha = 0.5;
-		timelineGroup.add(rulerSep); add(rulerSep);
-
-		rulerTxt = new FlxTypedGroup<FlxText>();
-		for (i in 0...60)
-		{
-			var t = new FlxText(0, tlY + 4, 50, '', 9);
-			t.setFormat(Paths.font('vcr.ttf'), 9, C_SUBTEXT, CENTER);
-			t.scrollFactor.set(); t.cameras = [camHUD]; t.visible = false;
-			rulerTxt.add(t); add(t);
-		}
-
-		// Beat-grid lines (vertical, en el track area)
-		for (i in 0...60)
-		{
-			var gl = new FlxSprite(0, tlY + TL_RULER_H).makeGraphic(1, tracksH, 0xFF2A2A44);
-			gl.scrollFactor.set(); gl.cameras = [camHUD]; gl.visible = false;
-			tlBeatGridLines.push(gl);
-			timelineGroup.add(gl); add(gl);
-		}
-
-		// ── Track area ───────────────────────────────────────────────────────
-		var tracksY = tlY + TL_RULER_H;
-
-		// Columna de labels (lado izquierdo, fondo)
-		var labelColBg = new FlxSprite(0, tracksY).makeGraphic(TL_LABEL_W, tracksH, 0xFF111122);
-		labelColBg.scrollFactor.set(); labelColBg.cameras = [camHUD];
-		timelineGroup.add(labelColBg); add(labelColBg);
-
-		// Borde derecho de la columna de labels
-		var labelBorder = new FlxSprite(TL_LABEL_W - 1, tracksY).makeGraphic(1, tracksH, C_BORDER);
-		labelBorder.scrollFactor.set(); labelBorder.cameras = [camHUD]; labelBorder.alpha = 0.6;
-		timelineGroup.add(labelBorder); add(labelBorder);
-
-		for (i in 0...trackN)
-		{
-			var ty     = tracksY + i * TL_TRACK_H2;
-			var tColor = TRACK_COLORS[i];
-
-			// Fondo de la pista (área de eventos)
-			var trackBg = new FlxSprite(TL_LABEL_W, ty).makeGraphic(_tlAreaW(), TL_TRACK_H2, C_TIMELINE);
-			trackBg.scrollFactor.set(); trackBg.cameras = [camHUD]; trackBg.alpha = 0.7;
-			timelineGroup.add(trackBg); add(trackBg);
-			tlTrackBgs.push(trackBg);
-
-			// Separador inferior de la pista
-			var sep = new FlxSprite(0, ty + TL_TRACK_H2 - 1).makeGraphic(SW, 1, C_BORDER);
-			sep.scrollFactor.set(); sep.cameras = [camHUD]; sep.alpha = 0.25;
-			timelineGroup.add(sep); add(sep);
-
-			// Acento de color izquierdo (barra de 3px del color de la pista)
-			var accent = new FlxSprite(0, ty + 2).makeGraphic(3, TL_TRACK_H2 - 4, tColor);
-			accent.scrollFactor.set(); accent.cameras = [camHUD]; accent.alpha = 0.8;
-			timelineGroup.add(accent); add(accent);
-
-			// Icono circular de color de pista
-			var dot = new FlxSprite(7, ty + TL_TRACK_H2 / 2 - 4).makeGraphic(8, 8, tColor);
-			dot.scrollFactor.set(); dot.cameras = [camHUD];
-			timelineGroup.add(dot); add(dot);
-
-			// Label de la pista
-			var lbl = new FlxText(18, ty + 5, TL_LABEL_W - 22, TRACK_NAMES[i], 9);
-			lbl.setFormat(Paths.font('vcr.ttf'), 9, tColor, LEFT);
-			lbl.scrollFactor.set(); lbl.cameras = [camHUD];
-			timelineGroup.add(lbl); add(lbl);
-			tlTrackLabels.push(lbl);
-		}
-
-		// ── Scrollbar horizontal (para scrollear tlScrollX) ──────────────────
-		// Aparece justo encima del scrubber. Thumb proporcional al ratio visible/total.
-		var hsBg = new FlxSprite(TL_LABEL_W, tracksY + tracksH).makeGraphic(_tlAreaW(), TL_HSCROLL_H_REAL, 0xFF080814);
-		hsBg.scrollFactor.set(); hsBg.cameras = [camHUD]; hsBg.alpha = 0.9;
-		timelineGroup.add(hsBg); add(hsBg);
-		tlHScrollBg = hsBg;
-
-		var hsSepTop = new FlxSprite(0, tracksY + tracksH).makeGraphic(SW, 1, C_BORDER);
-		hsSepTop.scrollFactor.set(); hsSepTop.cameras = [camHUD]; hsSepTop.alpha = 0.4;
-		timelineGroup.add(hsSepTop); add(hsSepTop);
-
-		tlHScrollThumb = new FlxSprite(TL_LABEL_W, tracksY + tracksH + 2).makeGraphic(60, TL_HSCROLL_H_REAL - 4, C_ACCENT);
-		tlHScrollThumb.scrollFactor.set(); tlHScrollThumb.cameras = [camHUD]; tlHScrollThumb.alpha = 0.55;
-		timelineGroup.add(tlHScrollThumb); add(tlHScrollThumb);
-
-		// ── Scrubber / Progress bar ───────────────────────────────────────────
-		var scrubY = tlY + TL_RULER_H + tracksH + TL_HSCROLL_H_REAL; // +scrollbar
-
-		tlScrubBg = new FlxSprite(0, scrubY).makeGraphic(SW, TL_SCRUB_H, 0xFF0A0A1A);
-		tlScrubBg.scrollFactor.set(); tlScrubBg.cameras = [camHUD];
-		timelineGroup.add(tlScrubBg); add(tlScrubBg);
-
-		// Separador superior del scrubber
-		var scrubTopSep = new FlxSprite(0, scrubY).makeGraphic(SW, 1, C_BORDER);
-		scrubTopSep.scrollFactor.set(); scrubTopSep.cameras = [camHUD]; scrubTopSep.alpha = 0.5;
-		timelineGroup.add(scrubTopSep); add(scrubTopSep);
-
-		// Relleno de progreso (ancho se actualiza cada frame)
-		tlScrubFill = new FlxSprite(0, scrubY + 1).makeGraphic(1, TL_SCRUB_H - 2, 0xFF1A3A5A);
-		tlScrubFill.scrollFactor.set(); tlScrubFill.cameras = [camHUD];
-		timelineGroup.add(tlScrubFill); add(tlScrubFill);
-
-		// Tick lines de waveform simulada (estética)
-		var tickW = SW / 80;
-		for (i in 0...80)
-		{
-			var tickH = 4 + Std.int(Math.random() * (TL_SCRUB_H - 10));
-			var tickY = scrubY + (TL_SCRUB_H - tickH) / 2;
-			var tick  = new FlxSprite(i * tickW, tickY).makeGraphic(Std.int(tickW - 1), tickH, 0xFF1E3050);
-			tick.scrollFactor.set(); tick.cameras = [camHUD]; tick.alpha = 0.7;
-			timelineGroup.add(tick); add(tick);
-		}
-
-		// Handle del scrubber (círculo del playhead en el scrubber)
-		tlScrubHandle = new FlxSprite(0, scrubY + TL_SCRUB_H / 2 - 7).makeGraphic(4, 14, C_PLAYHEAD);
-		tlScrubHandle.scrollFactor.set(); tlScrubHandle.cameras = [camHUD];
-		timelineGroup.add(tlScrubHandle); add(tlScrubHandle);
-
-		// ── Transport Bar ─────────────────────────────────────────────────────
-		var transY = scrubY + TL_SCRUB_H;
-
-		tlTransportBar = new FlxSprite(0, transY).makeGraphic(SW, TL_TRANS_H, 0xFF0C0C1C);
-		tlTransportBar.scrollFactor.set(); tlTransportBar.cameras = [camHUD];
-		timelineGroup.add(tlTransportBar); add(tlTransportBar);
-
-		var transSep = new FlxSprite(0, transY).makeGraphic(SW, 1, C_BORDER);
-		transSep.scrollFactor.set(); transSep.cameras = [camHUD]; transSep.alpha = 0.6;
-		timelineGroup.add(transSep); add(transSep);
-
-		// Tiempo actual (izquierda)
-		tlTimeLbl = new FlxText(10, transY + 9, 80, '00:00', 13);
-		tlTimeLbl.setFormat(Paths.font('vcr.ttf'), 13, 0xFFCCCCDD, LEFT);
-		tlTimeLbl.scrollFactor.set(); tlTimeLbl.cameras = [camHUD];
-		timelineGroup.add(tlTimeLbl); add(tlTimeLbl);
-
-		// Separador vertical izquierdo del transport
-		var tSepL = new FlxSprite(90, transY + 6).makeGraphic(1, TL_TRANS_H - 12, C_BORDER);
-		tSepL.scrollFactor.set(); tSepL.cameras = [camHUD]; tSepL.alpha = 0.5;
-		timelineGroup.add(tSepL); add(tSepL);
-
-		// Botones de transport: |< << ▶/⏸ >> >|
-		var btnLabels  = ['|<', '<<', '▶', '>>', '>|'];
-		var btnActions : Array<Void->Void> = [
-			function() { autoSeekTime = 0; },
-			function() { autoSeekTime = Math.max(0, Conductor.songPosition - Conductor.crochet * 4); },
-			_onPlayPause,
-			function() { autoSeekTime = Math.min(songLength, Conductor.songPosition + Conductor.crochet * 4); },
-			function() { autoSeekTime = songLength > 0 ? songLength - 100 : 0; }
-		];
-		var btnColors = [C_PANEL, C_PANEL, 0xFF1A3A1A, C_PANEL, C_PANEL];
-		var centerX   = SW / 2 - 115.0;
-
-		for (i in 0...btnLabels.length)
-		{
-			var bw = (i == 2) ? 48 : 38;  // ▶ más ancho
-			var btn = new MiniBtn2(centerX, transY + 4, bw, TL_TRANS_H - 8, btnLabels[i],
-				btnColors[i], i == 2 ? 0xFF88FF88 : C_TEXT, btnActions[i]);
-			btn.scrollFactor.set(); btn.cameras = [camHUD];
-			tlTransBtns.push(btn);
-			timelineGroup.add(btn); add(btn); add(btn.label);
-			centerX += bw + 4;
-		}
-
-		// Separador vertical derecho del transport
-		var tSepR = new FlxSprite(SW - 290, transY + 6).makeGraphic(1, TL_TRANS_H - 12, C_BORDER);
-		tSepR.scrollFactor.set(); tSepR.cameras = [camHUD]; tSepR.alpha = 0.5;
-		timelineGroup.add(tSepR); add(tSepR);
-
-		// BPM label (derecha)
-		tlBpmLbl = new FlxText(SW - 285, transY + 5, 160, 'Normal BPM: ${Std.int(Conductor.bpm)}', 10);
-		tlBpmLbl.setFormat(Paths.font('vcr.ttf'), 10, C_TIMELINE, LEFT);
-		tlBpmLbl.scrollFactor.set(); tlBpmLbl.cameras = [camHUD];
-		timelineGroup.add(tlBpmLbl); add(tlBpmLbl);
-
-		// Tiempo restante (extremo derecho, rojo)
-		tlTimeRemLbl = new FlxText(SW - 120, transY + 5, 110, '-00:00', 13);
-		tlTimeRemLbl.setFormat(Paths.font('vcr.ttf'), 13, 0xFFFF4444, RIGHT);
-		tlTimeRemLbl.scrollFactor.set(); tlTimeRemLbl.cameras = [camHUD];
-		timelineGroup.add(tlTimeRemLbl); add(tlTimeRemLbl);
-
-		// Botones de zoom (en el ruler, esquina izquierda)
-		var zmOut = _makeTLBtn(TL_LABEL_W - 44, tlY + 3, '−', function() { tlZoom = Math.max(0.005, tlZoom * 0.65); rebuildTimelineRuler(); rebuildTimelineEventSprites(); });
-		var zmIn  = _makeTLBtn(TL_LABEL_W - 22, tlY + 3, '+', function() { tlZoom = Math.min(2.0,  tlZoom * 1.5); rebuildTimelineRuler();  rebuildTimelineEventSprites(); });
-		timelineGroup.add(zmOut); add(zmOut); add(zmOut.label);
-		timelineGroup.add(zmIn);  add(zmIn);  add(zmIn.label);
-
-		// ── Playhead ──────────────────────────────────────────────────────────
-		// Línea vertical roja que cruza ruler + tracks + scrubber
-		var phH = TL_RULER_H + tracksH + TL_SCRUB_H;
-		tlPlayhead = new FlxSprite(TL_LABEL_W, tlY).makeGraphic(2, phH, C_PLAYHEAD);
-		tlPlayhead.scrollFactor.set(); tlPlayhead.cameras = [camHUD]; tlPlayhead.alpha = 0.85;
-		timelineGroup.add(tlPlayhead); add(tlPlayhead);
-
-		// Triángulo en la cabeza del playhead (ruler)
-		tlPlayheadTop = new FlxSprite(TL_LABEL_W - 4, tlY).makeGraphic(10, TL_RULER_H, C_PLAYHEAD);
-		tlPlayheadTop.scrollFactor.set(); tlPlayheadTop.cameras = [camHUD]; tlPlayheadTop.alpha = 0.9;
-		timelineGroup.add(tlPlayheadTop); add(tlPlayheadTop);
-
-		rebuildTimelineRuler();
-		rebuildTimelineEventSprites();
-	}
-
-	function _makeTLBtn(x:Float, y:Float, label:String, cb:Void->Void):MiniBtn2
-	{
-		var btn = new MiniBtn2(x, y, 18, 16, label, 0xFF1A1A2E, C_TEXT, cb);
-		btn.scrollFactor.set(); btn.cameras = [camHUD];
-		btn.label.scrollFactor.set(); btn.label.cameras = [camHUD];
-		return btn;
-	}
-
-	function rebuildTimelineRuler():Void
-	{
-		if (rulerTxt == null) return;
-		for (t in rulerTxt.members) t.visible = false;
-		for (gl in tlBeatGridLines) gl.visible = false;
-
-		var tlY       = _tlY();
-		var areaW     = _tlAreaW();
-		var beatMs    = Conductor.crochet;
-		var startMs   = tlScrollX;
-		var endMs     = startMs + areaW / tlZoom;
-		var trackN    = TRACK_NAMES.length;
-		var tracksH   = trackN * TL_TRACK_H2;
-
-		var beat  = Math.floor(startMs / beatMs);
-		var rIdx  = 0;
-		var glIdx = 0;
-		var maxX  = SW - (rightPanelVisible ? RIGHT_W : 0);
-
-		while (beat * beatMs <= endMs
-			&& rIdx < rulerTxt.members.length
-			&& glIdx < tlBeatGridLines.length)
-		{
-			var xPos = TL_LABEL_W + (beat * beatMs - startMs) * tlZoom;
-			if (xPos >= TL_LABEL_W && xPos <= maxX)
-			{
-				var bar = Math.floor(beat / 4) + 1;
-				var b   = beat % 4;
-				var isBar = (b == 0);
-
-				// Ruler tick texto
-				var t = rulerTxt.members[rIdx];
-				t.text    = isBar ? '$bar' : '$bar.${b + 1}';
-				t.x       = xPos - 25;
-				t.y       = tlY + 4;
-				t.color   = isBar ? 0xFF000000 : C_SUBTEXT;
-				t.visible = true;
-				rIdx++;
-
-				// Beat tick vertical en el ruler
-				var tickH = isBar ? TL_RULER_H - 4 : TL_RULER_H / 2;
-				// (reusamos el sprite de gridLine si está visible, sino tomamos el siguiente)
-				var gl = tlBeatGridLines[glIdx];
-				gl.x       = xPos;
-				gl.y       = tlY + TL_RULER_H - tickH;
-				gl.makeGraphic(isBar ? 2 : 1, Std.int(tickH + tracksH), isBar ? 0xFF3A3A5A : 0xFF222240);
-				gl.alpha   = isBar ? 0.7 : 0.35;
-				gl.visible = true;
-				glIdx++;
-			}
-			beat++;
-		}
-	}
-
-	function rebuildTimelineEventSprites():Void
-	{
-		for (s in tlEventSprites)
-		{
-			remove(s);
-			if (s.labelTxt != null) { remove(s.labelTxt); s.labelTxt.destroy(); }
-			s.destroy();
-		}
-		tlEventSprites = [];
-
-		if (!timelineVisible || pseData == null) return;
-
-		var tlY      = _tlY();
-		var tracksY  = tlY + TL_RULER_H;
-		var areaW    = _tlAreaW();
-		var startMs  = tlScrollX;
-		var endMs    = startMs + areaW / tlZoom;
-
-		for (evt in (pseData.events ?? []))
-		{
-			if (!_isEventForDiff(evt, currentDiff)) continue;
-
-			var evtMs  = Conductor.stepCrochet * evt.stepTime;
-			if (evtMs < startMs - 60 || evtMs > endMs + 60) continue;
-
-			var xPos   = TL_LABEL_W + (evtMs - startMs) * tlZoom;
-			var trackI = Std.int(Math.min(evt.trackIndex, TRACK_NAMES.length - 1));
-			var yPos   = tracksY + trackI * TL_TRACK_H2 + 2;
-			var isSel  = (evt.id == selectedEventId);
-
-			var spr = new TLEventSprite(xPos - 2, yPos, TL_TRACK_H2 - 4, TRACK_COLORS[trackI], evt.id, isSel);
-			spr.scrollFactor.set(); spr.cameras = [camHUD];
-			tlEventSprites.push(spr);
-			add(spr);
-
-			// Label del evento
-			var lbl = new FlxText(xPos + 10, yPos + 2, 90, (evt.label != null && evt.label != '') ? evt.label : evt.type, 8);
-			lbl.setFormat(Paths.font('vcr.ttf'), 8, isSel ? FlxColor.WHITE : 0xFFCCCCCC, LEFT);
-			lbl.scrollFactor.set(); lbl.cameras = [camHUD];
-			spr.labelTxt = lbl;
-			add(lbl);
-		}
-	}
-
-	function _updateTimelinePlayhead():Void
-	{
-		if (!timelineVisible) return;
-
-		var tlY       = _tlY();
-		var posMs     = Conductor.songPosition;
-		var areaW     = _tlAreaW();
-		var trackN    = TRACK_NAMES.length;
-		var tracksH   = trackN * TL_TRACK_H2;
-
-		// Auto-scroll en modo play
-		if (isPlaying && !_scrubDragging && !_tlHScrollDrag)
-		{
-			var xPosRel = (posMs - tlScrollX) * tlZoom;
-			if (xPosRel > areaW * 0.82) tlScrollX = posMs - areaW * 0.25 / tlZoom;
-			if (xPosRel < 0)            tlScrollX = posMs;
-			if (tlScrollX < 0)          tlScrollX = 0;
-		}
-
-		var xPos = TL_LABEL_W + (posMs - tlScrollX) * tlZoom;
-
-		// Playhead vertical
-		if (tlPlayhead    != null) { tlPlayhead.x    = xPos;      tlPlayhead.y    = tlY; }
-		if (tlPlayheadTop != null) { tlPlayheadTop.x = xPos - 4;  tlPlayheadTop.y = tlY; }
-
-		// ── Horizontal scrollbar thumb ─────────────────────────────────────────
-		if (tlHScrollThumb != null && songLength > 0)
-		{
-			var hsY      = tlY + TL_RULER_H + tracksH + 2;
-			var hsW      = _tlAreaW();
-			var totalMs  = songLength;
-			// Ancho del thumb proporcional a la ventana visible
-			var visibleMs   = areaW / tlZoom;
-			var thumbRatio  = Math.min(1.0, visibleMs / totalMs);
-			var thumbW      = Std.int(Math.max(20, hsW * thumbRatio));
-			// Posición del thumb
-			var scrollRatio = tlScrollX / Math.max(1, totalMs - visibleMs);
-			var thumbX      = TL_LABEL_W + Std.int((hsW - thumbW) * FlxMath.bound(scrollRatio, 0, 1));
-			tlHScrollThumb.x = thumbX;
-			tlHScrollThumb.y = hsY;
-			tlHScrollThumb.makeGraphic(thumbW, TL_HSCROLL_H_REAL - 4, C_ACCENT);
-		}
-
-		// ── Scrubber progress fill + handle ───────────────────────────────────
-		var scrubY = tlY + TL_RULER_H + tracksH + TL_HSCROLL_H_REAL;
-		if (tlScrubFill != null && songLength > 0)
-		{
-			var fillW = Std.int(Math.max(1, (posMs / songLength) * SW));
-			tlScrubFill.makeGraphic(fillW, TL_SCRUB_H - 2, 0xFF1A3A5A);
-			tlScrubFill.y = scrubY + 1;
-		}
-		if (tlScrubHandle != null && songLength > 0)
-		{
-			var hx = (posMs / songLength) * SW - 2;
-			tlScrubHandle.x = hx;
-			tlScrubHandle.y = scrubY + TL_SCRUB_H / 2 - 7;
-		}
-
-		// Actualizar tiempo en el transport bar
-		if (tlTimeLbl != null)
-			tlTimeLbl.text = _fmtTime(posMs);
-		if (tlTimeRemLbl != null && songLength > 0)
-			tlTimeRemLbl.text = '-' + _fmtTime(songLength - posMs);
-		if (tlBpmLbl != null)
-			tlBpmLbl.text = 'Normal BPM: ${Std.int(Conductor.bpm)}';
-
-		// Botón play ▶/⏸ (índice 2)
-		if (tlTransBtns.length > 2 && tlTransBtns[2] != null)
-		{
-			tlTransBtns[2].label.text = isPlaying ? '⏸' : '▶';
-			tlTransBtns[2].label.color = isPlaying ? 0xFFFFAA00 : 0xFF88FF88;
-		}
-	}
-
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Right Panel (CoolTabMenu)
-	// ─────────────────────────────────────────────────────────────────────────
-
-	function setupRightPanel():Void
-	{
-		var panelX = SW - RIGHT_W;
-		var panelH = SH - TOP_H - STATUS_H - (timelineVisible ? TL_H : 0);
-
-		panelBg = new FlxSprite(panelX, TOP_H).makeGraphic(RIGHT_W, panelH, C_PANEL);
-		panelBg.scrollFactor.set(); panelBg.cameras = [camHUD]; add(panelBg);
-
-		var borderLine = new FlxSprite(panelX, TOP_H).makeGraphic(2, panelH, C_ACCENT);
-		borderLine.scrollFactor.set(); borderLine.cameras = [camHUD]; borderLine.alpha = 0.35; add(borderLine);
-
-		var tabs = [
-			{name:'Events',  label:'Events'},
-			{name:'Scripts', label:'Scripts'},
-			{name:'Song',    label:'Song'},
-		];
-
-		rightPanel = new CoolTabMenu(null, tabs, true);
-		rightPanel.resize(RIGHT_W - 2, panelH);
-		rightPanel.x = panelX + 2;
-		rightPanel.y = TOP_H;
-		rightPanel.scrollFactor.set();
-		rightPanel.cameras = [camHUD];
-		add(rightPanel);
-
-		_buildEventsTab();
-		_buildScriptsTab();
-		_buildSongTab();
-	}
-
-	// ── Events Tab ────────────────────────────────────────────────────────────
-
-	function _buildEventsTab():Void
-	{
-		var tab = new coolui.CoolUIGroup();
-		tab.name = 'Events';
-
-		var y = 6.0;
-
-		function lbl(t:String, ly:Float):FlxText
-		{
-			var tx = new FlxText(6, ly, 0, t, 10);
-			tx.color = C_TIMELINE; tab.add(tx); return tx;
-		}
-		function sep(sy:Float):FlxSprite
-		{
-			var s = new FlxSprite(4, sy).makeGraphic(RIGHT_W - 16, 1, C_BORDER);
-			s.alpha = 0.3; tab.add(s); return s;
-		}
-
-		lbl('Event Type:', y);
-		var eventTypeList = _getEventTypeList();
-		evtTypeDropdown = new CoolDropDown(6, y + 13, CoolDropDown.makeStrIdLabelArray(eventTypeList, true),
-			function(id:String) { _onEventTypeSelected(id); });
-		evtTypeDropdown.selectedLabel = eventTypeList.length > 0 ? eventTypeList[0] : 'Camera Follow';
-		tab.add(evtTypeDropdown); y += 40;
-
-		lbl('Value (v1|v2):', y);
-		evtValueInput = new CoolInputText(6, y + 13, RIGHT_W - 20, '', 10);
-		tab.add(evtValueInput); y += 38;
-
-		lbl('Step Time:', y);
-		evtStepStepper = new CoolNumericStepper(6, y + 13, 1, 0, 0, 9999, 0);
-		tab.add(evtStepStepper);
-
-		// Botón "At Playhead" — establece el step al tiempo actual
-		var atPlayheadBtn = _makeTabBtn(RIGHT_W / 2 + 4, y + 12, '⏱ NOW', 0xFF223344, function()
-		{
-			var step = Conductor.songPosition / Conductor.stepCrochet;
-			if (evtStepStepper != null) evtStepStepper.value = step;
-			showStatus('Step → ${Std.int(step)} (${_fmtTime(Conductor.songPosition)})');
-		});
-		step_nowBtn = atPlayheadBtn;
-		tab.add(atPlayheadBtn); tab.add(atPlayheadBtn.label);
-		add(atPlayheadBtn); add(atPlayheadBtn.label);
-		y += 36;
-
-		lbl('Track (0-5):', y);
-		evtTrackStepper = new CoolNumericStepper(6, y + 13, 1, 0, 0, TRACK_NAMES.length - 1, 0);
-		tab.add(evtTrackStepper); y += 36;
-
-		lbl('Label (opcional):', y);
-		evtLabelInput = new CoolInputText(6, y + 13, RIGHT_W - 20, '', 10);
-		tab.add(evtLabelInput); y += 36;
-
-		// ── Tween Builder (visible solo cuando tipo = "Tween") ────────────────
-		var tweenSep = sep(y); y += 6;
-		var tweenHdr = lbl('Tween Builder:', y); y += 14;
-
-		lbl('Target:', y);
-		_tweenTargetInput = new CoolInputText(6, y + 13, Std.int(RIGHT_W - 20), 'camGame', 10);
-		tab.add(_tweenTargetInput); y += 36;
-
-		lbl('Property:', y);
-		_tweenPropInput = new CoolInputText(6, y + 13, Std.int(RIGHT_W / 2 - 10), 'zoom', 10);
-		tab.add(_tweenPropInput);
-		lbl('Duration:', y);
-		_tweenDurInput = new CoolInputText(Std.int(RIGHT_W / 2 + 2), y + 13, Std.int(RIGHT_W / 2 - 10), '1.0', 10);
-		tab.add(_tweenDurInput); y += 36;
-
-		lbl('From:', y);
-		_tweenFromInput = new CoolInputText(6, y + 13, Std.int(RIGHT_W / 2 - 10), '', 10);
-		tab.add(_tweenFromInput);
-		lbl('To:', y);
-		_tweenToInput = new CoolInputText(Std.int(RIGHT_W / 2 + 2), y + 13, Std.int(RIGHT_W / 2 - 10), '1.2', 10);
-		tab.add(_tweenToInput); y += 36;
-
-		lbl('Ease:', y);
-		final easeNames = ['linear','quadIn','quadOut','quadInOut','cubeIn','cubeOut','cubeInOut',
-		                   'elasticIn','elasticOut','bounceIn','bounceOut','sineIn','sineOut','sineInOut'];
-		_tweenEaseDropdown = new CoolDropDown(6, y + 13, CoolDropDown.makeStrIdLabelArray(easeNames, true), null);
-		_tweenEaseDropdown.selectedLabel = 'linear';
-		tab.add(_tweenEaseDropdown); y += 40;
-
-		// Botón que genera el value compuesto para el tween
-		var buildTweenBtn = _makeTabBtn(6, y, '⚙ BUILD TWEEN VALUE', 0xFF1A2244, _buildTweenValue);
-		tab.add(buildTweenBtn); tab.add(buildTweenBtn.label);
-		add(buildTweenBtn); add(buildTweenBtn.label);
-		y += 30;
-
-		// Guardar refs a los elementos del tween builder para mostrar/ocultar
-		_tweenBuilderGroup = [tweenSep, tweenHdr, _tweenTargetInput, _tweenPropInput,
-		                      _tweenDurInput, _tweenFromInput, _tweenToInput, _tweenEaseDropdown,
-		                      buildTweenBtn, buildTweenBtn.label];
-		_setTweenBuilderVisible(false);
-
-		sep(y); y += 8;
-		lbl('Dificultades:', y); y += 14;
-
-		evtDiffChecks = [];
-		var dx = 6.0;
-		// Usar las dificultades reales de la canción + opción 'all'
-		final diffOptions = allDiffs.concat(['*']);
-		for (diff in diffOptions)
-		{
-			var chk = new CoolCheckBox(dx, y, null, null, diff == '*' ? 'all' : diff, 60);
-			chk.checked = (diff == '*');
-			tab.add(chk); evtDiffChecks.push(chk);
-			dx += 68; if (dx > RIGHT_W - 70) { dx = 6; y += 22; }
-		}
-		y += 28;
-
-		sep(y); y += 6;
-
-		// Botones añadir / eliminar — añadidos AL TAB (visibilidad controlada por CoolTabMenu)
-		// y también al estado raíz para que se dibujen en camHUD.
-		evtAddBtn    = _makeTabBtn(6,         y, 'ADD',    0xFF224422, _onAddEvent);
-		evtDeleteBtn = _makeTabBtn(RIGHT_W/2, y, 'DELETE', 0xFF441122, _onDeleteEvent);
-		tab.add(evtAddBtn); tab.add(evtAddBtn.label);
-		tab.add(evtDeleteBtn); tab.add(evtDeleteBtn.label);
-		add(evtAddBtn); add(evtAddBtn.label);
-		add(evtDeleteBtn); add(evtDeleteBtn.label);
-		y += 32;
-
-		sep(y); y += 6;
-
-		// Lista de eventos
-		lbl('Events [' + currentDiff + ']:', y); y += 14;
-		evtListTxt = new FlxText(6, y, RIGHT_W - 12, '', 9);
-		evtListTxt.setFormat(Paths.font('vcr.ttf'), 9, C_TEXT, LEFT);
-		evtListTxt.wordWrap = false;
-		tab.add(evtListTxt);
-
-		rightPanel.addGroup(tab);
-		_refreshEventList();
-	}
-
-	function _makeTabBtn(x:Float, y:Float, label:String, color:Int, cb:Void->Void):MiniBtn2
-	{
-		var btn = new MiniBtn2(x, y, Std.int(RIGHT_W / 2 - 8), 24, label, color, C_TEXT, cb);
-		btn.scrollFactor.set(); btn.cameras = [camHUD];
-		btn.label.scrollFactor.set(); btn.label.cameras = [camHUD];
-		return btn;
-	}
-
-	function _getEventTypeList():Array<String>
-	{
-		EventInfoSystem.reload();
-		var list = EventInfoSystem.eventList.copy();
-		if (list.length == 0)
-			list = ['Camera Follow','Camera Focus','Camera Zoom','BPM Change','Play Animation','Hey!','Screen Shake','Camera Flash','Change Character'];
-		return list;
-	}
-
-	function _refreshEventList():Void
-	{
-		if (evtListTxt == null) return;
-		var filtered = (pseData.events ?? []).filter(e -> _isEventForDiff(e, currentDiff));
-		filtered.sort((a,b) -> Std.int(a.stepTime - b.stepTime));
-
-		var lines = [];
-		var start = evtListScroll;
-		var end   = Std.int(Math.min(start + 14, filtered.length));
-		for (i in start...end)
-		{
-			var e    = filtered[i];
-			var sel  = (e.id == selectedEventId) ? '►' : ' ';
-			var bar  = Math.floor(e.stepTime / 16) + 1;
-			var beat = Std.int(e.stepTime % 16);
-			var val  = (e.value != null && e.value != '') ? ' = ${e.value}' : '';
-			var lbl  = (e.label != null && e.label != '') ? ' [${e.label}]' : '';
-			lines.push('$sel $bar:$beat  ${e.type}$val$lbl');
-		}
-		if (filtered.length == 0) lines.push('(no events for $currentDiff)');
-		else if (filtered.length > 14) lines.push('... ${filtered.length - end} more (↑↓)');
-		evtListTxt.text = lines.join('\n');
-	}
-
-	// ── Scripts Tab ───────────────────────────────────────────────────────────
-
-	function _buildScriptsTab():Void
-	{
-		var tab = new coolui.CoolUIGroup();
-		tab.name = 'Scripts';
-
-		var y = 6.0;
-
-		function lbl(t:String, ly:Float):FlxText
-		{
-			var tx = new FlxText(6, ly, 0, t, 10);
-			tx.color = C_TIMELINE; tab.add(tx); return tx;
-		}
-		function sep(sy:Float):FlxSprite
-		{
-			var s = new FlxSprite(4, sy).makeGraphic(RIGHT_W - 16, 1, C_BORDER);
-			s.alpha = 0.3; tab.add(s); return s;
-		}
-
-		lbl('Script Name:', y);
-		scrNameInput = new CoolInputText(6, y + 13, RIGHT_W - 20, 'myScript', 10);
-		tab.add(scrNameInput); y += 38;
-
-		lbl('Trigger Step (-1 = manual):', y);
-		scrStepStepper = new CoolNumericStepper(6, y + 13, 1, -1, -1, 9999, 0);
-		tab.add(scrStepStepper); y += 36;
-
-		scrAutoCheck    = new CoolCheckBox(6, y, null, null, 'Auto-trigger on step', RIGHT_W - 20);
-		scrAutoCheck.checked = false; tab.add(scrAutoCheck); y += 22;
-		scrEnabledCheck = new CoolCheckBox(6, y, null, null, 'Enabled', 80);
-		scrEnabledCheck.checked = true; tab.add(scrEnabledCheck); y += 28;
-
-		sep(y); y += 6;
-		lbl('Dificultades:', y); y += 14;
-
-		scrDiffChecks = [];
-		var dx = 6.0;
-		final diffOptions = allDiffs.concat(['*']);
-		for (diff in diffOptions)
-		{
-			var chk = new CoolCheckBox(dx, y, null, null, diff == '*' ? 'all' : diff, 60);
-			chk.checked = (diff == '*');
-			tab.add(chk); scrDiffChecks.push(chk);
-			dx += 68; if (dx > RIGHT_W - 70) { dx = 6; y += 22; }
-		}
-		y += 28;
-
-		sep(y); y += 6;
-		lbl('Script Code (HScript):', y); y += 14;
-
-		scrCodeInput = new CoolInputText(6, y, RIGHT_W - 20, '// Your script here\n// Available: game, boyfriend, dad, gf, stage, camGame, camHUD\n\nfunction onBeatHit(beat) {\n\t// called on beat\n}', 9);
-		scrCodeInput.lines = 14;
-		tab.add(scrCodeInput); y += 145;
-
-		sep(y); y += 6;
-
-		// Botones
-		scrAddBtn    = _makeTabBtn(6,           y, 'ADD / UPDATE', 0xFF224422, _onAddScript);
-		scrDeleteBtn = _makeTabBtn(RIGHT_W/2,   y, 'DELETE',       0xFF441122, _onDeleteScript);
-		tab.add(scrAddBtn); tab.add(scrAddBtn.label);
-		tab.add(scrDeleteBtn); tab.add(scrDeleteBtn.label);
-		add(scrAddBtn); add(scrAddBtn.label);
-		add(scrDeleteBtn); add(scrDeleteBtn.label);
-		y += 30;
-
-		scrRunBtn = _makeTabBtn(6, y, '▶ TEST NOW', 0xFF223344, _onRunScript);
-		tab.add(scrRunBtn); tab.add(scrRunBtn.label);
-		add(scrRunBtn); add(scrRunBtn.label);
-		y += 30;
-
-		sep(y); y += 6;
-		lbl('Scripts [' + currentDiff + ']:', y); y += 14;
-		scrListTxt = new FlxText(6, y, RIGHT_W - 12, '', 9);
-		scrListTxt.setFormat(Paths.font('vcr.ttf'), 9, C_TEXT, LEFT);
-		tab.add(scrListTxt);
-		y += 110;
-
-		sep(y); y += 6;
-		// Botón para abrir el ScriptEditorSubState completo
-		var openScriptEditorBtn = _makeTabBtn(6, y, '📝 OPEN FULL EDITOR', 0xFF1A1A40, function()
-		{
-			var scriptName = selectedScriptId != '' ? _getSelectedScriptName() : (scrNameInput != null ? scrNameInput.text.trim() : 'new_script');
-			openSubState(new ScriptEditorSubState(PlayState.SONG, scriptName, camHUD));
-		});
-		tab.add(openScriptEditorBtn); tab.add(openScriptEditorBtn.label);
-		add(openScriptEditorBtn); add(openScriptEditorBtn.label);
-
-		rightPanel.addGroup(tab);
-		_refreshScriptList();
-	}
-
-	function _refreshScriptList():Void
-	{
-		if (scrListTxt == null) return;
-		var filtered = (pseData.scripts ?? []).filter(s -> _isScriptForDiff(s, currentDiff));
-		var lines = [];
-		var start = scrListScroll;
-		var end   = Std.int(Math.min(start + 8, filtered.length));
-		for (i in start...end)
-		{
-			var s   = filtered[i];
-			var sel = (s.id == selectedScriptId) ? '► ' : '  ';
-			var en  = s.enabled ? '✓' : '✗';
-			lines.push('$sel$en ${s.name} @${s.triggerStep < 0 ? "manual" : Std.string(Std.int(s.triggerStep))}');
-		}
-		if (filtered.length == 0) lines.push('(no scripts for $currentDiff)');
-		scrListTxt.text = lines.join('\n');
-	}
-
-	// ── Song Tab ──────────────────────────────────────────────────────────────
-
-	function _buildSongTab():Void
-	{
-		var tab = new coolui.CoolUIGroup();
-		tab.name = 'Song';
-
-		var SONG = PlayState.SONG;
-		var y    = 8.0;
-
-		function lbl(label:String, ly:Float):Void
-		{
-			var lTxt = new FlxText(6, ly, RIGHT_W - 12, label + ':', 9);
-			lTxt.color = C_SUBTEXT; tab.add(lTxt);
-		}
-		function info(label:String, value:String, ly:Float):Void
-		{
-			lbl(label, ly);
-			var vTxt = new FlxText(6, ly + 12, RIGHT_W - 12, value, 10);
-			vTxt.color = C_TEXT; tab.add(vTxt);
-		}
-		function sep(sy:Float):FlxSprite
-		{
-			var s = new FlxSprite(4, sy).makeGraphic(RIGHT_W - 16, 1, C_BORDER);
-			s.alpha = 0.3; tab.add(s); return s;
-		}
-
-		// ── Info básica ───────────────────────────────────────────────────────
-		info('Song',    currentSong, y);      y += 28;
-		info('Stage',   SONG.stage ?? '?', y); y += 28;
-
-		sep(y); y += 8;
-
-		// ── BPM live edit ─────────────────────────────────────────────────────
-		lbl('BPM (live)', y); y += 13;
-		var bpmStepper = new CoolNumericStepper(6, y, 1, SONG.bpm, 40, 400, 1);
-		tab.add(bpmStepper); y += 28;
-		var applyBpmBtn = new MiniBtn2(6, y, RIGHT_W - 20, 22, 'APPLY BPM', 0xFF1A2A3A, C_TEXT, function()
-		{
-			SONG.bpm = Std.int(bpmStepper.value);
-			Conductor.changeBPM(SONG.bpm);
-			hasUnsaved = true; _updateUnsavedDot();
-			rebuildTimelineRuler();
-			showStatus('BPM → ${SONG.bpm}');
-		});
-		applyBpmBtn.scrollFactor.set(); applyBpmBtn.cameras = [camHUD];
-		applyBpmBtn.label.scrollFactor.set(); applyBpmBtn.label.cameras = [camHUD];
-		tab.add(applyBpmBtn); add(applyBpmBtn); add(applyBpmBtn.label); y += 28;
-
-		// ── Speed live edit ───────────────────────────────────────────────────
-		lbl('Speed (scroll speed)', y); y += 13;
-		var speedStepper = new CoolNumericStepper(6, y, 0.1, SONG.speed, 0.1, 10.0, 1);
-		tab.add(speedStepper); y += 28;
-		var applySpeedBtn = new MiniBtn2(6, y, RIGHT_W - 20, 22, 'APPLY SPEED', 0xFF1A2A3A, C_TEXT, function()
-		{
-			SONG.speed = speedStepper.value;
-			hasUnsaved = true; _updateUnsavedDot();
-			showStatus('Speed → ${SONG.speed}');
-		});
-		applySpeedBtn.scrollFactor.set(); applySpeedBtn.cameras = [camHUD];
-		applySpeedBtn.label.scrollFactor.set(); applySpeedBtn.label.cameras = [camHUD];
-		tab.add(applySpeedBtn); add(applySpeedBtn); add(applySpeedBtn.label); y += 28;
-
-		sep(y); y += 8;
-
-		// ── Note skin ─────────────────────────────────────────────────────────
-		lbl('Note Skin (live)', y); y += 13;
-		var skins = _getAvailableNoteSkins();
-		noteSkinDropdown = new CoolDropDown(6, y, CoolDropDown.makeStrIdLabelArray(skins, true),
-			function(id:String) {
-				var i = Std.parseInt(id);
-				if (i != null && i >= 0 && i < skins.length) _applyNoteSkin(skins[i]);
-			});
-		noteSkinDropdown.selectedLabel = (Reflect.hasField(SONG, 'noteSkin') ? Reflect.field(SONG, 'noteSkin') : null) ?? 'default';
-		noteSkinDropdown.scrollFactor.set(); noteSkinDropdown.cameras = [camHUD];
-		tab.add(noteSkinDropdown); y += 32;
-
-		sep(y); y += 8;
-
-		// ── Personajes ────────────────────────────────────────────────────────
-		info('Player1', SONG.player1 ?? 'bf', y); y += 24;
-		info('Player2', SONG.player2 ?? 'dad', y); y += 24;
-		info('GF',      SONG.gfVersion ?? 'gf', y); y += 24;
-
-		var charCount = SONG.characters != null ? SONG.characters.length : 0;
-		info('Characters', '$charCount slots', y); y += 24;
-
-		if (SONG.characters != null)
-		{
-			for (ch in SONG.characters)
-			{
-				var vLine = _perCharVocals && (vocalsMap.exists(ch.name) || vocalsMap.exists(_charVocalAlias(ch.name)));
-				var icon  = vLine ? '🎤' : '🔇';
-				var t = new FlxText(6, y, RIGHT_W - 12, '$icon ${ch.name} (${ch.type ?? "?"})', 9);
-				t.color = vLine ? C_ACCENT : C_TEXT; tab.add(t); y += 14;
-			}
-		}
-
-		sep(y); y += 8;
-
-		// ── Drag personajes ────────────────────────────────────────────────────
-		var toggleCharBtn = new MiniBtn2(6, y, RIGHT_W - 20, 22, '🎭 DRAG CHARS (C)', 0xFF1A2A1A, C_TEXT, function()
-		{
-			_showCharHandles = !_showCharHandles;
-			showStatus(_showCharHandles ? '🎭 Char drag ON' : '🎭 Char drag OFF', 2.0);
-		});
-		toggleCharBtn.scrollFactor.set(); toggleCharBtn.cameras = [camHUD];
-		toggleCharBtn.label.scrollFactor.set(); toggleCharBtn.label.cameras = [camHUD];
-		tab.add(toggleCharBtn); add(toggleCharBtn); add(toggleCharBtn.label); y += 28;
-
-		sep(y); y += 8;
-
-		// ── Botones de acción ─────────────────────────────────────────────────
-		var saveInfoBtn = new MiniBtn2(6, y, RIGHT_W - 20, 24, 'SAVE PSE DATA (F5)', 0xFF224422, C_TEXT, savePSEData);
-		saveInfoBtn.scrollFactor.set(); saveInfoBtn.cameras = [camHUD];
-		saveInfoBtn.label.scrollFactor.set(); saveInfoBtn.label.cameras = [camHUD];
-		tab.add(saveInfoBtn); add(saveInfoBtn); add(saveInfoBtn.label);
-		y += 30;
-
-		var importSecBtn = new MiniBtn2(6, y, RIGHT_W - 20, 24, 'IMPORT CAM SECTIONS', 0xFF1A2244, C_TEXT, function()
-		{
-			_importSectionCameraEvents();
-			showStatus('✓ Secciones mustHitSection importadas como eventos');
-			rebuildTimelineEventSprites();
-		});
-		importSecBtn.scrollFactor.set(); importSecBtn.cameras = [camHUD];
-		importSecBtn.label.scrollFactor.set(); importSecBtn.label.cameras = [camHUD];
-		tab.add(importSecBtn); add(importSecBtn); add(importSecBtn.label);
-
-		rightPanel.addGroup(tab);
+		var sy = SH - STATUS_H;
+		statusBg = new FlxSprite(0, sy).makeGraphic(SW, STATUS_H, C_MENU);
+		statusBg.cameras = [camHUD]; statusBg.scrollFactor.set(); add(statusBg);
+		var stSep = new FlxSprite(0, sy).makeGraphic(SW, 1, C_BORDER);
+		stSep.cameras = [camHUD]; stSep.scrollFactor.set(); stSep.alpha = 0.5; add(stSep);
+
+		statusTxt = new FlxText(8, sy + 4, SW / 2, '', 9);
+		statusTxt.setFormat(Paths.font('vcr.ttf'), 9, C_SUBTEXT, LEFT);
+		statusTxt.cameras = [camHUD]; statusTxt.scrollFactor.set(); add(statusTxt);
+
+		cursorInfoTxt = new FlxText(SW / 2, sy + 4, SW / 2 - 8, '', 9);
+		cursorInfoTxt.setFormat(Paths.font('vcr.ttf'), 9, C_SUBTEXT, RIGHT);
+		cursorInfoTxt.cameras = [camHUD]; cursorInfoTxt.scrollFactor.set(); add(cursorInfoTxt);
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
 	//  Update
 	// ─────────────────────────────────────────────────────────────────────────
-
 	override public function update(elapsed:Float):Void
 	{
 		super.update(elapsed);
 
-		// Seek diferido
-		if (autoSeekTime >= 0)
-		{
-			_doSeek(autoSeekTime);
-			autoSeekTime = -1;
-		}
+		if (autoSeekTime >= 0) { _doSeek(autoSeekTime); autoSeekTime = -1; }
 
-		// Sincronizar conductor con audio — sincronización directa con el tiempo del audio
+		// Sync conductor
 		if (isPlaying && FlxG.sound.music != null && FlxG.sound.music.playing)
 		{
-			var musicTime = FlxG.sound.music.time;
+			var mt = FlxG.sound.music.time;
+			Conductor.songPosition = (mt < Conductor.songPosition - 120 && mt > 0)
+				? Conductor.songPosition + FlxG.elapsed * 1000 : mt;
 
-			// Suavizar: si el audio retrocede ligeramente por jitter del backend, avanzar por elapsed
-			if (musicTime < Conductor.songPosition - 100 && musicTime > 0)
-				Conductor.songPosition += FlxG.elapsed * 1000.0;
-			else
-				Conductor.songPosition = musicTime;
-
-			// Beat / Step hits
 			var curBeat = Math.floor(Conductor.songPosition / Conductor.crochet);
 			var curStep = Math.floor(Conductor.songPosition / Conductor.stepCrochet);
+			if (curStep != _lastStep) { _lastStep = curStep; _onStepHit(curStep); }
+			if (curBeat != _lastBeat) { _lastBeat = curBeat; _onBeatHit(curBeat); }
 
-			if (curStep != _lastStep)
-			{
-				_lastStep = curStep;
-				_onStepHit(curStep);
-			}
-			if (curBeat != _lastBeat)
-			{
-				_lastBeat = curBeat;
-				_onBeatHit(curBeat);
-			}
-
-			// Disparar eventos del editor
 			_fireEditorEvents();
 		}
 
-		// Controllers
-		if (cameraController != null)
-			cameraController.update(elapsed);
-		if (characterController != null)
-			characterController.update(elapsed);
+		if (cameraController  != null) cameraController.update(elapsed);
+		if (characterController != null) characterController.update(elapsed);
 
-		// Timeline
-		_updateTimelinePlayhead();
-		if (FlxG.mouse.justReleased) rebuildTimelineRuler();
+		_updatePlayhead();
+		_handleTimelineInput();
+		_handleEventInteraction();
+		_handleFreeCam(elapsed);
+		_updateTimeDisplay();
+		_updateCursorInfo();
 
-		// Seek por click en la timeline
-		if (timelineVisible) _handleTimelineInput();
+		if (_statusTimer > 0) { _statusTimer -= elapsed; if (_statusTimer <= 0) statusTxt.text = ''; }
 
-		// ── Viewport flotante ─────────────────────────────────────────────────
-		_handleGameViewport();
-
-		// ── Arrastre de personajes ────────────────────────────────────────────
-		_handleCharDrag();
-		_updateCharHandles();
-
-		// Clicks en event sprites
-		_handleEventSpriteClicks();
-
-		// Tiempo
-		_updateTimeTxt();
-
-		// Status timeout
-		if (_statusTimer > 0)
+		// Menu dropdowns close on click outside
+		if (FlxG.mouse.justPressed && _menuDropdowns.length > 0)
 		{
-			_statusTimer -= elapsed;
-			if (_statusTimer <= 0) statusTxt.text = '';
+			var overAny = false;
+			for (dd in _menuDropdowns) if (FlxG.mouse.overlaps(dd, camHUD)) { overAny = true; break; }
+			for (mb in menuItems) if (FlxG.mouse.overlaps(mb, camHUD)) { overAny = true; break; }
+			if (!overAny) _closeMenuDropdowns();
 		}
 
-		// Botones top bar
-		for (btn in [playBtn, stopBtn, restartBtn, saveBtn, toggleTLBtn, togglePanelBtn, layoutPresetBtn])
-			if (btn != null) btn.updateInput();
+		// Menu button hover update
+		for (mb in menuItems) mb.updateInput();
 
-		// Botones del transport (timeline)
-		for (btn in tlTransBtns)
-			if (btn != null) btn.updateInput();
+		// Context menu
+		if (_ctxMenu != null) { _ctxMenu.updateInput(); if (_ctxMenu.closed) { remove(_ctxMenu); _ctxMenu.destroy(); _ctxMenu = null; } }
 
-		// Teclado
 		_handleKeys();
 	}
 
 	function _onBeatHit(beat:Int):Void
 	{
-		if (characterController != null)
-			characterController.danceOnBeat(beat);
-		if (uiManager != null)
-			uiManager.onBeatHit(beat);
-		if (currentStage != null)
-			currentStage.beatHit(beat);
-
-		// Llamar a scripts del editor que estén activos
-		for (key in scriptInstances.keys())
-		{
-			var inst = scriptInstances.get(key);
-			if (inst != null && inst.active)
-				inst.call('onBeatHit', [beat]);
-		}
+		if (characterController != null) characterController.danceOnBeat(beat);
+		if (uiManager           != null) uiManager.onBeatHit(beat);
+		if (currentStage        != null) currentStage.beatHit(beat);
+		// Scripts PSE inline
+		for (k in scriptInstances.keys()) { var inst = scriptInstances.get(k); if (inst != null && inst.active) inst.call('onBeatHit', [beat]); }
+		// Scripts de la canción y globales
+		ScriptHandler._argsBeat[0] = beat;
+		ScriptHandler.callOnScripts('onBeatHit', ScriptHandler._argsBeat);
 	}
 
 	function _onStepHit(step:Int):Void
 	{
-		if (uiManager != null)
-			uiManager.onStepHit(step);
-		for (key in scriptInstances.keys())
-		{
-			var inst = scriptInstances.get(key);
-			if (inst != null && inst.active)
-				inst.call('onStepHit', [step]);
-		}
+		if (uiManager != null) uiManager.onStepHit(step);
+		// Scripts PSE inline
+		for (k in scriptInstances.keys()) { var inst = scriptInstances.get(k); if (inst != null && inst.active) inst.call('onStepHit', [step]); }
+		// Scripts de la canción y globales
+		ScriptHandler._argsStep[0] = step;
+		ScriptHandler.callOnScripts('onStepHit', ScriptHandler._argsStep);
 	}
 
 	function _fireEditorEvents():Void
 	{
 		var posMs = Conductor.songPosition;
 
-		// Eventos del editor
+		// ── Eventos del chart (cargados de SONG por EventManager) ─────────────
+		// Esto dispara Camera Follow, BPM Change, Change Character, Run Script,
+		// y cualquier evento custom del HScript/Lua del chart.
+		EventManager.update(posMs);
+
+		// ── Notificar onUpdate a scripts de la canción ────────────────────────
+		ScriptHandler._argsUpdate[0] = FlxG.elapsed;
+		ScriptHandler.callOnNonStageScripts('onUpdate', ScriptHandler._argsUpdate);
+
+		// ── Eventos PSE (propios del editor) ──────────────────────────────────
 		while (_nextEventIdx < sortedEvents.length)
 		{
-			var evt = sortedEvents[_nextEventIdx];
-			if (!_isEventForDiff(evt, currentDiff)) { _nextEventIdx++; continue; }
-			var evtMs = Conductor.stepCrochet * evt.stepTime;
-			if (evtMs > posMs) break;
-
-			// Disparar evento via EventManager
-			_triggerEvent(evt);
-			_nextEventIdx++;
+			var e = sortedEvents[_nextEventIdx];
+			if (!_evtForDiff(e, currentDiff)) { _nextEventIdx++; continue; }
+			if (Conductor.stepCrochet * e.stepTime > posMs) break;
+			_triggerEvent(e); _nextEventIdx++;
 		}
-
-		// Scripts auto-trigger
 		while (_nextScriptIdx < sortedScripts.length)
 		{
-			var scr = sortedScripts[_nextScriptIdx];
-			if (!scr.enabled || !scr.autoTrigger || !_isScriptForDiff(scr, currentDiff))
-			{
-				_nextScriptIdx++; continue;
-			}
-			if (scr.triggerStep < 0) { _nextScriptIdx++; continue; }
-			var scrMs = Conductor.stepCrochet * scr.triggerStep;
-			if (scrMs > posMs) break;
-
-			_executeScript(scr);
-			_nextScriptIdx++;
+			var s = sortedScripts[_nextScriptIdx];
+			if (!s.enabled || !s.autoTrigger || !_scrForDiff(s, currentDiff)) { _nextScriptIdx++; continue; }
+			if (s.triggerStep < 0 || Conductor.stepCrochet * s.triggerStep > posMs) break;
+			_runScript(s); _nextScriptIdx++;
 		}
 	}
 
 	function _triggerEvent(evt:PSEEvent):Void
 	{
-		// Usar EventManager para disparar si el tipo existe
-		var v1 = evt.value ?? '';
-		var v2 = '';
-		if (v1.contains('|'))
-		{
-			var parts = v1.split('|');
-			v1 = parts[0].trim();
-			v2 = parts.length > 1 ? parts[1].trim() : '';
-		}
-
-		// Intentar usar el sistema de eventos nativo
+		var v1 = evt.value ?? ''; var v2 = '';
+		if (v1.contains('|')) { var p = v1.split('|'); v1 = p[0].trim(); v2 = p.length > 1 ? p[1].trim() : ''; }
 		EventManager.fireEvent(evt.type, v1, v2);
-
-		// Flash en el sprite de la timeline si existe
-		for (s in tlEventSprites)
+		// Flash the block
+		for (b in eventBlocks) if (b.eventId == evt.id)
 		{
-			if (s.eventId == evt.id)
-			{
-				FlxTween.cancelTweensOf(s);
-				s.alpha = 1.0;
-				FlxTween.tween(s, {alpha: 0.5}, 0.3, {ease: FlxEase.quadOut, onComplete:_ -> s.alpha = 0.8});
-				break;
-			}
+			FlxTween.cancelTweensOf(b); b.alpha = 1.0;
+			FlxTween.tween(b, {alpha: 0.7}, 0.25, {ease: FlxEase.quadOut, onComplete:_ -> b.alpha = 0.85}); break;
 		}
-
-		showStatus('▶ Event: ${evt.type} — ${evt.value}', 2.0);
+		_showStatus('▶ ${evt.type}  ${evt.value}', 1.5);
 	}
 
-	function _executeScript(scr:PSEScript):Void
+	/**
+	 * Registra handlers de eventos de cámara y otros eventos del chart que
+	 * necesitan actuar sobre el cameraController del editor (no el de PlayState,
+	 * que no existe aquí).
+	 * Se llama una vez desde create() DESPUÉS de que EventManager cargue los eventos.
+	 */
+	function _registerEditorEventHandlers():Void
+	{
+		var self = this;
+
+		// Camera Follow / Camera
+		var camFollowHandler = function(evts:Array<funkin.scripting.events.EventData>) {
+			var e = evts[0]; if (e == null || self.cameraController == null) return true;
+			var parts = (e.value1 ?? '').split('|');
+			var target  = parts[0].trim();
+			var offX    = parts.length > 1 ? Std.parseFloat(parts[1]) : Math.NaN;
+			var offY    = parts.length > 2 ? Std.parseFloat(parts[2]) : Math.NaN;
+			self.cameraController.setTarget(target,
+				Math.isNaN(offX) ? 0.0 : offX,
+				Math.isNaN(offY) ? 0.0 : offY);
+			return true;
+		};
+		EventManager.registerCustomEvent('Camera Follow', camFollowHandler);
+		EventManager.registerCustomEvent('Camera',        camFollowHandler);
+
+		// Camera Focus
+		EventManager.registerCustomEvent('Camera Focus', function(evts) {
+			var e = evts[0]; if (e == null || self.cameraController == null) return true;
+			self.cameraController.setTarget((e.value1 != null && e.value1 != '') ? e.value1 : 'both');
+			return true;
+		});
+		EventManager.registerCustomEvent('Focus Camera', function(evts) {
+			var e = evts[0]; if (e == null || self.cameraController == null) return true;
+			self.cameraController.setTarget((e.value1 != null && e.value1 != '') ? e.value1 : 'both');
+			return true;
+		});
+
+		// Camera Zoom
+		var camZoomHandler = function(evts:Array<funkin.scripting.events.EventData>) {
+			var e = evts[0]; if (e == null || self.cameraController == null) return true;
+			var zoom = Std.parseFloat((e.value1 ?? '1.0').split('|')[0]);
+			if (!Math.isNaN(zoom)) { self.cameraController.defaultZoom = zoom; self.cameraController.zoomEnabled = true; }
+			return true;
+		};
+		EventManager.registerCustomEvent('Camera Zoom', camZoomHandler);
+		EventManager.registerCustomEvent('Zoom Camera', camZoomHandler);
+
+		// Camera Shake
+		EventManager.registerCustomEvent('Camera Shake', function(evts) {
+			// Dejar que el built-in lo maneje (usa FlxG.cameras directamente, funciona aquí)
+			return false;
+		});
+
+		// BPM Change — también funciona aquí vía built-in (no depende de PlayState)
+		// Flash / Fade — lo mismo
+		// Run Script — el built-in llama ScriptHandler.callOnScripts, funciona
+	}
+
+	function _runScript(scr:PSEScript):Void
 	{
 		#if HSCRIPT_ALLOWED
 		var inst = scriptInstances.get(scr.id);
@@ -2007,297 +1838,410 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 			inst = new HScriptInstance(scr.name, scr.id);
 			inst.priority = 0;
 			_exposeScriptVars(inst);
-			inst.loadString(scr.code);
+			// Cargar código desde archivo si savePath apunta a un fichero externo
+			var code = _loadScriptCode(scr);
+			inst.loadString(code);
 			scriptInstances.set(scr.id, inst);
 		}
 		inst.call('onTrigger', [Conductor.songPosition]);
-		showStatus('▶ Script: ${scr.name}', 2.0);
+		_showStatus('▶ Script: ${scr.name}', 1.5);
 		#else
-		showStatus('⚠ HScript no disponible en esta build');
+		_showStatus('⚠ HScript not available in this build');
 		#end
+	}
+
+	/**
+	 * Devuelve el código del script.
+	 * Si `savePath` apunta a un archivo externo y existe, lo lee del disco.
+	 * En cualquier otro caso devuelve el código inline (`scr.code`).
+	 */
+	function _loadScriptCode(scr:PSEScript):String
+	{
+		#if sys
+		var resolved = _resolveSavePath(scr);
+		if (resolved != null && resolved != '' && sys.FileSystem.exists(resolved))
+		{
+			try { return sys.io.File.getContent(resolved); } catch (_) {}
+		}
+		#end
+		return scr.code ?? '';
+	}
+
+	/**
+	 * Convierte el `savePath` lógico ('song', 'events', 'global') a una ruta
+	 * de archivo real, o devuelve la ruta literal si ya es absoluta/relativa.
+	 * Devuelve null si savePath es null / 'inline' / vacío.
+	 */
+	function _resolveSavePath(scr:PSEScript):Null<String>
+	{
+		var sp = scr.savePath ?? 'inline';
+		var nm = (scr.name != null && scr.name != '') ? scr.name : 'unnamed_script';
+		// Normalizar nombre a nombre de archivo válido
+		nm = nm.replace(' ', '_').replace('/', '_').replace('\\', '_');
+		if (!nm.endsWith('.hx')) nm += '.hx';
+		return switch (sp)
+		{
+			case null, '', 'inline': null;
+			case 'song':    'assets/songs/$currentSong/scripts/$nm';
+			case 'events':  'assets/data/scripts/events/$nm';
+			case 'global':  'assets/data/scripts/global/$nm';
+			default: sp; // ruta literal
+		}
 	}
 
 	function _exposeScriptVars(inst:HScriptInstance):Void
 	{
 		#if HSCRIPT_ALLOWED
-		inst.set('game',       this);
-		inst.set('playStateEditor', this);
-		inst.set('boyfriend',  boyfriend);
-		inst.set('dad',        dad);
-		inst.set('gf',         gf);
-		inst.set('stage',      currentStage);
-		inst.set('camGame',    camGame);
-		inst.set('camHUD',     camHUD);
-		inst.set('gameState',  gameState);
-		inst.set('FlxG',       FlxG);
-		inst.set('FlxTween',   FlxTween);
-		inst.set('FlxTimer',   FlxTimer);
-		inst.set('FlxColor',   {
-			RED:         (FlxColor.RED         : Int),
-			GREEN:       (FlxColor.GREEN       : Int),
-			BLUE:        (FlxColor.BLUE        : Int),
-			WHITE:       (FlxColor.WHITE       : Int),
-			BLACK:       (FlxColor.BLACK       : Int),
-			TRANSPARENT: (FlxColor.TRANSPARENT : Int),
-			YELLOW:      (FlxColor.YELLOW      : Int),
-			CYAN:        (FlxColor.CYAN        : Int),
-			MAGENTA:     (FlxColor.MAGENTA     : Int),
-			ORANGE:      (FlxColor.ORANGE      : Int),
-			PINK:        (FlxColor.PINK        : Int),
-			PURPLE:      (FlxColor.PURPLE      : Int),
-			GRAY:        (FlxColor.GRAY        : Int),
-			fromRGB:     FlxColor.fromRGB,
-			fromHSB:     FlxColor.fromHSB,
-			fromString:  FlxColor.fromString
-		});
-		inst.set('conductor',  Conductor);
-		inst.set('Paths',      Paths);
-		inst.set('trace',      function(v:Dynamic) trace('[PSEScript] $v'));
+		inst.set('game', this); inst.set('playStateEditor', this);
+		inst.set('boyfriend', boyfriend); inst.set('dad', dad); inst.set('gf', gf);
+		inst.set('stage', currentStage); inst.set('camGame', camGame); inst.set('camHUD', camHUD);
+		inst.set('cameraController', cameraController);
+		inst.set('gameState', gameState); inst.set('FlxG', FlxG); inst.set('FlxTween', FlxTween);
+		inst.set('FlxTimer', FlxTimer); inst.set('conductor', Conductor); inst.set('Paths', Paths);
+		inst.set('uiManager', uiManager); inst.set('songName', currentSong);
+		inst.set('trace', function(v:Dynamic) trace('[PSEScript] $v'));
 		#end
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
-	//  Input handlers
+	//  Timeline input + playhead
 	// ─────────────────────────────────────────────────────────────────────────
-
-	function _handleKeys():Void
+	function _updatePlayhead():Void
 	{
-		if (FlxG.keys.justPressed.SPACE)  _onPlayPause();
-		if (FlxG.keys.justPressed.R)      _onRestart();
-		if (FlxG.keys.justPressed.T)      _toggleTimeline();
-		if (FlxG.keys.justPressed.H)      _toggleRightPanel();
-		if (FlxG.keys.justPressed.F5)     savePSEData();
-		if (FlxG.keys.justPressed.ESCAPE) _goBack();
-		// C = toggle drag handles de personajes
-		if (FlxG.keys.justPressed.C && !_anyInputFocused())
-		{
-			_showCharHandles = !_showCharHandles;
-			showStatus(_showCharHandles ? '🎭 Char drag ON (arrastra los puntos amarillos)' : '🎭 Char drag OFF', 2.0);
-		}
-		// G = toggle viewport flotante
-		if (FlxG.keys.justPressed.G && !_anyInputFocused())
-			_toggleFloatingViewport();
+		var tlY    = _tlY();
+		var posMs  = Conductor.songPosition;
+		var areaW  = _tlAreaW();
+		var trackN = Std.int(Math.min(tracks.length - _trackScrollY, TL_MAX_TRACKS));
+		var tracksH = trackN * TL_TRACK_H;
 
-		// Navegar lista de eventos con flechas cuando el foco no está en input
-		if (!_anyInputFocused())
+		// Auto-scroll
+		if (isPlaying && !_scrubDrag && !_hScrollDrag)
 		{
-			if (FlxG.keys.justPressed.UP)
-			{
-				if (evtListScroll > 0) evtListScroll--;
-				_refreshEventList();
-			}
-			if (FlxG.keys.justPressed.DOWN)
-			{
-				evtListScroll++;
-				_refreshEventList();
-			}
+			var rel = (posMs - tlScrollX) * tlZoom;
+			if (rel > areaW * 0.78) tlScrollX = posMs - areaW * 0.2 / tlZoom;
+			if (rel < 0)            tlScrollX = posMs;
+			if (tlScrollX < 0)      tlScrollX = 0;
 		}
-	}
 
-	function _anyInputFocused():Bool
-	{
-		for (input in [evtValueInput, evtLabelInput, scrNameInput, scrCodeInput])
-			if (input != null && input.hasFocus) return true;
-		return false;
+		var xp = TL_LABEL_W + (posMs - tlScrollX) * tlZoom;
+		if (tlPlayhead     != null) { tlPlayhead.x = xp;     tlPlayhead.y = tlY; tlPlayhead.makeGraphic(2, TL_RULER_H + tracksH, C_PLAYHEAD); }
+		if (tlPlayheadHead != null) { tlPlayheadHead.x = xp - 5; tlPlayheadHead.y = tlY; tlPlayheadHead.makeGraphic(12, 12, C_PLAYHEAD); }
+
+		// Scrubber
+		if (songLength > 0)
+		{
+			var scrY = tlY + TL_RULER_H + tracksH + 12;
+			if (tlScrubFill != null) { var fw = Std.int(Math.max(1, (posMs / songLength) * SW)); tlScrubFill.makeGraphic(fw, TL_SCRUB_H - 2, 0xFF1A3C5C); tlScrubFill.y = scrY + 1; }
+			if (tlScrubHandle != null) { tlScrubHandle.x = (posMs / songLength) * SW - 2; tlScrubHandle.y = scrY + TL_SCRUB_H / 2 - 8; }
+		}
+
+		// HScroll thumb
+		if (tlHScrollThumb != null && songLength > 0)
+		{
+			var hsY      = _tlY() + TL_RULER_H + trackN * TL_TRACK_H;
+			var hsW      = _tlAreaW();
+			var visMs    = hsW / tlZoom;
+			var thumbW   = Std.int(Math.max(16, hsW * Math.min(1, visMs / songLength)));
+			var ratio    = tlScrollX / Math.max(1, songLength - visMs);
+			tlHScrollThumb.x = TL_LABEL_W + Std.int((hsW - thumbW) * FlxMath.bound(ratio, 0, 1));
+			tlHScrollThumb.y = hsY + 2;
+			tlHScrollThumb.makeGraphic(thumbW, 8, C_ACCENT);
+		}
+
+		// Update zoomSlider to reflect current tlZoom
+		if (zoomSlider != null) zoomSlider.value = tlZoom;
 	}
 
 	function _handleTimelineInput():Void
 	{
-		if (tlBg == null) return;
+		var tlY    = _tlY();
+		var trackN = Std.int(Math.min(tracks.length - _trackScrollY, TL_MAX_TRACKS));
+		var hsY    = tlY + TL_RULER_H + trackN * TL_TRACK_H;
+		var scrY   = hsY + 12;
+		var mx     = FlxG.mouse.x;
+		var my     = FlxG.mouse.y;
+		var areaW  = _tlAreaW();
 
-		var tlY      = _tlY();
-		var trackN   = TRACK_NAMES.length;
-		var tracksH  = trackN * TL_TRACK_H2;
-		var hsY      = tlY + TL_RULER_H + tracksH;             // scrollbar Y
-		var scrubY   = hsY + TL_HSCROLL_H_REAL;               // scrubber Y
-		var transY   = scrubY + TL_SCRUB_H;
-		var mx       = FlxG.mouse.x;
-		var my       = FlxG.mouse.y;
-		var areaW    = _tlAreaW();
-
-		// ── Horizontal scrollbar drag ─────────────────────────────────────────
-		var inHScroll = my >= hsY && my <= hsY + TL_HSCROLL_H_REAL && mx >= TL_LABEL_W && mx <= TL_LABEL_W + areaW;
-		if (FlxG.mouse.justPressed && inHScroll)
+		// HScroll drag
+		var inHS = my >= hsY && my <= hsY + 12 && mx >= TL_LABEL_W && mx <= TL_LABEL_W + areaW;
+		if (FlxG.mouse.justPressed && inHS) { _hScrollDrag = true; _hScrollDragOff = mx; }
+		if (FlxG.mouse.justReleased) _hScrollDrag = false;
+		if (_hScrollDrag && songLength > 0)
 		{
-			_tlHScrollDrag = true;
-			_tlHScrollDragOff = mx;
-		}
-		if (FlxG.mouse.justReleased) _tlHScrollDrag = false;
-
-		if (_tlHScrollDrag && songLength > 0)
-		{
-			var visibleMs   = areaW / tlZoom;
-			var maxScroll   = Math.max(0, songLength - visibleMs);
-			var ratio       = (mx - TL_LABEL_W) / areaW;
-			tlScrollX       = FlxMath.bound(ratio * songLength, 0, maxScroll);
-			rebuildTimelineRuler();
-			rebuildTimelineEventSprites();
+			var visMs  = areaW / tlZoom;
+			var maxSc  = Math.max(0, songLength - visMs);
+			tlScrollX  = FlxMath.bound((mx - TL_LABEL_W) / areaW * songLength, 0, maxSc);
+			_rebuildRuler(); _rebuildEventBlocks();
 		}
 
-		// ── Scrubber: click o drag para seek rápido ───────────────────────────
-		var inScrub = my >= scrubY && my <= scrubY + TL_SCRUB_H && mx >= 0 && mx <= SW;
-		if (FlxG.mouse.justPressed && inScrub)   _scrubDragging = true;
-		if (FlxG.mouse.justReleased)              _scrubDragging = false;
+		// Scrubber drag
+		var inScrub = my >= scrY && my <= scrY + TL_SCRUB_H && mx >= 0 && mx <= SW;
+		if (FlxG.mouse.justPressed && inScrub) _scrubDrag = true;
+		if (FlxG.mouse.justReleased) _scrubDrag = false;
+		if (_scrubDrag && songLength > 0) autoSeekTime = FlxMath.bound(mx / SW, 0, 1) * songLength;
 
-		if (_scrubDragging && songLength > 0)
+		// Ruler click/drag → seek
+		var inRuler = my >= tlY && my <= tlY + TL_RULER_H && mx >= TL_LABEL_W && mx <= TL_LABEL_W + areaW;
+		if (FlxG.mouse.pressed && inRuler)
 		{
-			var ratio = Math.max(0, Math.min(1, mx / SW));
-			autoSeekTime = ratio * songLength;
+			var ms = (mx - TL_LABEL_W) / tlZoom + tlScrollX;
+			autoSeekTime = Math.max(0, ms);
 		}
 
-		// ── Click en el ruler (bar:beat) → seek preciso ───────────────────────
-		if (FlxG.mouse.justPressed
-			&& mx >= TL_LABEL_W && mx <= TL_LABEL_W + areaW
-			&& my >= tlY && my <= tlY + TL_RULER_H)
+		// Double-click on track area → create event
+		var tracksAreaY = tlY + TL_RULER_H;
+		var inTracks = my >= tracksAreaY && my <= tracksAreaY + trackN * TL_TRACK_H
+		            && mx >= TL_LABEL_W  && mx <= TL_LABEL_W + areaW;
+		if (FlxG.mouse.justPressedRight && inTracks)
 		{
-			var clickMs = (mx - TL_LABEL_W) / tlZoom + tlScrollX;
-			autoSeekTime = Math.max(0, clickMs);
+			// Right-click → context menu
+			_openContextMenu(mx, my);
+		}
+		if (FlxG.mouse.justPressed && inTracks && _ctxMenu == null)
+		{
+			// Check double-click (poor man's: two presses within 0.3s)
+			// We track this simply: check not over an event block
+			var overBlock = false;
+			for (b in eventBlocks) if (FlxG.mouse.overlaps(b, camHUD)) { overBlock = true; break; }
+			// Single click on empty area: deselect
+			if (!overBlock) selectedEventId = '';
 		}
 
-		// ── Drag playhead en el ruler ─────────────────────────────────────────
-		if (FlxG.mouse.pressed
-			&& mx >= TL_LABEL_W && mx <= TL_LABEL_W + areaW
-			&& my >= tlY && my <= tlY + TL_RULER_H)
+		// Wheel scroll
+		if (my >= tlY && my <= scrY)
 		{
-			var dragMs = (mx - TL_LABEL_W) / tlZoom + tlScrollX;
-			autoSeekTime = Math.max(0, dragMs);
-		}
-
-		// ── Scroll horizontal (rueda del ratón en el track area) ──────────────
-		if (my >= tlY && my <= transY)
-		{
-			var wheel = FlxG.mouse.wheel;
-			if (wheel != 0)
+			var w = FlxG.mouse.wheel;
+			if (w != 0)
 			{
-				if (FlxG.keys.pressed.CONTROL)
-				{
-					tlZoom = Math.max(0.005, Math.min(2.0, tlZoom * (wheel > 0 ? 1.25 : 0.8)));
-				}
-				else
-				{
-					tlScrollX -= wheel * Conductor.crochet * 2;
-					if (tlScrollX < 0) tlScrollX = 0;
-				}
-				rebuildTimelineRuler();
-				rebuildTimelineEventSprites();
+				if (FlxG.keys.pressed.CONTROL) { tlZoom = FlxMath.bound(tlZoom * (w > 0 ? 1.2 : 0.83), 0.005, 3.0); }
+				else                            { tlScrollX -= w * Conductor.crochet * 2; if (tlScrollX < 0) tlScrollX = 0; }
+				_rebuildRuler(); _rebuildEventBlocks();
 			}
 		}
 
-		// ── Rueda en el área de juego = zoom de camGame ────────────────────────
-		var gameAreaBottom = _tlY();
-		if (!FlxG.keys.pressed.CONTROL
-			&& my >= TOP_H && my < gameAreaBottom
-			&& mx >= 0    && mx < SW - (rightPanelVisible ? RIGHT_W : 0)
-			&& !_vpDragging && !_vpResizing)
+		// Wheel on game area = camera zoom
+		if (my >= HEADER_H && my < tlY && mx < SW - INSP_W && !FlxG.keys.pressed.CONTROL && !_freeCam)
 		{
-			var wheel = FlxG.mouse.wheel;
-			if (wheel != 0)
-			{
-				_gameZoom = FlxMath.bound(_gameZoom * (wheel > 0 ? 1.15 : 0.87), 0.2, 3.0);
-				if (camGame != null) camGame.zoom = _gameZoom;
-				showStatus('Zoom: ${Math.round(_gameZoom * 100)}%', 0.8);
-			}
+			var w = FlxG.mouse.wheel;
+			if (w != 0) { _gameZoom = FlxMath.bound(_gameZoom * (w > 0 ? 1.12 : 0.89), 0.2, 3.0); if (camGame != null) camGame.zoom = _gameZoom; _showStatus('Zoom ${Math.round(_gameZoom * 100)}%', 0.6); }
 		}
 	}
 
-	function _handleEventSpriteClicks():Void
+	function _handleEventInteraction():Void
 	{
-		// ── Scroll de la lista de eventos con la rueda cuando el ratón está sobre el panel ──
-		if (rightPanelVisible && FlxG.mouse.wheel != 0)
+		var mx = FlxG.mouse.x;
+		var my = FlxG.mouse.y;
+
+		// Drag existing event block
+		if (_dragEvent != null)
 		{
-			var panelX = SW - RIGHT_W;
-			if (FlxG.mouse.x >= panelX && FlxG.mouse.x <= SW)
+			if (FlxG.mouse.pressed)
 			{
-				var filtered = (pseData.events ?? []).filter(e -> _isEventForDiff(e, currentDiff));
-				evtListScroll = Std.int(FlxMath.bound(evtListScroll - FlxG.mouse.wheel, 0, Math.max(0, filtered.length - 14)));
-				_refreshEventList();
+				var newMs = (mx - TL_LABEL_W) / tlZoom + tlScrollX - _dragEvtOffMs;
+				if (_snapEnabled) newMs = Math.round(newMs / Conductor.stepCrochet) * Conductor.stepCrochet;
+				newMs = Math.max(0, newMs);
+				// Find event
+				for (e in (pseData.events ?? []))
+				{
+					if (e.id == _dragEvent.eventId)
+					{
+						e.stepTime = newMs / Conductor.stepCrochet;
+						// Also allow vertical track change
+						var tlY    = _tlY();
+						var tracksY = tlY + TL_RULER_H;
+						var newTrack = Std.int((my - tracksY) / TL_TRACK_H) + _trackScrollY;
+						newTrack = Std.int(FlxMath.bound(newTrack, 0, tracks.length - 1));
+						e.trackIndex = newTrack;
+						break;
+					}
+				}
+				_rebuildEventBlocks();
 			}
+			else { hasUnsaved = true; _updateUnsavedDot(); _pushUndo(); _rebuildSorted(); _dragEvent = null; }
+			return;
+		}
+
+		// Resize event block
+		if (_resizeEvent != null)
+		{
+			if (FlxG.mouse.pressed)
+			{
+				var dx   = mx - _resizeStartX;
+				var addDur = dx / (Conductor.stepCrochet * tlZoom);
+				var newDur = Math.max(1, _resizeEvtOrigDur + addDur);
+				if (_snapEnabled) newDur = Math.round(newDur);
+				for (e in (pseData.events ?? []))
+				{
+					if (e.id == _resizeEvent.eventId) { e.duration = newDur; break; }
+				}
+				_rebuildEventBlocks();
+			}
+			else { hasUnsaved = true; _updateUnsavedDot(); _pushUndo(); _rebuildSorted(); _resizeEvent = null; }
+			return;
 		}
 
 		if (!FlxG.mouse.justPressed) return;
-		for (s in tlEventSprites)
+
+		// Click on event block
+		for (b in eventBlocks)
 		{
-			if (FlxG.mouse.overlaps(s, camHUD))
+			if (!FlxG.mouse.overlaps(b, camHUD)) continue;
+
+			if (b.isScriptBlock) { selectedEventId = b.eventId; _refreshInspector(); return; }
+
+			selectedEventId = b.eventId;
+			_refreshInspector();
+			_rebuildEventBlocks();
+
+			// Is cursor near right edge? → resize
+			var rightEdge = b.x + b.width;
+			if (Math.abs(mx - rightEdge) <= 8)
 			{
-				selectedEventId = s.eventId;
-				_loadEventToPanel(selectedEventId);
-				_refreshEventList();
-				rebuildTimelineEventSprites();
+				_resizeEvent = b;
+				_resizeStartX = mx;
+				for (e in (pseData.events ?? [])) if (e.id == b.eventId) { _resizeEvtOrigDur = e.duration ?? 4.0; break; }
 				return;
 			}
-		}
-	}
-
-	function _loadEventToPanel(id:String):Void
-	{
-		for (evt in (pseData.events ?? []))
-		{
-			if (evt.id != id) continue;
-			if (evtTypeDropdown  != null) evtTypeDropdown.selectedLabel  = evt.type;
-			if (evtValueInput    != null) evtValueInput.text             = evt.value ?? '';
-			if (evtStepStepper   != null) evtStepStepper.value           = evt.stepTime;
-			if (evtTrackStepper  != null) evtTrackStepper.value          = evt.trackIndex;
-			if (evtLabelInput    != null) evtLabelInput.text             = evt.label ?? '';
-			_setDiffChecks(evtDiffChecks, evt.difficulties);
+			// Otherwise drag
+			_dragEvent = b;
+			var evtMs = 0.0;
+			for (e in (pseData.events ?? [])) if (e.id == b.eventId) { evtMs = e.stepTime * Conductor.stepCrochet; break; }
+			_dragEvtOffMs = (mx - TL_LABEL_W) / tlZoom + tlScrollX - evtMs;
 			return;
 		}
+		// Clicked empty → maybe deselect
+		selectedEventId = ''; _refreshInspector();
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
-	//  Transport callbacks
+	//  Context Menu
 	// ─────────────────────────────────────────────────────────────────────────
+	function _openContextMenu(mx:Float, my:Float):Void
+	{
+		if (_ctxMenu != null) { remove(_ctxMenu); _ctxMenu.destroy(); }
+		var tlY     = _tlY();
+		var trackN  = Std.int(Math.min(tracks.length - _trackScrollY, TL_MAX_TRACKS));
+		var tracksY = tlY + TL_RULER_H;
+		var trackI  = Std.int((my - tracksY) / TL_TRACK_H) + _trackScrollY;
+		var evtMs   = (mx - TL_LABEL_W) / tlZoom + tlScrollX;
+		var evtStep = evtMs / Conductor.stepCrochet;
+		if (_snapEnabled) evtStep = Math.round(evtStep);
 
+		var items:Array<{label:String, cb:Void->Void}> = [
+			{ label:'Add Camera Follow',  cb:() -> _createEvent('Camera Follow', 'bf', Std.int(FlxMath.bound(trackI, 0, tracks.length-1)), evtStep) },
+			{ label:'Add Camera Zoom',    cb:() -> _createEvent('Zoom Camera',   '1.0',Std.int(FlxMath.bound(trackI, 0, tracks.length-1)), evtStep) },
+			{ label:'Add BPM Change',     cb:() -> _createEvent('BPM Change',    '${Std.int(Conductor.bpm)}', Std.int(FlxMath.bound(trackI, 0, tracks.length-1)), evtStep) },
+			{ label:'Add Script Trigger', cb:() -> _createEvent('Script',        '', 3, evtStep) },
+			{ label:'Add Custom Event',   cb:() -> _createEvent('Custom',        '', Std.int(FlxMath.bound(trackI, 0, tracks.length-1)), evtStep) },
+		];
+		if (selectedEventId != '')
+		{
+			items.push({ label:'Delete Selected', cb:_deleteSelected });
+			items.push({ label:'Duplicate Selected', cb:_duplicateSelected });
+		}
+
+		_ctxMenu = new PSEContextMenu(mx, my, items);
+		_ctxMenu.cameras = [camHUD]; _ctxMenu.scrollFactor.set();
+		add(_ctxMenu);
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	//  Free Camera
+	// ─────────────────────────────────────────────────────────────────────────
+	function _toggleFreeCam():Void
+	{
+		_freeCam = !_freeCam;
+		if (freeCamBtn != null)
+		{
+			freeCamBtn.makeGraphic(36, 29, _freeCam ? 0xFF1A4A3A : 0xFF1A2A3A);
+			freeCamBtn.label.color = _freeCam ? C_ACCENT2 : C_TEXT;
+		}
+		_showStatus(_freeCam ? '🎥 Free Camera ON — WASD/arrows or drag to pan, scroll to zoom' : '🎥 Free Camera OFF', 2.5);
+	}
+
+	function _handleFreeCam(elapsed:Float):Void
+	{
+		if (!_freeCam || camGame == null) return;
+		var speed = 400 * elapsed / camGame.zoom;
+
+		if (FlxG.keys.pressed.W || FlxG.keys.pressed.UP)    _freeCamY -= speed;
+		if (FlxG.keys.pressed.S || FlxG.keys.pressed.DOWN)  _freeCamY += speed;
+		if (FlxG.keys.pressed.A || FlxG.keys.pressed.LEFT)  _freeCamX -= speed;
+		if (FlxG.keys.pressed.D || FlxG.keys.pressed.RIGHT) _freeCamX += speed;
+
+		// Mouse drag in game area
+		if (FlxG.mouse.pressed && FlxG.mouse.y > HEADER_H && FlxG.mouse.y < _tlY() && FlxG.mouse.x < SW - INSP_W)
+		{
+			_freeCamX -= FlxG.mouse.deltaX / camGame.zoom;
+			_freeCamY -= FlxG.mouse.deltaY / camGame.zoom;
+		}
+
+		camGame.scroll.set(_freeCamX, _freeCamY);
+
+		// Scroll = zoom in free mode
+		var w = FlxG.mouse.wheel;
+		if (w != 0 && FlxG.mouse.y > HEADER_H && FlxG.mouse.y < _tlY())
+		{
+			_gameZoom = FlxMath.bound(_gameZoom * (w > 0 ? 1.12 : 0.89), 0.1, 5.0);
+			camGame.zoom = _gameZoom;
+		}
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	//  Keyboard Shortcuts
+	// ─────────────────────────────────────────────────────────────────────────
+	function _handleKeys():Void
+	{
+		var ctrl = FlxG.keys.pressed.CONTROL;
+
+		if (FlxG.keys.justPressed.SPACE && !_anyInputFocused()) _onPlayPause();
+		if (FlxG.keys.justPressed.R && !ctrl && !_anyInputFocused()) _onRestart();
+		if (FlxG.keys.justPressed.F && !ctrl && !_anyInputFocused()) _toggleFreeCam();
+		if ((FlxG.keys.justPressed.F5 || (ctrl && FlxG.keys.justPressed.S))) _savePSEData();
+		if (ctrl && FlxG.keys.justPressed.Z) _doUndo();
+		if (ctrl && (FlxG.keys.justPressed.Y || (FlxG.keys.pressed.SHIFT && FlxG.keys.justPressed.Z))) _doRedo();
+		if (FlxG.keys.justPressed.DELETE && !_anyInputFocused() && selectedEventId != '') _deleteSelected();
+		if (FlxG.keys.justPressed.ESCAPE) _goBack();
+		if (FlxG.keys.justPressed.HOME && !_anyInputFocused()) autoSeekTime = 0;
+		if (FlxG.keys.justPressed.END  && !_anyInputFocused()) autoSeekTime = songLength - 50;
+
+		// Zoom timeline
+		if (ctrl && FlxG.keys.pressed.EQUALS)  { tlZoom = FlxMath.bound(tlZoom * 1.1, 0.005, 3.0); _rebuildRuler(); _rebuildEventBlocks(); }
+		if (ctrl && FlxG.keys.pressed.MINUS)   { tlZoom = FlxMath.bound(tlZoom * 0.9, 0.005, 3.0); _rebuildRuler(); _rebuildEventBlocks(); }
+	}
+
+	function _anyInputFocused():Bool
+	{
+		for (el in _inspElements) if (Std.isOfType(el, CoolInputText) && (cast el:CoolInputText).hasFocus) return true;
+		return false;
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	//  Transport
+	// ─────────────────────────────────────────────────────────────────────────
 	function _onPlayPause():Void
 	{
 		isPlaying = !isPlaying;
-		syncAudio(isPlaying);
-		if (isPlaying)
-		{
-			playBtn.label.text = '⏸';
-			showStatus('▶ Reproduciendo');
-		}
-		else
-		{
-			playBtn.label.text = '▶';
-			showStatus('⏸ Pausado');
-		}
+		_syncAudio(isPlaying);
+		if (playBtn != null) { playBtn.label.text = isPlaying ? '⏸' : '▶'; playBtn.label.color = isPlaying ? 0xFFFFAA00 : C_ACCENT2; }
+		_showStatus(isPlaying ? '▶ Playing' : '⏸ Paused');
 	}
 
 	function _onStop():Void
 	{
-		isPlaying = false;
-		syncAudio(false);
-		_doSeek(0);
-		playBtn.label.text = '▶';
-		showStatus('⏹ Detenido');
+		isPlaying = false; _syncAudio(false); _doSeek(0);
+		if (playBtn != null) { playBtn.label.text = '▶'; playBtn.label.color = C_ACCENT2; }
+		_showStatus('⏹ Stopped');
 	}
 
 	function _onRestart():Void
 	{
 		_doSeek(0);
-
-		// Reset camera to initial state (undoes Camera Follow/Zoom events that
-		// fired during playback — the snapshot was taken after stage setup).
-		if (cameraController != null)
-			cameraController.resetToInitial();
-
-		// Return characters to idle (undoes any mid-song anim changes).
-		if (characterController != null)
-			characterController.forceIdleAll();
-
-		isPlaying = true;
-		syncAudio(true);
-		playBtn.label.text = '⏸';
-		showStatus('⏮ Reiniciando');
-	}
-
-	function _onDiffChanged(id:String):Void
-	{
-		currentDiff = id;
-		_refreshEventList();
-		_refreshScriptList();
-		rebuildTimelineEventSprites();
-		showStatus('Dificultad: $currentDiff');
+		if (cameraController  != null) cameraController.resetToInitial();
+		if (characterController != null) characterController.forceIdleAll();
+		isPlaying = true; _syncAudio(true);
+		if (playBtn != null) { playBtn.label.text = '⏸'; playBtn.label.color = 0xFFFFAA00; }
+		_showStatus('⏮ Restart');
 	}
 
 	function _doSeek(ms:Float):Void
@@ -2305,326 +2249,207 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		Conductor.songPosition = ms;
 		if (FlxG.sound.music != null) FlxG.sound.music.time = ms;
 		_syncVocals(ms);
-		_lastBeat  = -1;
-		_lastStep  = -1;
-		_nextEventIdx  = 0;
-		_nextScriptIdx = 0;
-		// Avanzar punteros hasta el tiempo actual
-		while (_nextEventIdx < sortedEvents.length
-			&& Conductor.stepCrochet * sortedEvents[_nextEventIdx].stepTime < ms)
-			_nextEventIdx++;
-		while (_nextScriptIdx < sortedScripts.length
-			&& sortedScripts[_nextScriptIdx].triggerStep >= 0
-			&& Conductor.stepCrochet * sortedScripts[_nextScriptIdx].triggerStep < ms)
-			_nextScriptIdx++;
+		_lastBeat = -1; _lastStep = -1;
+
+		// Avanzar el puntero del EventManager sin re-disparar eventos de chart
+		EventManager.seekTo(ms);
+
+		// Avanzar punteros de eventos/scripts PSE
+		_nextEventIdx  = 0; _nextScriptIdx = 0;
+		while (_nextEventIdx  < sortedEvents.length  && Conductor.stepCrochet * sortedEvents[_nextEventIdx].stepTime  < ms) _nextEventIdx++;
+		while (_nextScriptIdx < sortedScripts.length && sortedScripts[_nextScriptIdx].triggerStep >= 0 && Conductor.stepCrochet * sortedScripts[_nextScriptIdx].triggerStep < ms) _nextScriptIdx++;
 	}
 
-	function syncAudio(play:Bool):Void
+	function _syncAudio(play:Bool):Void
 	{
 		if (FlxG.sound.music == null) return;
 		if (play) { FlxG.sound.music.volume = 1; FlxG.sound.music.play(); }
-		else      { FlxG.sound.music.pause(); }
+		else       FlxG.sound.music.pause();
 		_syncVocals(FlxG.sound.music.time, play);
 	}
 
-	function _syncVocals(time:Float, play:Bool = false):Void
+	function _syncVocals(t:Float, play:Bool = false):Void
 	{
-		// ── Nuevo sistema: vocalsMap por personaje ────────────────────────────
-		for (snd in vocalsMap)
-		{
-			if (snd == null) continue;
-			snd.time = time;
-			if (play) snd.play(); else snd.pause();
-		}
-
-		// ── Legacy: vocalsBf / vocalsDad ─────────────────────────────────────
+		for (s in vocalsMap)    { if (s == null) continue; s.time = t; if (play) s.play(); else s.pause(); }
 		if (_perCharVocals && Lambda.count(vocalsMap) == 0)
 		{
-			if (vocalsBf  != null) { vocalsBf.time  = time; if (play) vocalsBf.play();  else vocalsBf.pause(); }
-			if (vocalsDad != null) { vocalsDad.time = time; if (play) vocalsDad.play(); else vocalsDad.pause(); }
+			if (vocalsBf  != null) { vocalsBf.time  = t; if (play) vocalsBf.play();  else vocalsBf.pause(); }
+			if (vocalsDad != null) { vocalsDad.time = t; if (play) vocalsDad.play(); else vocalsDad.pause(); }
 		}
-		else if (vocals != null)
-		{
-			vocals.time = time;
-			if (play) vocals.play(); else vocals.pause();
-		}
+		else if (vocals != null) { vocals.time = t; if (play) vocals.play(); else vocals.pause(); }
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
 	//  Event CRUD
 	// ─────────────────────────────────────────────────────────────────────────
-
-	function _onAddEvent():Void
+	function _createEventAtPlayhead(type:String, value:String, trackI:Int):Void
 	{
-		if (evtTypeDropdown == null) return;
+		var step = Conductor.songPosition / Conductor.stepCrochet;
+		if (_snapEnabled) step = Math.round(step);
+		_createEvent(type, value, trackI, step);
+	}
 
-		var type  = evtTypeDropdown.selectedLabel ?? 'Camera Follow';
-		var value = evtValueInput  != null ? evtValueInput.text  : '';
-		var step  = evtStepStepper != null ? evtStepStepper.value : 0.0;
-		var track = evtTrackStepper != null ? Std.int(evtTrackStepper.value) : 0;
-		var label = evtLabelInput  != null ? evtLabelInput.text  : '';
-		var diffs = _getDiffChecks(evtDiffChecks);
-
-		// Si hay uno seleccionado, actualizar en lugar de añadir
-		if (selectedEventId != '')
-		{
-			for (evt in (pseData.events ?? []))
-			{
-				if (evt.id == selectedEventId)
-				{
-					evt.type        = type;
-					evt.value       = value;
-					evt.stepTime    = step;
-					evt.trackIndex  = track;
-					evt.label       = label;
-					evt.difficulties = diffs;
-					hasUnsaved      = true;
-					_updateUnsavedDot();
-					_rebuildSorted();
-					_refreshEventList();
-					showStatus('✓ Evento actualizado: $type');
-					return;
-				}
-			}
-		}
-
-		// Nuevo evento
+	function _createEvent(type:String, value:String, trackI:Int, stepTime:Float):Void
+	{
+		_pushUndo();
 		var evt:PSEEvent = {
-			id:           _uid(),
-			stepTime:     step,
-			type:         type,
-			value:        value,
-			difficulties: diffs,
-			trackIndex:   track,
-			label:        label
+			id:          _newUid(),
+			stepTime:    stepTime,
+			type:        type,
+			value:       value,
+			difficulties:['*'],
+			trackIndex:  Std.int(FlxMath.bound(trackI, 0, tracks.length - 1)),
+			duration:    8.0,
 		};
-
 		if (pseData.events == null) pseData.events = [];
 		pseData.events.push(evt);
-		hasUnsaved = true;
-		_updateUnsavedDot();
-		_rebuildSorted();
-		_refreshEventList();
-		showStatus('✓ Evento añadido: $type @ step ${Std.int(step)}');
+		selectedEventId = evt.id;
+		hasUnsaved = true; _updateUnsavedDot(); _rebuildSorted(); _rebuildEventBlocks(); _refreshInspector();
+		_showStatus('✓ Event created: $type @ step ${Std.int(stepTime)}');
 	}
 
-	function _onDeleteEvent():Void
+	function _deleteSelected():Void
 	{
-		if (selectedEventId == '' || pseData.events == null) return;
-		pseData.events = pseData.events.filter(e -> e.id != selectedEventId);
-		selectedEventId = '';
-		hasUnsaved = true;
-		_updateUnsavedDot();
-		_rebuildSorted();
-		_refreshEventList();
-		showStatus('✓ Evento eliminado');
-	}
-
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Script CRUD
-	// ─────────────────────────────────────────────────────────────────────────
-
-	function _onAddScript():Void
-	{
-		if (scrNameInput == null) return;
-
-		var name    = scrNameInput.text.trim();
-		if (name == '') name = 'script_' + _uid();
-		var code    = scrCodeInput    != null ? scrCodeInput.text    : '';
-		var step    = scrStepStepper  != null ? scrStepStepper.value : -1.0;
-		var autoT   = scrAutoCheck    != null ? scrAutoCheck.checked : false;
-		var enabled = scrEnabledCheck != null ? scrEnabledCheck.checked : true;
-		var diffs   = _getDiffChecks(scrDiffChecks);
-
-		// Actualizar si existe
-		if (selectedScriptId != '')
+		if (selectedEventId == '') return;
+		_pushUndo();
+		if (selectedEventId.startsWith('script_'))
 		{
-			for (scr in (pseData.scripts ?? []))
+			var sid = selectedEventId.substr(7);
+			if (pseData.scripts != null) pseData.scripts = pseData.scripts.filter(s -> s.id != sid);
+		}
+		else
+		{
+			if (pseData.events != null) pseData.events = pseData.events.filter(e -> e.id != selectedEventId);
+		}
+		selectedEventId = ''; hasUnsaved = true; _updateUnsavedDot(); _rebuildSorted(); _rebuildEventBlocks(); _refreshInspector();
+		_showStatus('✓ Deleted');
+	}
+
+	function _duplicateSelected():Void
+	{
+		if (selectedEventId == '') return;
+		_pushUndo();
+		for (e in (pseData.events ?? []))
+		{
+			if (e.id != selectedEventId) continue;
+			var ne:PSEEvent = {
+				id:           _newUid(),
+				stepTime:     e.stepTime + (e.duration ?? 4.0),
+				type:         e.type, value:e.value,
+				difficulties: e.difficulties.copy(),
+				trackIndex:   e.trackIndex,
+				duration:     e.duration,
+				label:        e.label,
+			};
+			if (pseData.events == null) pseData.events = [];
+			pseData.events.push(ne);
+			selectedEventId = ne.id;
+			hasUnsaved = true; _updateUnsavedDot(); _rebuildSorted(); _rebuildEventBlocks(); _refreshInspector();
+			_showStatus('✓ Duplicated: ${ne.type}');
+			return;
+		}
+	}
+
+	function _addTrack():Void
+	{
+		var idx = tracks.length;
+		tracks.push({ id:'custom$idx', name:'Track $idx', color:0xFF66AAFF, visible:true, locked:false, height:TL_TRACK_H });
+		pseData.tracks = tracks;
+		_refreshTrackRows(); hasUnsaved = true; _updateUnsavedDot();
+		_showStatus('✓ Track added');
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	//  Import mustHitSection as camera events
+	// ─────────────────────────────────────────────────────────────────────────
+	function _importSectionCamEvents():Void
+	{
+		var SONG = PlayState.SONG;
+		if (SONG == null || SONG.notes == null || SONG.notes.length == 0) return;
+		var acc:Float = 0; var prev = true;
+		for (i in 0...SONG.notes.length)
+		{
+			var sec  = SONG.notes[i];
+			var mh   = sec.mustHitSection ?? true;
+			if (i == 0 || mh != prev)
 			{
-				if (scr.id == selectedScriptId)
+				var tgt = mh ? 'bf' : 'dad';
+				var exists = false;
+				for (e in (pseData.events ?? [])) if (e.type == 'Camera Follow' && Math.abs(e.stepTime - acc) < 0.5) { exists = true; break; }
+				if (!exists)
 				{
-					scr.name        = name;
-					scr.code        = code;
-					scr.triggerStep = step;
-					scr.autoTrigger = autoT;
-					scr.enabled     = enabled;
-					scr.difficulties = diffs;
-					// Invalidar instancia vieja
-					var old = scriptInstances.get(scr.id);
-					if (old != null) { old.active = false; scriptInstances.remove(scr.id); }
-					hasUnsaved = true;
-					_updateUnsavedDot();
-					_rebuildSorted();
-					_refreshScriptList();
-					showStatus('✓ Script actualizado: $name');
-					return;
+					if (pseData.events == null) pseData.events = [];
+					pseData.events.push({ id:_newUid(), stepTime:acc, type:'Camera Follow', value:tgt, difficulties:['*'], trackIndex:0, duration:sec.lengthInSteps ?? 16, label:'Cam→$tgt' });
 				}
+				prev = mh;
 			}
+			acc += sec.lengthInSteps ?? 16;
 		}
-
-		var scr:PSEScript = {
-			id:           _uid(),
-			name:         name,
-			code:         code,
-			triggerStep:  step,
-			difficulties: diffs,
-			enabled:      enabled,
-			autoTrigger:  autoT
-		};
-
-		if (pseData.scripts == null) pseData.scripts = [];
-		pseData.scripts.push(scr);
-		hasUnsaved = true;
-		_updateUnsavedDot();
 		_rebuildSorted();
-		_refreshScriptList();
-		showStatus('✓ Script añadido: $name');
-	}
-
-	function _onDeleteScript():Void
-	{
-		if (selectedScriptId == '' || pseData.scripts == null) return;
-		var old = scriptInstances.get(selectedScriptId);
-		if (old != null) { old.active = false; scriptInstances.remove(selectedScriptId); }
-		pseData.scripts = pseData.scripts.filter(s -> s.id != selectedScriptId);
-		selectedScriptId = '';
-		hasUnsaved = true;
-		_updateUnsavedDot();
-		_rebuildSorted();
-		_refreshScriptList();
-		showStatus('✓ Script eliminado');
-	}
-
-	function _onRunScript():Void
-	{
-		#if HSCRIPT_ALLOWED
-		if (scrCodeInput == null) return;
-		var code = scrCodeInput.text;
-		var name = scrNameInput != null ? scrNameInput.text.trim() : 'testScript';
-		if (name == '') name = 'testScript';
-
-		// Destruir instancia anterior si existe
-		var old = scriptInstances.get('__test__');
-		if (old != null) { old.active = false; scriptInstances.remove('__test__'); }
-
-		var inst = new HScriptInstance(name, '__test__');
-		_exposeScriptVars(inst);
-		inst.loadString(code);
-		inst.call('onCreate', []);
-		inst.call('onTrigger', [Conductor.songPosition]);
-		scriptInstances.set('__test__', inst);
-		showStatus('▶ Script ejecutado: $name');
-		#else
-		showStatus('⚠ HScript no disponible');
-		#end
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
-	//  Layout helpers
+	//  Helpers
 	// ─────────────────────────────────────────────────────────────────────────
-
-	function _toggleTimeline():Void
+	function _getEventTypes():Array<String>
 	{
-		timelineVisible = !timelineVisible;
+		EventInfoSystem.reload();
+		var list = EventInfoSystem.eventList.copy();
+		if (list.length == 0) list = ['Camera Follow','Camera Focus','Zoom Camera','BPM Change','Play Animation','Hey!','Screen Shake','Camera Flash','Change Character','Tween','Script'];
+		return list;
+	}
 
-		// Ocultar / mostrar todos los miembros del grupo de la timeline
-		if (timelineGroup != null)
-			timelineGroup.forEach(m -> if (m != null) m.visible = timelineVisible);
+	function _evtForDiff(e:PSEEvent, diff:String):Bool
+		return e.difficulties == null || e.difficulties.length == 0 || e.difficulties.contains('*') || e.difficulties.contains(diff);
 
-		// Sprites de eventos
-		for (s in tlEventSprites)
+	function _scrForDiff(s:PSEScript, diff:String):Bool
+		return s.difficulties == null || s.difficulties.length == 0 || s.difficulties.contains('*') || s.difficulties.contains(diff);
+
+	function _updateTimeDisplay():Void
+	{
+		var pos = Conductor.songPosition; var len = songLength;
+		if (timeTxt != null) timeTxt.text = '${_fmtMs(pos)} / ${_fmtMs(len)}';
+		if (playBtn != null) playBtn.label.text = isPlaying ? '⏸' : '▶';
+		// Snap check sync
+		if (snapCheck != null) _snapEnabled = snapCheck.checked;
+	}
+
+	function _updateCursorInfo():Void
+	{
+		if (cursorInfoTxt == null) return;
+		var mx   = FlxG.mouse.x;
+		var tlY  = _tlY();
+		var areaW = _tlAreaW();
+		if (mx >= TL_LABEL_W && mx <= TL_LABEL_W + areaW && FlxG.mouse.y >= tlY && FlxG.mouse.y <= tlY + _tlH())
 		{
-			s.visible = timelineVisible;
-			if (s.labelTxt != null) s.labelTxt.visible = timelineVisible;
+			var ms   = (mx - TL_LABEL_W) / tlZoom + tlScrollX;
+			var step = ms / Conductor.stepCrochet;
+			var bar  = Math.floor(step / 16) + 1;
+			var beat = Std.int(step % 16);
+			cursorInfoTxt.text = 'Bar ${bar}.${beat}  |  Step ${Std.int(step)}  |  ${_fmtMs(ms)}';
 		}
-
-		// Textos del ruler
-		if (rulerTxt != null)
-			for (t in rulerTxt.members)
-				t.visible = timelineVisible && t.text != '';
-
-		// Beat grid lines
-		for (gl in tlBeatGridLines) gl.visible = timelineVisible && gl.visible;
-
-		// Botones del transport
-		for (btn in tlTransBtns)
+		else
 		{
-			if (btn == null) continue;
-			btn.visible = timelineVisible;
-			if (btn.label != null) btn.label.visible = timelineVisible;
+			var posMs = Conductor.songPosition;
+			var step  = posMs / Conductor.stepCrochet;
+			var bar   = Math.floor(step / 16) + 1;
+			var beat  = Std.int(step % 16);
+			cursorInfoTxt.text = 'Bar ${bar}.${beat}  |  Step ${Std.int(step)}  |  BPM ${Std.int(Conductor.bpm)}';
 		}
-
-		// Labels del ruler + time
-		if (tlTimeLbl    != null) tlTimeLbl.visible    = timelineVisible;
-		if (tlTimeRemLbl != null) tlTimeRemLbl.visible = timelineVisible;
-		if (tlBpmLbl     != null) tlBpmLbl.visible     = timelineVisible;
-
-		// Redimensionar panel derecho
-		_repositionRightPanel();
-		showStatus(timelineVisible ? 'Timeline visible (T para ocultar)' : 'Timeline oculta (T para mostrar)');
 	}
 
-	function _toggleRightPanel():Void
+	function _fmtMs(ms:Float):String
 	{
-		rightPanelVisible = !rightPanelVisible;
-		if (rightPanel != null) rightPanel.visible = rightPanelVisible;
-		if (panelBg    != null) panelBg.visible    = rightPanelVisible;
-		showStatus(rightPanelVisible ? 'Panel visible' : 'Panel oculto');
+		var s  = Math.floor(ms / 1000);
+		var m  = Math.floor(s / 60);
+		var ss = Std.string(s % 60); if (ss.length < 2) ss = '0' + ss;
+		var cs = Std.string(Std.int((ms % 1000) / 10)); if (cs.length < 2) cs = '0' + cs;
+		return '$m:$ss.$cs';
 	}
 
-	function _repositionRightPanel():Void
+	function _showStatus(msg:String, dur:Float = 3.5):Void
 	{
-		if (rightPanel == null || panelBg == null) return;
-		var panelH = SH - TOP_H - STATUS_H - (timelineVisible ? TL_H : 0);
-		rightPanel.resize(RIGHT_W - 2, panelH);
-		panelBg.makeGraphic(RIGHT_W, panelH, C_PANEL);
-	}
-
-	/** Y absoluta donde empieza la timeline */
-	inline function _tlY():Int
-		return TOP_H + _gameH();
-
-	/** Altura disponible del área de juego (entre topbar y timeline) */
-	inline function _gameH():Int
-		return SH - TOP_H - STATUS_H - (timelineVisible ? TL_H : 0);
-
-	/** Ancho del área de eventos en la timeline */
-	inline function _tlAreaW():Int
-		return SW - TL_LABEL_W - (rightPanelVisible ? RIGHT_W : 0);
-
-
-
-
-
-
-
-
-
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Misc UI helpers
-	// ─────────────────────────────────────────────────────────────────────────
-
-	function _updateTimeTxt():Void
-	{
-		if (timeTxt == null) return;
-		var pos = Conductor.songPosition;
-		var len = songLength;
-		timeTxt.text = '${_fmtTime(pos)} / ${_fmtTime(len)}';
-	}
-
-	function _fmtTime(ms:Float):String
-	{
-		var secs   = Math.floor(ms / 1000);
-		var mins   = Math.floor(secs / 60);
-		var secStr = Std.string(secs % 60);
-		if (secStr.length < 2) secStr = '0' + secStr;
-		return '$mins:$secStr';
-	}
-
-	function showStatus(msg:String, duration:Float = 3.0):Void
-	{
-		_statusMsg   = msg;
-		_statusTimer = duration;
+		_statusTimer = dur;
 		if (statusTxt != null) statusTxt.text = msg;
 	}
 
@@ -2633,709 +2458,364 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		if (unsavedDot != null) unsavedDot.visible = hasUnsaved;
 	}
 
-	function _getDiffChecks(checks:Array<CoolCheckBox>):Array<String>
+	function _newUid():String
+		return 'pse_' + Std.string(Std.int(haxe.Timer.stamp() * 1000)) + '_' + (++_uid);
+
+	function _mkBtn(x:Float, y:Float, label:String, w:Int, h:Int, color:Int, cb:Void->Void):PSEBtn
 	{
-		final diffOptions = allDiffs.concat(['*']); // mismo orden que los checkboxes
-		var diffs:Array<String> = [];
-		for (i in 0...checks.length)
-		{
-			if (i < diffOptions.length && checks[i] != null && checks[i].checked)
-			{
-				if (diffOptions[i] == '*') return ['*'];
-				diffs.push(diffOptions[i]);
-			}
-		}
-		return diffs.length > 0 ? diffs : ['*'];
-	}
-
-	function _setDiffChecks(checks:Array<CoolCheckBox>, diffs:Array<String>):Void
-	{
-		final diffOptions = allDiffs.concat(['*']);
-		final isAll = diffs.contains('*');
-		for (i in 0...checks.length)
-		{
-			if (checks[i] == null || i >= diffOptions.length) continue;
-			checks[i].checked = isAll ? (diffOptions[i] == '*') : diffs.contains(diffOptions[i]);
-		}
-	}
-
-	function _getSelectedScriptName():String
-	{
-		for (scr in (pseData.scripts ?? []))
-			if (scr.id == selectedScriptId) return scr.name;
-		return 'new_script';
-	}
-
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Import mustHitSection sections as Camera Follow events
-	// ─────────────────────────────────────────────────────────────────────────
-
-	/**
-	 * Lee las secciones de PlayState.SONG y genera eventos "Camera Follow" en el
-	 * track 0 (Camera) cada vez que mustHitSection cambia, para que las secciones
-	 * ya colocadas sean visibles en la tabla de eventos del editor.
-	 * Solo añade los eventos que aún no existen (compara stepTime y tipo).
-	 */
-	function _importSectionCameraEvents():Void
-	{
-		var SONG = PlayState.SONG;
-		if (SONG == null || SONG.notes == null || SONG.notes.length == 0) return;
-
-		var stepAccum  : Float = 0;
-		var prevMustHit: Bool  = true; // primer valor por defecto = cámara en BF
-
-		for (i in 0...SONG.notes.length)
-		{
-			var section = SONG.notes[i];
-			final mustHit = section.mustHitSection ?? true;
-
-			// Insertar evento si es la primera sección o si cambia respecto a la anterior
-			if (i == 0 || mustHit != prevMustHit)
-			{
-				final target = mustHit ? 'bf' : 'dad';
-				var exists   = false;
-				for (evt in (pseData.events ?? []))
-				{
-					if (evt.type == 'Camera Follow' && Math.abs(evt.stepTime - stepAccum) < 0.5)
-					{
-						exists = true;
-						break;
-					}
-				}
-
-				if (!exists)
-				{
-					var evt : PSEEvent = {
-						id          : _uid(),
-						stepTime    : stepAccum,
-						type        : 'Camera Follow',
-						value       : target,
-						difficulties: ['*'],
-						trackIndex  : 0,
-						label       : 'Cam→$target'
-					};
-					if (pseData.events == null) pseData.events = [];
-					pseData.events.push(evt);
-				}
-				prevMustHit = mustHit;
-			}
-
-			stepAccum += (section.lengthInSteps ?? 16);
-		}
-
-		_rebuildSorted();
-		_refreshEventList();
-	}
-
-	function _isEventForDiff(evt:PSEEvent, diff:String):Bool
-	{
-		if (evt.difficulties == null || evt.difficulties.length == 0) return true;
-		return evt.difficulties.contains('*') || evt.difficulties.contains(diff);
-	}
-
-	function _isScriptForDiff(scr:PSEScript, diff:String):Bool
-	{
-		if (scr.difficulties == null || scr.difficulties.length == 0) return true;
-		return scr.difficulties.contains('*') || scr.difficulties.contains(diff);
-	}
-
-	function _uid():String
-	{
-		return 'pse_' + Std.string(Std.int(haxe.Timer.stamp() * 1000)) + '_' + (++_uidCounter);
+		var btn = new PSEBtn(x, y, w, h, label, color, C_TEXT, cb);
+		btn.cameras = [camHUD]; btn.scrollFactor.set();
+		btn.label.cameras = [camHUD]; btn.label.scrollFactor.set();
+		add(btn); add(btn.label); return btn;
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
 	//  Navigation
 	// ─────────────────────────────────────────────────────────────────────────
-
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Layout presets  (⊞ button — cicla entre modos de vista)
-	// ─────────────────────────────────────────────────────────────────────────
-
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Floating Game Viewport  (tipo ZGameVisualizer de FL Studio)
-	// ─────────────────────────────────────────────────────────────────────────
-
-	/**
-	 * Calcula el tamaño inicial del viewport flotante basándose en el espacio
-	 * disponible entre topbar y timeline.
-	 */
-	function _initGameViewport():Void
-	{
-		_vpW = SW - (rightPanelVisible ? RIGHT_W : 0);
-		_vpH = _gameH();
-		_vpX = 0;
-		_vpY = TOP_H;
-		// Aplicar al camGame directamente (coordenadas de pantalla OpenFL)
-		_applyViewportToCam();
-
-		// Marco visual (se crea cuando se entra en modo flotante)
-	}
-
-	function _applyViewportToCam():Void
-	{
-		if (camGame == null) return;
-		if (_vpFloating)
-		{
-			// Modo flotante: la cámara ocupa solo el rectángulo _vp*
-			camGame.x      = Std.int(_vpX);
-			camGame.y      = Std.int(_vpY);
-			camGame.width  = _vpW;
-			camGame.height = _vpH;
-			// El scroll del camGame sigue centrado en el mundo (no offset)
-		}
-		else
-		{
-			// Modo normal: ocupa todo el área de juego
-			camGame.x      = 0;
-			camGame.y      = 0;
-			camGame.width  = SW - (rightPanelVisible ? RIGHT_W : 0);
-			camGame.height = _gameH();
-		}
-	}
-
-	function _toggleFloatingViewport():Void
-	{
-		_vpFloating = !_vpFloating;
-
-		if (_vpFloating)
-		{
-			// Tamaño y posición inicial de la ventana flotante
-			_vpW = Std.int((SW - (rightPanelVisible ? RIGHT_W : 0)) * 0.65);
-			_vpH = Std.int(_gameH() * 0.65);
-			_vpX = (SW - (rightPanelVisible ? RIGHT_W : 0) - _vpW) / 2;
-			_vpY = TOP_H + (_gameH() - _vpH) / 2;
-			_buildFloatingWindowUI();
-			showStatus('🎮 Viewport flotante activado — arrastra el título, esquina SE para redimensionar', 4.0);
-		}
-		else
-		{
-			// Destruir el marco
-			_destroyFloatingWindowUI();
-			showStatus('🎮 Viewport normal', 1.5);
-		}
-		_applyViewportToCam();
-		if (_vpFloatBtn != null)
-		{
-			_vpFloatBtn.makeGraphic(34, 29, _vpFloating ? 0xFF1A4A1A : 0xFF1A2A1A);
-		}
-	}
-
-	function _buildFloatingWindowUI():Void
-	{
-		_destroyFloatingWindowUI();
-
-		// Borde del viewport flotante
-		_vpBorder = new FlxSprite(_vpX - 2, _vpY - 20).makeGraphic(_vpW + 4, _vpH + 22, 0x00000000, true);
-		flixel.util.FlxSpriteUtil.drawRect(_vpBorder, 0, 0, _vpW + 4, _vpH + 22, 0x00000000);
-		flixel.util.FlxSpriteUtil.drawRect(_vpBorder, 0, 0, _vpW + 4, 2, C_ACCENT);
-		flixel.util.FlxSpriteUtil.drawRect(_vpBorder, 0, _vpH + 20, _vpW + 4, 2, C_ACCENT);
-		flixel.util.FlxSpriteUtil.drawRect(_vpBorder, 0, 0, 2, _vpH + 22, C_ACCENT);
-		flixel.util.FlxSpriteUtil.drawRect(_vpBorder, _vpW + 2, 0, 2, _vpH + 22, C_ACCENT);
-		_vpBorder.scrollFactor.set(); _vpBorder.cameras = [camHUD]; add(_vpBorder);
-
-		// Título / drag handle
-		_vpTitleBar = new FlxSprite(_vpX - 2, _vpY - 20).makeGraphic(_vpW + 4, 20, 0xCC101020);
-		_vpTitleBar.scrollFactor.set(); _vpTitleBar.cameras = [camHUD]; add(_vpTitleBar);
-
-		_vpTitleTxt = new FlxText(_vpX + 4, _vpY - 17, _vpW - 60, '🎮 GAME VIEW  —  drag to move | SE corner to resize  |  scroll = zoom', 9);
-		_vpTitleTxt.setFormat(Paths.font('vcr.ttf'), 9, C_ACCENT, LEFT);
-		_vpTitleTxt.scrollFactor.set(); _vpTitleTxt.cameras = [camHUD]; add(_vpTitleTxt);
-
-		// Esquina SE para resize (triángulo visual)
-		_vpHandleCorner = new FlxSprite(_vpX + _vpW - 14, _vpY + _vpH - 14).makeGraphic(14, 14, C_ACCENT);
-		_vpHandleCorner.alpha = 0.5;
-		_vpHandleCorner.scrollFactor.set(); _vpHandleCorner.cameras = [camHUD]; add(_vpHandleCorner);
-	}
-
-	function _destroyFloatingWindowUI():Void
-	{
-		function kill(s:FlxSprite) { if (s != null) { remove(s); s.destroy(); } }
-		function killT(t:FlxText)  { if (t != null) { remove(t); t.destroy(); } }
-		kill(_vpBorder);     _vpBorder     = null;
-		kill(_vpTitleBar);   _vpTitleBar   = null;
-		killT(_vpTitleTxt);  _vpTitleTxt   = null;
-		kill(_vpHandleCorner); _vpHandleCorner = null;
-	}
-
-	function _repositionFloatingWindowUI():Void
-	{
-		if (!_vpFloating) return;
-		if (_vpBorder != null)
-		{
-			_vpBorder.x = _vpX - 2;
-			_vpBorder.y = _vpY - 20;
-			_vpBorder.makeGraphic(_vpW + 4, _vpH + 22, 0x00000000, true);
-			flixel.util.FlxSpriteUtil.drawRect(_vpBorder, 0, 0, _vpW + 4, 2, C_ACCENT);
-			flixel.util.FlxSpriteUtil.drawRect(_vpBorder, 0, _vpH + 20, _vpW + 4, 2, C_ACCENT);
-			flixel.util.FlxSpriteUtil.drawRect(_vpBorder, 0, 0, 2, _vpH + 22, C_ACCENT);
-			flixel.util.FlxSpriteUtil.drawRect(_vpBorder, _vpW + 2, 0, 2, _vpH + 22, C_ACCENT);
-		}
-		if (_vpTitleBar  != null) { _vpTitleBar.x = _vpX - 2; _vpTitleBar.y = _vpY - 20; _vpTitleBar.makeGraphic(_vpW + 4, 20, 0xCC101020); }
-		if (_vpTitleTxt  != null) { _vpTitleTxt.x = _vpX + 4; _vpTitleTxt.y = _vpY - 17; }
-		if (_vpHandleCorner != null) { _vpHandleCorner.x = _vpX + _vpW - 14; _vpHandleCorner.y = _vpY + _vpH - 14; }
-	}
-
-	function _handleGameViewport():Void
-	{
-		if (!_vpFloating) return;
-
-		var mx = FlxG.mouse.x;
-		var my = FlxG.mouse.y;
-
-		// ── Inicio de drag (título) / resize (esquina SE) ────────────────────
-		if (FlxG.mouse.justPressed)
-		{
-			// Resize: esquina SE (14×14)
-			var inSE = mx >= _vpX + _vpW - 14 && mx <= _vpX + _vpW + 2
-			        && my >= _vpY + _vpH - 14 && my <= _vpY + _vpH + 2;
-			if (inSE)
-			{
-				_vpResizing   = true;
-				_vpResizeDir  = 'se';
-				_vpResStartX  = mx;
-				_vpResStartY  = my;
-				_vpResStartW  = _vpW;
-				_vpResStartH  = _vpH;
-			}
-			else
-			{
-				// Drag: barra de título
-				var inTitle = mx >= _vpX - 2 && mx <= _vpX + _vpW + 2
-				           && my >= _vpY - 20 && my <= _vpY;
-				if (inTitle)
-				{
-					_vpDragging = true;
-					_vpDragOffX = mx - _vpX;
-					_vpDragOffY = my - _vpY;
-				}
-			}
-		}
-
-		if (FlxG.mouse.justReleased)
-		{
-			_vpDragging = false;
-			_vpResizing = false;
-		}
-
-		// ── Drag posición ────────────────────────────────────────────────────
-		if (_vpDragging)
-		{
-			_vpX = FlxMath.bound(mx - _vpDragOffX, 0, SW - _vpW);
-			_vpY = FlxMath.bound(my - _vpDragOffY, TOP_H, SH - _vpH - 40);
-			_applyViewportToCam();
-			_repositionFloatingWindowUI();
-		}
-
-		// ── Resize ────────────────────────────────────────────────────────────
-		if (_vpResizing)
-		{
-			var dx = mx - _vpResStartX;
-			var dy = my - _vpResStartY;
-			_vpW = Std.int(Math.max(_vpMinW, _vpResStartW + dx));
-			_vpH = Std.int(Math.max(_vpMinH, _vpResStartH + dy));
-			// Clamp al área visible
-			_vpW = Std.int(Math.min(_vpW, SW - Std.int(_vpX) - (rightPanelVisible ? RIGHT_W : 0)));
-			_vpH = Std.int(Math.min(_vpH, SH - Std.int(_vpY) - STATUS_H));
-			_applyViewportToCam();
-			_repositionFloatingWindowUI();
-		}
-
-		// ── Scroll en el viewport flotante = zoom ─────────────────────────────
-		var inViewport = mx >= _vpX && mx <= _vpX + _vpW && my >= _vpY && my <= _vpY + _vpH;
-		if (inViewport && FlxG.mouse.wheel != 0 && !FlxG.keys.pressed.CONTROL)
-		{
-			_gameZoom = FlxMath.bound(_gameZoom * (FlxG.mouse.wheel > 0 ? 1.15 : 0.87), 0.2, 3.0);
-			if (camGame != null) camGame.zoom = _gameZoom;
-			showStatus('Zoom: ${Math.round(_gameZoom * 100)}%', 0.8);
-		}
-	}
-
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Character drag handles
-	// ─────────────────────────────────────────────────────────────────────────
-
-	function _setupCharHandles():Void
-	{
-		_charHandles = [];
-		for (slot in characterSlots)
-		{
-			if (slot.character == null) continue;
-			var h = new FlxSprite(0, 0).makeGraphic(16, 16, 0xBBFFFFFF, true);
-			flixel.util.FlxSpriteUtil.drawCircle(h, 8, 8, 7, 0xBBFFFF00);
-			h.scrollFactor.set(1, 1); // sigue al mundo (camGame)
-			h.cameras = [camGame];
-			h.visible = false;
-			add(h);
-			_charHandles.push({spr: h, char: slot.character});
-		}
-	}
-
-	function _updateCharHandles():Void
-	{
-		for (entry in _charHandles)
-		{
-			if (entry.spr == null || entry.char == null) continue;
-			entry.spr.visible = _showCharHandles;
-			if (_showCharHandles)
-			{
-				// Centro visual del personaje
-				entry.spr.x = entry.char.x + entry.char.width  / 2 - 8;
-				entry.spr.y = entry.char.y + entry.char.height / 4  - 8;
-			}
-		}
-	}
-
-	function _handleCharDrag():Void
-	{
-		if (!_showCharHandles) return;
-		var mx = FlxG.mouse.x;
-		var my = FlxG.mouse.y;
-
-		if (FlxG.mouse.justPressed && _dragChar == null)
-		{
-			for (entry in _charHandles)
-			{
-				if (entry.spr == null || !entry.spr.visible) continue;
-				if (FlxG.mouse.overlaps(entry.spr, camGame))
-				{
-					_dragChar    = entry.char;
-					_dragCharOffX = mx - entry.char.x;
-					_dragCharOffY = my - entry.char.y;
-					break;
-				}
-			}
-		}
-
-		if (_dragChar != null && FlxG.mouse.pressed)
-		{
-			_dragChar.x = mx - _dragCharOffX;
-			_dragChar.y = my - _dragCharOffY;
-		}
-
-		if (FlxG.mouse.justReleased) _dragChar = null;
-	}
-
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Tween event builder helpers
-	// ─────────────────────────────────────────────────────────────────────────
-
-	function _onEventTypeSelected(id:String):Void
-	{
-		var selectedIdx = Std.parseInt(id);
-		if (selectedIdx == null) return;
-		var eventTypeList = _getEventTypeList();
-		if (selectedIdx < 0 || selectedIdx >= eventTypeList.length) return;
-		var typeName = eventTypeList[selectedIdx];
-		_setTweenBuilderVisible(typeName.toLowerCase().contains('tween'));
-	}
-
-	function _setTweenBuilderVisible(v:Bool):Void
-	{
-		for (el in _tweenBuilderGroup)
-			if (el != null) el.visible = v;
-	}
-
-	function _buildTweenValue():Void
-	{
-		var target   = _tweenTargetInput  != null ? _tweenTargetInput.text.trim()  : 'camGame';
-		var prop     = _tweenPropInput    != null ? _tweenPropInput.text.trim()    : 'zoom';
-		var fromVal  = _tweenFromInput    != null ? _tweenFromInput.text.trim()    : '';
-		var toVal    = _tweenToInput      != null ? _tweenToInput.text.trim()      : '1.2';
-		var dur      = _tweenDurInput     != null ? _tweenDurInput.text.trim()     : '1.0';
-		var ease     = _tweenEaseDropdown != null ? _tweenEaseDropdown.selectedLabel : 'linear';
-
-		// Formato: target.property|toValue|duration|ease|fromValue
-		var value = '$target.$prop|$toVal|$dur|$ease';
-		if (fromVal != '') value += '|from:$fromVal';
-
-		if (evtValueInput != null) evtValueInput.text = value;
-		if (evtTypeDropdown != null) evtTypeDropdown.selectedLabel = 'Tween';
-		showStatus('Tween value generado: $value', 3.0);
-	}
-
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Note skin + Song meta live edit
-	// ─────────────────────────────────────────────────────────────────────────
-
-	function _getAvailableNoteSkins():Array<String>
-	{
-		var skins = ['default'];
-		// Intentar leer de Paths si está disponible
-		#if sys
-		var dir = Paths.resolve('images/NOTE_assets');
-		if (sys.FileSystem.exists(dir))
-		{
-			for (f in sys.FileSystem.readDirectory(dir))
-				if (f.endsWith('.png') || f.endsWith('.xml'))
-				{
-					var name = f.split('.')[0];
-					if (!skins.contains(name)) skins.push(name);
-				}
-		}
-		#end
-		if (skins.length < 2) skins = skins.concat(['pixel','week6','neon','arrows']);
-		return skins;
-	}
-
-	function _applyNoteSkin(skin:String):Void
-	{
-		_currentNoteSkin = skin;
-		// Actualizar el meta del PlayState (SwagSong puede no tener noteSkin nativo → Reflect)
-		if (PlayState.SONG != null)
-		{
-			final cur:Dynamic = Reflect.field(PlayState.SONG, 'noteSkin');
-			if (cur == null || cur != skin)
-			{
-				Reflect.setField(PlayState.SONG, 'noteSkin', skin);
-				hasUnsaved = true;
-				_updateUnsavedDot();
-			}
-		}
-		// Recargar el HUD si soporta reloadNoteSkin (reflección para no romper builds)
-		if (uiManager != null)
-		{
-			try { Reflect.callMethod(uiManager, Reflect.field(uiManager, 'reloadNoteSkin'), [skin]); }
-			catch (e:Dynamic) { /* método no disponible en esta build */ }
-		}
-		showStatus('Note skin: $skin (guarda con F5 para persistir)', 3.0);
-	}
-
-	/**
-	 * Cicla entre cuatro presets de layout del viewport de juego:
-	 *   0 = Full  — maximiza la ventana de gameplay, oculta panel + timeline
-	 *   1 = Normal — layout por defecto (panel + timeline visibles)
-	 *   2 = Compact — timeline oculta, panel visible, viewport más grande
-	 *   3 = Side-by-side — panel izquierdo de 40%, viewport derecho 60%
-	 */
-	function _cycleLayoutPreset():Void
-	{
-		_layoutPreset = (_layoutPreset + 1) % 4;
-
-		switch (_layoutPreset)
-		{
-			case 0: // Full — sin panel ni timeline
-				if (rightPanelVisible) _toggleRightPanel();
-				if (timelineVisible)   _toggleTimeline();
-				_gameZoom = 1.0;
-				if (camGame != null) camGame.zoom = _gameZoom;
-				showStatus('Layout: Full (panel+timeline ocultos)', 2.0);
-
-			case 1: // Normal
-				if (!rightPanelVisible) _toggleRightPanel();
-				if (!timelineVisible)   _toggleTimeline();
-				_gameZoom = 1.0;
-				if (camGame != null) camGame.zoom = _gameZoom;
-				showStatus('Layout: Normal', 2.0);
-
-			case 2: // Compact — timeline oculta
-				if (!rightPanelVisible) _toggleRightPanel();
-				if (timelineVisible)    _toggleTimeline();
-				_gameZoom = 0.9;
-				if (camGame != null) camGame.zoom = _gameZoom;
-				showStatus('Layout: Compact (timeline oculta)', 2.0);
-
-			case 3: // Side-by-side
-				if (!rightPanelVisible) _toggleRightPanel();
-				if (timelineVisible)    _toggleTimeline();
-				_gameZoom = 0.55;
-				if (camGame != null) camGame.zoom = _gameZoom;
-				showStatus('Layout: Side-by-side (juego + panel)', 2.0);
-		}
-
-		rebuildTimelineRuler();
-		rebuildTimelineEventSprites();
-		if (!_vpFloating) _applyViewportToCam();
-	}
-
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Navigation
-	// ─────────────────────────────────────────────────────────────────────────
-
 	function _goBack():Void
 	{
-		if (_unsavedDlg != null) return; // dialog already open
+		if (_unsavedDlg != null) return;
 		if (hasUnsaved)
 		{
 			_unsavedDlg = new UnsavedChangesDialog([camHUD]);
-			_unsavedDlg.onSaveAndExit = () -> { savePSEData(); _exitNow(); };
-			_unsavedDlg.onSave        = () -> { savePSEData(); remove(_unsavedDlg); _unsavedDlg = null; };
-			_unsavedDlg.onExit        = () -> { _exitNow(); };
+			_unsavedDlg.onSaveAndExit = () -> { _savePSEData(); _exitNow(); };
+			_unsavedDlg.onSave        = () -> { _savePSEData(); remove(_unsavedDlg); _unsavedDlg = null; };
+			_unsavedDlg.onExit        = _exitNow;
 			add(_unsavedDlg);
 		}
-		else
-		{
-			_exitNow();
-		}
+		else _exitNow();
 	}
 
 	function _exitNow():Void
 	{
 		funkin.system.CursorManager.hide();
-		syncAudio(false);
+		_syncAudio(false);
 		StateTransition.switchState(new FreeplayEditorState());
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
 	//  Destroy
 	// ─────────────────────────────────────────────────────────────────────────
-
 	override public function destroy():Void
 	{
-		// Destruir scripts activos
-		for (key in scriptInstances.keys())
-		{
-			var inst = scriptInstances.get(key);
-			if (inst != null) inst.active = false;
-		}
+		for (k in scriptInstances.keys()) { var i = scriptInstances.get(k); if (i != null) i.active = false; }
 		scriptInstances.clear();
 
-		if (vocals    != null) { vocals.stop();    vocals.destroy();    vocals    = null; }
-		if (vocalsBf  != null) { vocalsBf.stop();  vocalsBf.destroy();  vocalsBf  = null; }
-		if (vocalsDad != null) { vocalsDad.stop(); vocalsDad.destroy(); vocalsDad = null; }
+		// Llamar onDestroy en scripts de la canción y limpiar todo
+		ScriptHandler.callOnScripts('onDestroy', ScriptHandler._argsEmpty);
+		ScriptHandler.clearSongScripts();
+		EventManager.clear();
 
-		// Destruir vocales del nuevo mapa multi-personaje
-		for (snd in vocalsMap)
-			if (snd != null) { snd.stop(); snd.destroy(); }
+		if (vocals    != null) { vocals.stop();    vocals.destroy();    }
+		if (vocalsBf  != null) { vocalsBf.stop();  vocalsBf.destroy();  }
+		if (vocalsDad != null) { vocalsDad.stop(); vocalsDad.destroy(); }
+		for (s in vocalsMap) if (s != null) { s.stop(); s.destroy(); }
 		vocalsMap.clear();
 
-		for (s in tlEventSprites)
-		{
-			if (s.labelTxt != null) s.labelTxt.destroy();
-			s.destroy();
-		}
-		tlEventSprites = [];
-
-		// Destruir char handles
-		for (entry in _charHandles)
-			if (entry.spr != null) { remove(entry.spr); entry.spr.destroy(); }
-		_charHandles = [];
-
-		// Limpiar ventana flotante
-		_destroyFloatingWindowUI();
-
-		// Restaurar camGame a pantalla completa para que no quede "pequeño" en el estado siguiente
-		if (camGame != null) { camGame.x = 0; camGame.y = 0; camGame.width = SW; camGame.height = SH; }
+		for (b in eventBlocks) { if (b.lblTxt != null) b.lblTxt.destroy(); b.destroy(); }
+		eventBlocks = [];
 
 		#if sys
-		if (_windowCloseFn != null)
-		{
-			try { lime.app.Application.current.window.onClose.remove(_windowCloseFn); } catch (_) {}
-			_windowCloseFn = null;
-		}
+		if (_windowCloseFn != null) try { lime.app.Application.current.window.onClose.remove(_windowCloseFn); } catch(_) {}
 		#end
 
+		if (camGame != null) { camGame.x = 0; camGame.y = 0; camGame.width = SW; camGame.height = SH; }
 		super.destroy();
 	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  Helper: MiniBtn2
+//  PSEBtn  — simple button with hover highlight
 // ═══════════════════════════════════════════════════════════════════════════════
-
-private class MiniBtn2 extends FlxSprite
+private class PSEBtn extends FlxSprite
 {
 	public var label   : FlxText;
 	public var onClick : Void->Void;
-	var _hovered       : Bool = false;
-	var _baseColor     : Int;
-	var _hoverColor    : Int;
+	var _base : Int; var _hover : Int; var _over:Bool = false;
 
-	public function new(x:Float, y:Float, w:Int, h:Int, txt:String, color:Int, txtColor:Int, ?cb:Void->Void)
+	public function new(x:Float, y:Float, w:Int, h:Int, lbl:String, col:Int, txtCol:Int, ?cb:Void->Void)
 	{
-		super(x, y);
-		makeGraphic(w, h, color);
-		_baseColor  = color;
-		_hoverColor = _lightenColor(color, 15);
-		onClick     = cb;
-
-		label = new FlxText(x, y, w, txt, 11);
-		label.setFormat(Paths.font('vcr.ttf'), 11, txtColor, CENTER);
+		super(x, y); makeGraphic(w, h, col); _base = col; _hover = _lighten(col, 18); onClick = cb;
+		label = new FlxText(x, y + (h - 12) / 2, w, lbl, 11);
+		label.setFormat(Paths.font('vcr.ttf'), 11, txtCol, CENTER);
 		label.scrollFactor.set();
 	}
 
-	// Propagate camera assignment to the label so it always renders on the same
-	// camera as the button body (fixes text appearing in camGame/world space).
-	override private function set_cameras(value:Array<flixel.FlxCamera>):Array<flixel.FlxCamera>
-	{
-		if (label != null) label.cameras = value;
-		return super.set_cameras(value);
-	}
+	override private function set_cameras(c:Array<flixel.FlxCamera>):Array<flixel.FlxCamera>
+	{ if (label != null) label.cameras = c; return super.set_cameras(c); }
 
-	// Auto-call updateInput so buttons inside coolui.CoolUIGroup tabs work without manual wiring.
-	override public function update(elapsed:Float):Void
-	{
-		super.update(elapsed);
-		if (alive && exists && visible) updateInput();
-	}
+	override public function update(elapsed:Float):Void { super.update(elapsed); if (alive && exists && visible) updateInput(); }
 
 	public function updateInput():Void
 	{
-		// camera-aware overlap so hit-boxes work regardless of coolui.CoolUIGroup tab offsets
 		var cam = (cameras != null && cameras.length > 0) ? cameras[0] : FlxG.camera;
-		var over = FlxG.mouse.overlaps(this, cam);
-
-		if (over && !_hovered)
-		{
-			makeGraphic(Std.int(width), Std.int(height), _hoverColor);
-			_hovered = true;
-		}
-		else if (!over && _hovered)
-		{
-			makeGraphic(Std.int(width), Std.int(height), _baseColor);
-			_hovered = false;
-		}
-
-		// Keep label centred on the button body (position may be changed by coolui.CoolUIGroup layout)
-		label.x = x;
-		label.y = y + (height - label.height) / 2;
-
-		if (over && FlxG.mouse.justPressed && onClick != null)
-			onClick();
+		var ov  = FlxG.mouse.overlaps(this, cam);
+		if (ov && !_over) { makeGraphic(Std.int(width), Std.int(height), _hover); _over = true; }
+		else if (!ov && _over) { makeGraphic(Std.int(width), Std.int(height), _base); _over = false; }
+		label.x = x; label.y = y + (height - label.height) / 2;
+		if (ov && FlxG.mouse.justPressed && onClick != null) onClick();
 	}
 
-	/** Lightens a packed 0xAARRGGBB color by `amount` (0-100). */
-	static function _lightenColor(c:Int, amount:Int):Int
+	static function _lighten(c:Int, a:Int):Int
 	{
-		final a = (c >> 24) & 0xFF;
-		var r = (c >> 16) & 0xFF;
-		var g = (c >>  8) & 0xFF;
-		var b =  c        & 0xFF;
-		final f = amount / 100.0;
-		r = Std.int(Math.min(255, r + (255 - r) * f));
-		g = Std.int(Math.min(255, g + (255 - g) * f));
-		b = Std.int(Math.min(255, b + (255 - b) * f));
-		return (a << 24) | (r << 16) | (g << 8) | b;
+		var r = (c>>16)&0xFF; var g = (c>>8)&0xFF; var b = c&0xFF; var f = a/100.0;
+		return ((c>>24)&0xFF)<<24 | Std.int(Math.min(255,r+(255-r)*f))<<16 | Std.int(Math.min(255,g+(255-g)*f))<<8 | Std.int(Math.min(255,b+(255-b)*f));
 	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  Helper: TLEventSprite (sprite en la timeline)
+//  PSEMenuBtn  — menu bar item (passes its index + x to callback)
 // ═══════════════════════════════════════════════════════════════════════════════
-
-private class TLEventSprite extends FlxSprite
+private class PSEMenuBtn extends FlxSprite
 {
-	public var eventId  : String;
-	public var labelTxt : FlxText;
+	public var label  : FlxText;
+	var _base : Int; var _hover : Int; var _over:Bool = false;
+	var _idx  : Int; var _cb : Int->Float->Void;
 
-	/**
-	 * Diamond-shaped event marker in the timeline.
-	 * isSel = true → white outline + brighter fill.
-	 */
-	public function new(x:Float, y:Float, h:Int, color:Int, id:String, isSel:Bool = false)
+	public function new(x:Float, y:Float, text:String, base:Int, hover:Int, txtCol:Int, idx:Int, cb:Int->Float->Void)
 	{
 		super(x, y);
-		// Draw a little diamond: 8px wide, h px tall
-		var w = isSel ? 10 : 8;
-		makeGraphic(w, h, color);
-		eventId = id;
-		alpha   = isSel ? 1.0 : 0.82;
+		var w = text.length * 8 + 12;
+		makeGraphic(w, 22, base); _base = base; _hover = hover; _idx = idx; _cb = cb;
+		label = new FlxText(x + 4, y + 4, w - 8, text, 10);
+		label.setFormat(Paths.font('vcr.ttf'), 10, txtCol, LEFT); label.scrollFactor.set();
+	}
+
+	override private function set_cameras(c:Array<flixel.FlxCamera>):Array<flixel.FlxCamera>
+	{ if (label != null) label.cameras = c; return super.set_cameras(c); }
+
+	override public function update(e:Float):Void { super.update(e); if (alive && exists && visible) updateInput(); }
+
+	public function updateInput():Void
+	{
+		var cam = (cameras != null && cameras.length > 0) ? cameras[0] : FlxG.camera;
+		var ov  = FlxG.mouse.overlaps(this, cam);
+		if (ov && !_over) { makeGraphic(Std.int(width), Std.int(height), _hover); _over = true; }
+		else if (!ov && _over) { makeGraphic(Std.int(width), Std.int(height), _base); _over = false; }
+		label.x = x + 4; label.y = y + 4;
+		if (ov && FlxG.mouse.justPressed && _cb != null) _cb(_idx, x);
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PSEDropdownPanel  — menu dropdown
+// ═══════════════════════════════════════════════════════════════════════════════
+private class PSEDropdownPanel extends FlxGroup
+{
+	var _bg    : FlxSprite;
+	var _btns  : Array<FlxSprite> = [];
+	var _txts  : Array<FlxText>   = [];
+	var _cbs   : Array<Void->Void> = [];
+	static inline final ITEM_H : Int = 22;
+	static inline final C_PANEL_DD : Int = 0xFF1E1E34;
+	static inline final C_HOVER_DD : Int = 0xFF2A2A4A;
+	static inline final C_BORDER_DD: Int = 0xFF383858;
+	static inline final C_TEXT_DD  : Int = 0xFFCCCCEE;
+	static inline final C_SEP_DD   : Int = 0xFF303050;
+
+	public function new(x:Float, y:Float, w:Int, items:Array<{label:String, cb:Void->Void, sep:Bool}>)
+	{
+		super();
+		var h = items.length * ITEM_H + 2;
+		_bg = new FlxSprite(x, y).makeGraphic(w, h, C_PANEL_DD);
+		// Border
+		flixel.util.FlxSpriteUtil.drawRect(_bg, 0, 0, w, 1, C_BORDER_DD);
+		flixel.util.FlxSpriteUtil.drawRect(_bg, 0, h-1, w, 1, C_BORDER_DD);
+		flixel.util.FlxSpriteUtil.drawRect(_bg, 0, 0, 1, h, C_BORDER_DD);
+		flixel.util.FlxSpriteUtil.drawRect(_bg, w-1, 0, 1, h, C_BORDER_DD);
+		add(_bg);
+
+		for (i in 0...items.length)
+		{
+			var item = items[i];
+			var iy   = y + i * ITEM_H + 1;
+			if (item.sep)
+			{
+				var sep = new FlxSprite(x + 4, iy + ITEM_H / 2).makeGraphic(w - 8, 1, C_SEP_DD);
+				sep.alpha = 0.5; add(sep);
+				_btns.push(null); _txts.push(null); _cbs.push(null);
+				continue;
+			}
+			var btn = new FlxSprite(x, iy).makeGraphic(w, ITEM_H, C_PANEL_DD);
+			add(btn); _btns.push(btn);
+
+			var txt = new FlxText(x + 10, iy + 5, w - 20, item.label, 9);
+			txt.setFormat(Paths.font('vcr.ttf'), 9, C_TEXT_DD, LEFT);
+			add(txt); _txts.push(txt);
+			_cbs.push(item.cb);
+		}
+	}
+
+	override public function update(e:Float):Void
+	{
+		super.update(e);
+		for (i in 0...Math.min(_btns.length, _cbs.length).int())
+		{
+			var btn = _btns[i]; if (btn == null) continue;
+			var cam = (cameras != null && cameras.length > 0) ? cameras[0] : FlxG.camera;
+			var ov  = FlxG.mouse.overlaps(btn, cam);
+			btn.makeGraphic(Std.int(btn.width), Std.int(btn.height), ov ? C_HOVER_DD : C_PANEL_DD);
+			if (ov && FlxG.mouse.justPressed && _cbs[i] != null) _cbs[i]();
+		}
+	}
+}
+
+// Extension to get int from float literal
+private class FloatExt
+{
+	public static function int(f:Float):Int return Std.int(f);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PSEEventBlock  — colored rectangular event clip on the timeline
+// ═══════════════════════════════════════════════════════════════════════════════
+private class PSEEventBlock extends FlxSprite
+{
+	public var eventId      : String;
+	public var lblTxt       : FlxText;
+	public var isScriptBlock: Bool = false;
+	var _isSel : Bool;
+
+	public function new(x:Float, y:Float, w:Int, h:Int, col:Int, id:String, isSel:Bool, ?typeName:String = '')
+	{
+		super(x, y);
+		eventId = id; _isSel = isSel;
+
+		// Clip body
+		makeGraphic(Std.int(Math.max(4, w)), h, col, true);
+		// Slightly lighter top edge
+		flixel.util.FlxSpriteUtil.drawRect(this, 0, 0, Std.int(Math.max(4, w)), 2, _lighten(col, 25));
+		// Darker bottom
+		flixel.util.FlxSpriteUtil.drawRect(this, 0, h - 1, Std.int(Math.max(4, w)), 1, _darken(col, 30));
+		// Selection highlight
 		if (isSel)
 		{
-			// Draw white border on top
-			var border = new flixel.FlxSprite(x - 1, y - 1);
-			border.makeGraphic(w + 2, h + 2, flixel.util.FlxColor.WHITE);
-			border.alpha = 0.4;
+			flixel.util.FlxSpriteUtil.drawRect(this, 0, 0, Std.int(Math.max(4, w)), h, 0x00000000);
+			flixel.util.FlxSpriteUtil.drawRect(this, 0, 0, Std.int(Math.max(4, w)), 2, FlxColor.WHITE);
+			flixel.util.FlxSpriteUtil.drawRect(this, 0, 0, 1, h, FlxColor.WHITE);
+			flixel.util.FlxSpriteUtil.drawRect(this, Std.int(Math.max(4, w))-1, 0, 1, h, FlxColor.WHITE);
+		}
+
+		alpha = isSel ? 1.0 : 0.85;
+	}
+
+	static function _lighten(c:Int, a:Int):Int
+	{
+		var r = (c>>16)&0xFF; var g = (c>>8)&0xFF; var b = c&0xFF; var f = a/100.0;
+		return 0xFF000000 | Std.int(Math.min(255,r+(255-r)*f))<<16 | Std.int(Math.min(255,g+(255-g)*f))<<8 | Std.int(Math.min(255,b+(255-b)*f));
+	}
+
+	static function _darken(c:Int, a:Int):Int
+	{
+		var r = (c>>16)&0xFF; var g = (c>>8)&0xFF; var b = c&0xFF; var f = (100-a)/100.0;
+		return 0xFF000000 | Std.int(r*f)<<16 | Std.int(g*f)<<8 | Std.int(b*f);
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PSESlider  — simple horizontal drag slider
+// ═══════════════════════════════════════════════════════════════════════════════
+private class PSESlider extends FlxSprite
+{
+	public var value   : Float;
+	var _min   : Float; var _max : Float;
+	var _onChange : Float->Void;
+	var _dragging : Bool = false;
+	var _bg    : FlxSprite;
+	var _thumb : FlxSprite;
+
+	public function new(x:Float, y:Float, w:Int, min:Float, max:Float, init:Float, ?cb:Float->Void)
+	{
+		super(x, y);
+		makeGraphic(w, 6, 0xFF1A1A2E); _min = min; _max = max; value = init; _onChange = cb;
+		_thumb = new FlxSprite(x, y - 2).makeGraphic(6, 10, 0xFF00C8F0);
+		_updateThumb();
+	}
+
+	override private function set_cameras(c:Array<flixel.FlxCamera>):Array<flixel.FlxCamera>
+	{ if (_thumb != null) _thumb.cameras = c; return super.set_cameras(c); }
+
+	// thumb needs to be added separately by whoever creates this
+	override public function draw():Void { super.draw(); if (_thumb != null) _thumb.draw(); }
+
+	override public function update(elapsed:Float):Void
+	{
+		super.update(elapsed);
+		var cam = (cameras != null && cameras.length > 0) ? cameras[0] : FlxG.camera;
+		var over = FlxG.mouse.overlaps(this, cam) || (if (_thumb != null) FlxG.mouse.overlaps(_thumb, cam) else false);
+		if (FlxG.mouse.justPressed && over) _dragging = true;
+		if (FlxG.mouse.justReleased) _dragging = false;
+		if (_dragging)
+		{
+			var ratio = FlxMath.bound((FlxG.mouse.x - x) / width, 0, 1);
+			value = _min + ratio * (_max - _min);
+			_updateThumb();
+			if (_onChange != null) _onChange(value);
+		}
+	}
+
+	function _updateThumb():Void
+	{
+		if (_thumb == null) return;
+		var ratio = (value - _min) / (_max - _min);
+		_thumb.x = x + ratio * (width - 6);
+		_thumb.y = y - 2;
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PSEContextMenu  — right-click context menu
+// ═══════════════════════════════════════════════════════════════════════════════
+private class PSEContextMenu extends FlxGroup
+{
+	public var closed : Bool = false;
+	var _items : Array<{btn:FlxSprite, lbl:FlxText, cb:Void->Void}> = [];
+	static inline final W : Int = 180;
+	static inline final IH: Int = 22;
+	static inline final C_BG : Int = 0xFF1C1C30;
+	static inline final C_HV : Int = 0xFF2C2C4A;
+	static inline final C_BD : Int = 0xFF3A3A58;
+	static inline final C_TX : Int = 0xFFCCCCEE;
+
+	public function new(x:Float, y:Float, items:Array<{label:String, cb:Void->Void}>)
+	{
+		super();
+		var h = items.length * IH + 2;
+		// Clamp to screen
+		var cx = Math.min(x, 1280 - W - 2); var cy = Math.min(y, 720 - h - 22);
+
+		var bg = new FlxSprite(cx, cy).makeGraphic(W, h, C_BG);
+		flixel.util.FlxSpriteUtil.drawRect(bg, 0, 0, W, 1, C_BD);
+		flixel.util.FlxSpriteUtil.drawRect(bg, 0, h-1, W, 1, C_BD);
+		flixel.util.FlxSpriteUtil.drawRect(bg, 0, 0, 1, h, C_BD);
+		flixel.util.FlxSpriteUtil.drawRect(bg, W-1, 0, 1, h, C_BD);
+		add(bg);
+
+		for (i in 0...items.length)
+		{
+			var it  = items[i];
+			var iy  = cy + i * IH + 1;
+			var btn = new FlxSprite(cx, iy).makeGraphic(W, IH, C_BG);
+			var lbl = new FlxText(cx + 10, iy + 5, W - 20, it.label, 9);
+			lbl.setFormat(Paths.font('vcr.ttf'), 9, C_TX, LEFT);
+			add(btn); add(lbl);
+			_items.push({ btn:btn, lbl:lbl, cb:it.cb });
+		}
+	}
+
+	public function updateInput():Void
+	{
+		var cam = (cameras != null && cameras.length > 0) ? cameras[0] : FlxG.camera;
+		// Close on click outside
+		var overSelf = false;
+		for (it in _items) if (FlxG.mouse.overlaps(it.btn, cam)) { overSelf = true; break; }
+		if (FlxG.mouse.justPressed && !overSelf) { closed = true; return; }
+
+		for (it in _items)
+		{
+			var ov = FlxG.mouse.overlaps(it.btn, cam);
+			it.btn.makeGraphic(W, IH, ov ? C_HV : C_BG);
+			if (ov && FlxG.mouse.justPressed && it.cb != null) { it.cb(); closed = true; return; }
 		}
 	}
 }
