@@ -435,7 +435,7 @@ class CameraController {
 
 	/**
 	 * Restaura el estado inicial de la cámara (target, zoom, lerp).
-	 * Llamar desde PlayState._finishRestart() y PlayStateEditorState._onRestart()
+	 * Llamar desde PlayState._finishRestart() y GameplayEditorState._onRestart()
 	 * DESPUÉS de que EventManager.rewindToStart() haya marcado los eventos como
 	 * no disparados, para que la cámara quede donde estaba al inicio de la canción.
 	 */

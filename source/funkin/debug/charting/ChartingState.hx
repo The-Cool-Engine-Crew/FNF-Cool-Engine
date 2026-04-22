@@ -4,8 +4,6 @@ import coolui.CoolNumericStepper;
 import coolui.CoolCheckBox;
 import coolui.CoolDropDown;
 import coolui.CoolTabMenu;
-
-
 import funkin.data.Conductor.BPMChangeEvent;
 import funkin.data.Section.SwagSection;
 import funkin.data.Song.SwagSong;
@@ -16,8 +14,6 @@ import flixel.FlxG;
 import flixel.FlxSprite;
 import flixel.FlxCamera;
 import flixel.addons.display.FlxGridOverlay;
-
-
 import flixel.group.FlxGroup.FlxTypedGroup;
 import flixel.group.FlxGroup;
 import flixel.math.FlxMath;
@@ -471,6 +467,37 @@ class ChartingState extends funkin.states.MusicBeatState
 
 		// Capturar dificultad actual para guardar el chart con el nombre correcto
 		curDiffSuffix = funkin.data.CoolUtil.difficultySuffix();
+
+		// BUGFIX: PlayState previously cleared all sectionNotes after generateNotes()
+		// as a GC optimization. Detect this case and reload from disk so the editor
+		// doesn't open with an empty grid despite the song having notes.
+		if (PlayState.SONG != null && _song.song != null)
+		{
+			var _hasAnyNote = false;
+			if (_song.notes != null)
+				for (_sec in _song.notes)
+					if (_sec.sectionNotes != null && _sec.sectionNotes.length > 0)
+					{ _hasAnyNote = true; break; }
+
+			if (!_hasAnyNote)
+			{
+				final _reloadInput = (_song.song.toLowerCase()) + curDiffSuffix;
+				try
+				{
+					final _reloaded = funkin.data.Song.loadFromJson(_reloadInput, _song.song.toLowerCase());
+					if (_reloaded != null)
+					{
+						trace('[ChartingState] sectionNotes were empty — reloaded chart from disk');
+						_song = _reloaded;
+						PlayState.SONG = _song;
+					}
+				}
+				catch (e:Dynamic)
+				{
+					trace('[ChartingState] Could not reload song from disk: ' + e);
+				}
+			}
+		}
 
 		// Normalizar sectionBeats → lengthInSteps (charts .level cargados desde disco
 		// pueden llegar con sectionBeats en vez de lengthInSteps; sin esto el grid
@@ -4073,10 +4100,6 @@ class ChartingState extends funkin.states.MusicBeatState
 				// Para noteData ≥ 8 (grupos extra): visualColumn = daNoteData sin cambios
 
 				var note:Note = new Note(daStrumTime, visualColumn % 4);
-				// FIX: Forzar un gráfico sólido para la vista del editor.
-				// Note.loadSkin() puede dejar el sprite transparente (0x00000000) si la
-				// skin no está disponible en el contexto del editor, haciendo la nota invisible.
-				// note.color sobre pixels transparentes no tiene efecto — se necesita makeGraphic.
 				note.setGraphicSize(GRID_SIZE, GRID_SIZE);
 				note.updateHitbox();
 				note.x = gridBG.x + (GRID_SIZE * visualColumn);
@@ -4099,7 +4122,6 @@ class ChartingState extends funkin.states.MusicBeatState
 					note.color = baseColor;
 				}
 
-				// ✅ IMPORTANTE: Las notas NO deben scrollear
 				note.scrollFactor.set();
 
 				curRenderedNotes.add(note);

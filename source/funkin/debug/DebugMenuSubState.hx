@@ -18,7 +18,7 @@ import funkin.debug.charting.ChartingState;
 import funkin.debug.editors.StageEditor;
 import funkin.debug.editors.DialogueEditor;
 import funkin.debug.editors.CutsceneEditorState;
-import funkin.debug.editors.PlayStateEditorState;
+import funkin.debug.editors.GameplayEditorState;
 import funkin.data.Song;
 import funkin.data.CoolUtil;
 import haxe.Json;
@@ -270,7 +270,7 @@ class DebugMenuSubState extends FlxSubState
 			case DIALOGUE_EDITOR:   StateTransition.switchState(new DialogueEditor());
 			case CUTSCENE_EDITOR:   StateTransition.switchState(new CutsceneEditorState());
 			case MODCHART_EDITOR:   StateTransition.switchState(new ModChartEditorState());
-			case PLAYSTATE_EDITOR:  StateTransition.switchState(new PlayStateEditorState(songData));
+			case PLAYSTATE_EDITOR:  StateTransition.switchState(new GameplayEditorState(songData));
 		}
 	}
 

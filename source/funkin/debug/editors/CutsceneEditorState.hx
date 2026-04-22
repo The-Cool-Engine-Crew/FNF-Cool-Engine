@@ -2,8 +2,6 @@ package funkin.debug.editors;
 import funkin.debug.EditorDialogs.UnsavedChangesDialog;
 import coolui.CoolInputText;
 import coolui.CoolDropDown;
-
-
 import flixel.FlxCamera;
 import flixel.FlxG;
 import flixel.FlxSprite;
@@ -11,8 +9,6 @@ import flixel.group.FlxGroup.FlxTypedGroup;
 import flixel.math.FlxMath;
 import flixel.text.FlxText;
 import flixel.util.FlxTimer;
-
-
 import funkin.data.Conductor;
 import funkin.debug.MediaTransportBar;
 import funkin.gameplay.PlayState;

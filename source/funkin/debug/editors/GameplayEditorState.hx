@@ -112,7 +112,7 @@ typedef PSEData =
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  PlayStateEditorState  v2.0 — FL Studio–style block timeline
+//  GameplayEditorState  v2.0 — FL Studio–style block timeline
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -144,7 +144,7 @@ typedef PSEData =
  *   Double-click track — Create event at cursor
  *   Click event block — Select + show in Inspector
  */
-class PlayStateEditorState extends funkin.states.MusicBeatState
+class GameplayEditorState extends funkin.states.MusicBeatState
 {
 	// ── Layout constants ──────────────────────────────────────────────────────
 	static inline final SW           : Int = 1280;

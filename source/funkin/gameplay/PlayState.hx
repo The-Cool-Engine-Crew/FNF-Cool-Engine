@@ -1057,10 +1057,6 @@ class PlayState extends funkin.states.MusicBeatState {
 		if (_rawInst != null)
 			FlxG.sound.music = _rawInst;
 
-		// FIX inst audible al cargar: CoreAudio.setInst() llama register() -> _applyTo()
-		// que sobreescribe snd.volume con baseVolume (1.0), deshaciendo el volume=0
-		// puesto antes. Silenciar DESPUES de setInst garantiza que el inst quede mudo
-		// hasta que startSong() lo active explicitamente via CoreAudio.play().
 		if (_rawInst != null) {
 			_rawInst.volume = 0;
 			_rawInst.pause();
@@ -1072,12 +1068,6 @@ class PlayState extends funkin.states.MusicBeatState {
 		NotePool.clear();
 		noteManager.generateNotes(SONG);
 		generatedMusic = true;
-
-		if (SONG.notes != null) {
-			for (section in SONG.notes)
-				if (section != null && section.sectionNotes != null)
-					section.sectionNotes = [];
-		}
 
 		funkin.cache.PathsCache.instance.flushGPUCache();
 		#if cpp
@@ -2038,6 +2028,8 @@ class PlayState extends funkin.states.MusicBeatState {
 
 	override function beatHit() {
 		super.beatHit();
+		if (isRewinding) return;
+
 		for (hook in _beatHookArr)
 			hook(curBeat);
 		currentStage?.beatHit(curBeat);
@@ -2059,6 +2051,8 @@ class PlayState extends funkin.states.MusicBeatState {
 
 	override function stepHit() {
 		super.stepHit();
+		if (isRewinding) return;
+		
 		for (hook in _stepHookArr)
 			hook(curStep);
 		modChartManager?.onStepHit(curStep);
@@ -2335,9 +2329,12 @@ class PlayState extends funkin.states.MusicBeatState {
 		canPause = false;
 		inCutscene = false;
 
-		// Congelar animaciones durante el rewind
-		for (slot in characterSlots)
-			slot.character?.animation?.pause();
+		for (slot in characterSlots) {
+			if (slot.character != null) {
+				slot.character.animation?.pause();
+				slot.character.active = false;
+			}
+		}
 
 		if (inputHandler != null) {
 			inputHandler.resetMash();
@@ -2376,10 +2373,12 @@ class PlayState extends funkin.states.MusicBeatState {
 		if (scriptsEnabled)
 			ScriptHandler.callOnScripts('onRestart', ScriptHandler._argsEmpty);
 
-		// FIX: usar gameplayTimers en lugar de new FlxTimer() bare.
-		// El manager global no se pausa con el gameplay y el timer podría
-		// disparar su callback con el estado ya destruido (crash / UB).
-		// gameplayTimers se limpia en destroy() via FlxG.plugins.remove().
+		for (slot in characterSlots) {
+			if (slot.character != null) {
+				slot.character.active = true;
+			}
+		}
+
 		final _restartTimer = new flixel.util.FlxTimer(gameplayTimers).start(0.15, function(_) {
 			startCountdown();
 		});
