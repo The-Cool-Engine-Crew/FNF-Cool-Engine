@@ -595,15 +595,38 @@ class Project extends HXProject
   {
     if (!isAndroid()) return;
 
-    config.set("android.target-sdk-version",  33);
+    // Android 15 exige targetSdk >= 35 para apps nuevas/actualizadas en Play Store.
+    // Android 16 (API 36) lo enforcea también para distribución directa.
+    // Subir de 33 → 35 es necesario para que los flags de 16 KB tengan efecto
+    // completo y para evitar restricciones de compatibilidad del SO.
+    config.set("android.target-sdk-version",  35);
     config.set("android.minimum-sdk-version", 21);
     config.set("android.install-location",    "auto");
 
     config.set("android.resizeable-activity", "false");
     config.push("android.meta-data", "android.max_aspect=2.4");
-    
+
     config.push("android.meta-data", "android.notch_support=true");     // Huawei / Honor
     config.push("android.meta-data", "notch.config=portrait|landscape"); // Xiaomi MIUI
+
+    // ── 16 KB memory page size (Android 15+ / API 35+) ────────────────────────
+    //
+    // Android 15 introdujo el requisito de que los .so soporten páginas de 16 KB.
+    // Android 16 (API 36) lo ENFORCEA: si liblime.so o libApplicationMain.so tienen
+    // alineación de 4 KB (el default antiguo del NDK), el linker dinámico del SO
+    // carga los segmentos ELF desalineados → las tablas LSDA de C++ quedan corrompidas
+    // → cualquier excepción de Haxe que se propague por frames de liblime.so llama
+    // a un puntero basura (PC = 0x1) → SIGSEGV al arrancar la app.
+    //
+    // max-page-size=16384  → alinea los segmentos LOAD del ELF a 16 KB.
+    // common-page-size=16384 → ajusta las asunciones del linker para BSS/data.
+    //
+    // Estos flags aplican a libApplicationMain.so (código hxcpp).
+    // Para que liblime.so también quede correctamente alineado hay que compilar
+    // Lime desde fuente (lime rebuild android) con el mismo NDK que genera estos flags.
+    // Ver: https://developer.android.com/guide/practices/page-sizes
+    linkerFlags.push("-Wl,-z,max-page-size=16384");
+    linkerFlags.push("-Wl,-z,common-page-size=16384");
 
     // Permisos Android: se añaden via config (HXProject no tiene androidPermissions)
     var perms = [
