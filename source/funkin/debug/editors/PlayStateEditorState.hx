@@ -6,7 +6,6 @@ import coolui.CoolNumericStepper;
 import coolui.CoolCheckBox;
 import coolui.CoolDropDown;
 import coolui.CoolTabMenu;
-
 import flixel.FlxBasic;
 import flixel.FlxCamera;
 import flixel.FlxG;
@@ -23,7 +22,6 @@ import flixel.tweens.FlxTween;
 import coolui.CoolButton;
 import flixel.util.FlxColor;
 import flixel.util.FlxTimer;
-
 import funkin.data.Conductor;
 import funkin.data.CoolUtil;
 import funkin.data.MetaData;
@@ -1599,14 +1597,14 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	function _iInput(x:Float, y:Float, w:Int, val:String, ?onChange:String->Void):CoolInputText
 	{
 		var inp = new CoolInputText(x, y, w, val, 10);
-		if (onChange != null) inp._onChange = onChange;
+		if (onChange != null) inp.callback = function(text:String, _:String) onChange(text);
 		inp.cameras = [camHUD]; inp.scrollFactor.set(); add(inp); _inspElements.push(inp); return inp;
 	}
 
 	function _iStepper(x:Float, y:Float, w:Int, val:Float, min:Float, max:Float, step:Float, ?onChange:Float->Void):CoolNumericStepper
 	{
 		var sp = new CoolNumericStepper(x, y, step, val, min, max, 2);
-		if (onChange != null) sp._onChange = onChange;
+		if (onChange != null) sp.value_change = onChange;
 		sp.cameras = [camHUD]; sp.scrollFactor.set(); add(sp); _inspElements.push(sp); return sp;
 	}
 
@@ -1620,7 +1618,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	{
 		var chk = new CoolCheckBox(x, y, null, null, label, 200);
 		chk.checked = checked;
-		if (onChange != null) chk._onChecked = onChange;
+		if (onChange != null) chk.callback = onChange;
 		chk.cameras = [camHUD]; chk.scrollFactor.set(); add(chk); _inspElements.push(chk); return chk;
 	}
 
