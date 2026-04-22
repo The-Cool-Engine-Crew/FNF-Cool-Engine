@@ -655,7 +655,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		}
 
 		// Always have at least one custom track slot at end
-		if (!tracks.exists(t -> t.id == 'custom2'))
+		if (!Lambda.exists(tracks, t -> t.id == 'custom2'))
 			tracks.push({ id:'custom2', name:'Custom 2', color:0xFF88CCFF, visible:true, locked:false, height:TL_TRACK_H });
 
 		_rebuildSorted();
@@ -829,7 +829,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		}
 
 		var dd = new PSEDropdownPanel(bx, MENU_H, 200, items);
-		dd.cameras = [camHUD]; dd.scrollFactor.set();
+		dd.cameras = [camHUD];
 		_menuDropdowns.push(dd);
 		add(dd);
 	}
@@ -1467,7 +1467,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 
 		var pathHintTxt = _iLabel(pathHint, ix, ty + 42, 0xFF777799, iw, 8);
 
-		var locDD = new CoolDropDown(ix, ty, saveLocItems.map(function(it) return { id:it.id, label:it.label }),
+		var locDD = new CoolDropDown(ix, ty, saveLocItems.map(function(it) return { name:it.id, label:it.label }),
 			function(id:String)
 			{
 				if (id == 'custom')
@@ -1599,14 +1599,14 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	function _iInput(x:Float, y:Float, w:Int, val:String, ?onChange:String->Void):CoolInputText
 	{
 		var inp = new CoolInputText(x, y, w, val, 10);
-		if (onChange != null) inp.onChange = onChange;
+		if (onChange != null) inp._onChange = onChange;
 		inp.cameras = [camHUD]; inp.scrollFactor.set(); add(inp); _inspElements.push(inp); return inp;
 	}
 
 	function _iStepper(x:Float, y:Float, w:Int, val:Float, min:Float, max:Float, step:Float, ?onChange:Float->Void):CoolNumericStepper
 	{
 		var sp = new CoolNumericStepper(x, y, step, val, min, max, 2);
-		if (onChange != null) sp.onChange = onChange;
+		if (onChange != null) sp._onChange = onChange;
 		sp.cameras = [camHUD]; sp.scrollFactor.set(); add(sp); _inspElements.push(sp); return sp;
 	}
 
@@ -1620,7 +1620,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	{
 		var chk = new CoolCheckBox(x, y, null, null, label, 200);
 		chk.checked = checked;
-		if (onChange != null) chk.onChecked = onChange;
+		if (onChange != null) chk._onChecked = onChange;
 		chk.cameras = [camHUD]; chk.scrollFactor.set(); add(chk); _inspElements.push(chk); return chk;
 	}
 
@@ -2141,7 +2141,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		}
 
 		_ctxMenu = new PSEContextMenu(mx, my, items);
-		_ctxMenu.cameras = [camHUD]; _ctxMenu.scrollFactor.set();
+		_ctxMenu.cameras = [camHUD];
 		add(_ctxMenu);
 	}
 
@@ -2206,7 +2206,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		if (FlxG.keys.justPressed.END  && !_anyInputFocused()) autoSeekTime = songLength - 50;
 
 		// Zoom timeline
-		if (ctrl && FlxG.keys.pressed.EQUALS)  { tlZoom = FlxMath.bound(tlZoom * 1.1, 0.005, 3.0); _rebuildRuler(); _rebuildEventBlocks(); }
+		if (ctrl && FlxG.keys.pressed.PLUS)  { tlZoom = FlxMath.bound(tlZoom * 1.1, 0.005, 3.0); _rebuildRuler(); _rebuildEventBlocks(); }
 		if (ctrl && FlxG.keys.pressed.MINUS)   { tlZoom = FlxMath.bound(tlZoom * 0.9, 0.005, 3.0); _rebuildRuler(); _rebuildEventBlocks(); }
 	}
 
@@ -2649,7 +2649,7 @@ private class PSEDropdownPanel extends FlxGroup
 	override public function update(e:Float):Void
 	{
 		super.update(e);
-		for (i in 0...Math.min(_btns.length, _cbs.length).int())
+		for (i in 0...Std.int(Math.min(_btns.length, _cbs.length)))
 		{
 			var btn = _btns[i]; if (btn == null) continue;
 			var cam = (cameras != null && cameras.length > 0) ? cameras[0] : FlxG.camera;
