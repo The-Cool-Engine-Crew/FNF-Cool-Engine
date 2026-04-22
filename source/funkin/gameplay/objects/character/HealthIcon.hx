@@ -119,8 +119,10 @@ class HealthIcon extends FunkinSprite
 	 */
 	public function updateIcon(char:String, isPlayer:Bool = false):Void
 	{
-		// Evitar reload si no cambió nada
-		if (char == characterName && isPlayer == _isPlayer && frames != null)
+		final _framesAlive = frames != null
+			&& frames.parent != null
+			&& frames.parent.bitmap != null;
+		if (char == characterName && isPlayer == _isPlayer && _framesAlive)
 		{
 			flipX = flipOverride ?? isPlayer;
 			return;
@@ -452,7 +454,7 @@ class HealthIcon extends FunkinSprite
 				var bmp = openfl.display.BitmapData.fromFile(path);
 				if (bmp != null)
 				{
-					g = FlxGraphic.fromBitmapData(bmp, false, path, true);
+					g = funkin.cache.PathsCache.instance.getGraphic(path, bmp);
 					if (g != null)
 						g.persist = true;
 				}
