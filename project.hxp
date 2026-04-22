@@ -625,8 +625,11 @@ class Project extends HXProject
     // Para que liblime.so también quede correctamente alineado hay que compilar
     // Lime desde fuente (lime rebuild android) con el mismo NDK que genera estos flags.
     // Ver: https://developer.android.com/guide/practices/page-sizes
-    linkerFlags.push("-Wl,-z,max-page-size=16384");
-    linkerFlags.push("-Wl,-z,common-page-size=16384");
+    //
+    // HXProject no expone linkerFlags directamente — se pasan como define de hxcpp.
+    // HXCPP_LINK_FLAGS es leído por hxcpp/build/BuildCommon.xml y se inyecta en
+    // la invocación del linker del NDK al compilar libApplicationMain.so.
+    setHaxedef("HXCPP_LINK_FLAGS", "-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384");
 
     // Permisos Android: se añaden via config (HXProject no tiene androidPermissions)
     var perms = [
