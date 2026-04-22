@@ -93,7 +93,6 @@ class PauseSubState extends funkin.states.MusicBeatSubstate {
 			FlxG.cameras.add(_pauseCam, false);
 			_ownedCam = true;
 		} else {
-			// Normal mode: cámara propia para garantizar zoom=1 siempre.
 			_pauseCam = new flixel.FlxCamera();
 			_pauseCam.bgColor = flixel.util.FlxColor.TRANSPARENT;
 			_pauseCam.zoom = 1.0;
@@ -104,13 +103,11 @@ class PauseSubState extends funkin.states.MusicBeatSubstate {
 
 		_cleanSoundList();
 
-		// Música de pausa
-		pauseMusic = new FlxSound().loadEmbedded(Paths.music('breakfast'), true, true);
+		pauseMusic = new FlxSound().loadEmbedded(Paths.music('relaxcoolPause'), true, true);
 		pauseMusic.volume = 0;
 		pauseMusic.play(false, FlxG.random.int(0, Std.int(pauseMusic.length / 2)));
 		FlxG.sound.list.add(pauseMusic);
 
-		// Fondo semitransparente (1×1 escalado para no alocar un bitmap enorme)
 		bg = new FlxSprite().makeGraphic(1, 1, FlxColor.BLACK);
 		bg.setGraphicSize(FlxG.width, FlxG.height);
 		bg.updateHitbox();
@@ -122,7 +119,6 @@ class PauseSubState extends funkin.states.MusicBeatSubstate {
 		var rawSongName:String = PlayState.SONG.song;
 		var formattedSongName:String = rawSongName.charAt(0).toUpperCase() + rawSongName.substring(1);
 
-		// Info de la canción (esquina superior derecha)
 		levelInfo = new FlxText(FlxG.width - 400, 20, 380, formattedSongName, 32);
 		levelInfo.scrollFactor.set();
 		levelInfo.setFormat(Paths.font("Funkin.otf"), 32, FlxColor.WHITE, RIGHT, OUTLINE, FlxColor.BLACK);
@@ -161,19 +157,16 @@ class PauseSubState extends funkin.states.MusicBeatSubstate {
 		levelAuthor.cameras = [_pauseCam];
 		add(levelAuthor);
 
-		// Tweens de entrada
 		FlxTween.tween(bg, {alpha: 0.7}, 0.4, {ease: FlxEase.quartInOut});
 		FlxTween.tween(levelInfo, {alpha: 1, x: levelInfo.x + 10}, 0.4, {ease: FlxEase.quartInOut, startDelay: 0.3});
 		FlxTween.tween(levelDifficulty, {alpha: 1, x: levelDifficulty.x + 10}, 0.4, {ease: FlxEase.quartInOut, startDelay: 0.4});
 		FlxTween.tween(levelDeaths, {alpha: 1, x: levelDeaths.x + 10}, 0.4, {ease: FlxEase.quartInOut, startDelay: 0.5});
 		FlxTween.tween(levelAuthor, {alpha: 1, x: levelAuthor.x + 10}, 0.4, {ease: FlxEase.quartInOut, startDelay: 0.6});
 
-		// Grupo de ítems del menú
 		grpMenuShit = new FlxTypedGroup<Alphabet>();
 		grpMenuShit.cameras = [_pauseCam];
 		add(grpMenuShit);
 
-		// Texto de ayuda (parte inferior)
 		helpText = new FlxText(20, FlxG.height - 40, FlxG.width - 40, "ENTER: Select  |  ARROWS: Navigate  |  ESC: Resume", 16);
 		helpText.setFormat(Paths.font("Funkin.otf"), 22, FlxColor.WHITE, CENTER, OUTLINE, FlxColor.BLACK);
 		helpText.scrollFactor.set();

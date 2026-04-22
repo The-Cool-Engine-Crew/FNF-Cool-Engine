@@ -1,6 +1,6 @@
 # [Cool Engine REBORN (70%)](https://github.com/The-Cool-Engine-Crew/FNF-Cool-Engine)
 
-> **Note**  
+> **Note**
 > This engine is currently a work in progress. If you find any bugs or unexpected behavior, please open an issue in the repository.
 > It may contain [Psych Engine](https://github.com/ShadowMario/FNF-PsychEngine), [NMV](https://github.com/NMVTeam/NightmareVision), [CNE](https://github.com/CodenameCrew/CodenameEngine), and [V-Slice](https://github.com/FunkinCrew/Funkin) code, things just for optimization and to make mod porting possible.
 
@@ -41,11 +41,10 @@
 - https://github.com/The-Cool-Engine-Crew/FNF-Cool-Engine-Build-Beta-Tester - Link
   
 ## The Cool Engine Team Credits
-- [Manux (me)](https://x.com/ManuxAc) - Programmer Friday Night Funkin: Cool Engine
-- [Jloor](https://twitter.com/GamerJloor) - Programmer Friday Night Funkin: Cool Engine
-- [Chasetodie](https://x.com/Chasetodie10) - Programmer Friday Night Funkin: Cool Engine
-- [MrClogsworthYT](https://youtube.com/c/MrClogsworthYT) - Programmer and composer Friday Night Funkin: Cool Engine
-- [Overcharged Dev](https://www.youtube.com/channel/UCkcscIIXyUsfj2DsnNDWQbg/) - Programmer Friday Night Funkin: Cool Engine
+- [Manux (me)](https://x.com/ManuxAc) - Programmer, Artist and Composer Friday Night Funkin: Cool Engine
+- [Juanen100](https://github.com/Juanen100) - Programmer Friday Night Funkin: Cool Engine
+- [Seevent](https://www.youtube.com/@SEEV3NT) - Guest Composer Pause Menu Friday Night Funkin: Cool Engine
+- [MrClogsworthYT](https://youtube.com/c/MrClogsworthYT) -  Composer Friday Night Funkin: Cool Engine
 - [Kass.wav](https://x.com/SoyJulian_XP) and [Zero Artist](https://x.com/zero_artist24) - Artists Friday Night Funkin: Cool Engine
 
 ## FNF
@@ -88,6 +87,14 @@ Once that is done you can open up a command line in the project's directory and 
 
 As for Mac, `lime test mac -debug` will work,
 ----------------------------------------------
+
+## The Cool Engine Team Legacy Credits
+- [Manux (me)](https://x.com/ManuxAc) - Programmer Friday Night Funkin: Cool Engine
+- [Jloor](https://twitter.com/GamerJloor) - Programmer Friday Night Funkin: Cool Engine
+- [Chasetodie](https://x.com/Chasetodie10) - Programmer Friday Night Funkin: Cool Engine
+- [MrClogsworthYT](https://youtube.com/c/MrClogsworthYT) - Programmer and composer Friday Night Funkin: Cool Engine
+- [Overcharged Dev](https://www.youtube.com/channel/UCkcscIIXyUsfj2DsnNDWQbg/) - Programmer Friday Night Funkin: Cool Engine
+- [Kass.wav](https://x.com/SoyJulian_XP) and [Zero Artist](https://x.com/zero_artist24) - Artists Friday Night Funkin: Cool Engine
 
 ADDITIONS IN 0.4.1
 
