@@ -626,6 +626,23 @@ class EventManager
 		trace('[EventManager] Rewind: ${events.length} eventos marcados como no disparados.');
 	}
 
+	/**
+	 * Avanza el puntero hasta `posMs` SIN disparar eventos.
+	 * Los eventos anteriores a `posMs` quedan marcados como disparados
+	 * para que no se re-ejecuten cuando la música llegue a ellos.
+	 * Útil para seek en el editor (no queremos re-ejecutar efectos al scrubear).
+	 */
+	public static function seekTo(posMs:Float):Void
+	{
+		_nextIndex = 0;
+		for (e in events) e.triggered = false;
+		while (_nextIndex < events.length && events[_nextIndex].time < posMs)
+		{
+			events[_nextIndex].triggered = true;
+			_nextIndex++;
+		}
+	}
+
 	// ─── Util ─────────────────────────────────────────────────────────────────
 
 	/** 1 beat = 60 000 / bpm ms  |  1 step = 1 beat / 4 */
