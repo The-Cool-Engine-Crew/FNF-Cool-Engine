@@ -19,16 +19,7 @@ import flixel.tweens.FlxEase;
 import flixel.util.FlxTimer;
 import flixel.addons.display.FlxGridOverlay;
 import flixel.group.FlxGroup.FlxTypedGroup;
-
 import coolui.Cool9Slice;
-
-
-
-
-
-
-
-
 import openfl.net.FileReference;
 import openfl.events.Event;
 import openfl.events.IOErrorEvent;
@@ -104,6 +95,16 @@ class AnimationDebug extends MusicBeatState
 	var velocityPlus:Float = 1;
 	var gridBG:FlxSprite;
 	var showGrid:Bool = true;
+
+	// ── Cache para actualizar labels en-lugar (evita recrear objetos cada frame) ─
+	// generateOffsetTexts() los llena; updateOffsetTexts() los reutiliza.
+	var _offsetLabels:Array<FlxText>  = [];
+	var _ghostBadgeBgs:Array<FlxSprite> = [];
+	var _ghostBadgeLabels:Array<FlxText> = [];
+	var _rowBgs:Array<FlxSprite> = [];
+
+	// Timer reutilizable para el flash amarillo de textInfo (un solo objeto)
+	var _flashTimer:FlxTimer = null;
 
 	// Mouse drag para offsets (click derecho)
 	var isDraggingOffset:Bool = false;
@@ -1547,17 +1548,37 @@ class AnimationDebug extends MusicBeatState
 		ghostAnimIdx = 0;
 		if (addAnimBtn != null)
 			addAnimBtn.label = "Add Animation";
-		dumbTexts.forEach(function(text:FlxText)
+
+		// FIX: cancelar tweens y destruir antes de limpiar para evitar tween-leaks.
+		// Iterar en reversa para no alterar índices al hacer remove.
+		var i = dumbTexts.members.length - 1;
+		while (i >= 0)
 		{
-			dumbTexts.remove(text, true);
-		});
+			var m = dumbTexts.members[i];
+			if (m != null) { FlxTween.cancelTweensOf(m); m.destroy(); }
+			i--;
+		}
 		dumbTexts.clear();
+		// Limpiar caches de referencias — ya fueron destruidos arriba
+		_offsetLabels.resize(0);
+		_ghostBadgeBgs.resize(0);
+		_ghostBadgeLabels.resize(0);
+		_rowBgs.resize(0);
 		animList = [];
 
+		// FIX: destroy() libera la textura de VRAM; remove() solo quita del grupo.
 		if (char != null)
-			layeringbullshit.remove(char);
+		{
+			layeringbullshit.remove(char, true);
+			char.destroy();
+			char = null;
+		}
 		if (ghostChar != null)
-			layeringbullshit.remove(ghostChar);
+		{
+			layeringbullshit.remove(ghostChar, true);
+			ghostChar.destroy();
+			ghostChar = null;
+		}
 
 		ghostChar = new Character(0, 0, character);
 		ghostChar.alpha = 0.5;
@@ -1612,13 +1633,14 @@ class AnimationDebug extends MusicBeatState
 			var rowY = startY + (rowH * daLoop);
 			var isCur = (daLoop == curAnim);
 
-			// Fondo da fila alternado
+			// Fondo de fila alternado
 			var rowBg = new FlxSprite(4, rowY);
 			rowBg.makeGraphic(332, rowH - 1, isCur ? 0x5500E5FF : (daLoop % 2 == 0 ? 0x22FFFFFF : 0x11FFFFFF));
 			rowBg.scrollFactor.set();
 			rowBg.cameras = [camHUD];
 			rowBg.alpha = 0;
 			dumbTexts.add(cast rowBg);
+			_rowBgs.push(rowBg);
 			FlxTween.tween(rowBg, {alpha: 1}, 0.2, {startDelay: daLoop * 0.03, ease: FlxEase.quartOut});
 
 			// Punto de color a la izquierda para la fila activa
@@ -1646,19 +1668,19 @@ class AnimationDebug extends MusicBeatState
 			var text = new FlxText(10, rowY + 3, 295, label, 11);
 			text.scrollFactor.set();
 			text.setBorderStyle(FlxTextBorderStyle.OUTLINE, 0xFF0A0A0F, 1);
-			// Si tiene sub-atlas, tintarlo levemente diferente (magenta suave)
 			var hasCustomAtlas = animAssetTag != "";
 			if (isCur)
 				text.color = 0xFF00E5FF;
 			else if (hasCustomAtlas)
-				text.color = 0xFFFF90D0; // magenta suave = indica sub-atlas
+				text.color = 0xFFFF90D0;
 			else
 				text.color = 0xFFCCCCCC;
 			text.cameras = [camHUD];
 			text.alpha = 0;
 			dumbTexts.add(text);
+			_offsetLabels.push(text); // guardar referencia para updates in-place
 			FlxTween.tween(text, {alpha: 1}, 0.2, {startDelay: daLoop * 0.03 + 0.05, ease: FlxEase.quartOut});
-			
+
 			var isGhostRow = (daLoop == ghostAnimIdx);
 			var ghostBadgeBg = new FlxSprite(308, rowY);
 			ghostBadgeBg.makeGraphic(28, rowH - 1, isGhostRow ? 0xCC7744CC : 0x33FFFFFF);
@@ -1666,6 +1688,7 @@ class AnimationDebug extends MusicBeatState
 			ghostBadgeBg.cameras = [camHUD];
 			ghostBadgeBg.alpha = 0;
 			dumbTexts.add(cast ghostBadgeBg);
+			_ghostBadgeBgs.push(ghostBadgeBg);
 			FlxTween.tween(ghostBadgeBg, {alpha: 1}, 0.2, {startDelay: daLoop * 0.03, ease: FlxEase.quartOut});
 
 			var ghostLabel = new FlxText(308, rowY + 3, 28, "[G]", 10);
@@ -1675,6 +1698,7 @@ class AnimationDebug extends MusicBeatState
 			ghostLabel.cameras = [camHUD];
 			ghostLabel.alpha = 0;
 			dumbTexts.add(ghostLabel);
+			_ghostBadgeLabels.push(ghostLabel);
 			FlxTween.tween(ghostLabel, {alpha: 1}, 0.2, {startDelay: daLoop * 0.03 + 0.05, ease: FlxEase.quartOut});
 
 			if (pushList)
@@ -1693,13 +1717,47 @@ class AnimationDebug extends MusicBeatState
 
 	function updateOffsetTexts():Void
 	{
-		dumbTexts.forEach(function(text:FlxText)
+		// FIX: En lugar de destruir y recrear todos los objetos cada vez que
+		// cambia un offset (incluyendo cada frame del drag), actualizamos solo
+		// el texto de los labels ya existentes. Esto elimina la principal fuente
+		// de memory leak (antes: ~75 objetos + tweens nuevos por frame durante drag).
+		var daLoop = 0;
+		for (anim => offsets in char.animOffsets)
 		{
-			text.kill();
-			dumbTexts.remove(text, true);
-		});
-		dumbTexts.clear();
-		generateOffsetTexts(false);
+			// Actualizar label de offset
+			if (daLoop < _offsetLabels.length)
+			{
+				var animAssetTag = "";
+				for (ad in currentAnimData)
+				{
+					if (ad.name == anim && ad.assetPath != null && ad.assetPath != "")
+					{
+						var parts = ad.assetPath.split("/");
+						animAssetTag = " ◈" + parts[parts.length - 1];
+						break;
+					}
+				}
+				var isCur = (daLoop == curAnim);
+				var hasCustomAtlas = animAssetTag != "";
+				_offsetLabels[daLoop].text = anim + animAssetTag + "  [" + offsets[0] + ", " + offsets[1] + "]";
+				if (isCur)
+					_offsetLabels[daLoop].color = 0xFF00E5FF;
+				else if (hasCustomAtlas)
+					_offsetLabels[daLoop].color = 0xFFFF90D0;
+				else
+					_offsetLabels[daLoop].color = 0xFFCCCCCC;
+			}
+
+			// Actualizar badge [G] del ghost
+			if (daLoop < _ghostBadgeLabels.length)
+				_ghostBadgeLabels[daLoop].color = (daLoop == ghostAnimIdx) ? 0xFFFFFFFF : 0x88FFFFFF;
+
+			daLoop++;
+		}
+
+		// Mover el highlight a la nueva posición
+		if (animRowHighlight != null && animList.length > 0)
+			animRowHighlight.y = 174.0 + (20.0 * curAnim);
 	}
 
 	// ── loadCharacterData — carga el JSON del personaje en la UI ──────────────
@@ -2250,15 +2308,18 @@ class AnimationDebug extends MusicBeatState
 				_hasUnsaved = true;
 
 				// Flash amarillo → normal en textInfo como feedback
-				// NOTA: no se usa FlxTween.tween con {} vacío porque VarTween
-				// explota al intentar leer propiedades nulas (crash en update).
+				// FIX: reusar _flashTimer en vez de crear new FlxTimer() cada keypress.
+				// Antes: mantener flecha pulsada = 60 timers/segundo acumulados.
 				FlxTween.cancelTweensOf(textInfo);
 				textInfo.color = 0xFFFFFFFF;
-				new FlxTimer().start(0.3, function(_)
-				{
-					if (textInfo != null)
-						textInfo.color = 0xFFFFE566;
-				});
+				if (_flashTimer != null)
+					_flashTimer.reset(0.3);
+				else
+					_flashTimer = new FlxTimer().start(0.3, function(_)
+					{
+						if (textInfo != null)
+							textInfo.color = 0xFFFFE566;
+					});
 			}
 		}
 
@@ -2500,6 +2561,21 @@ class AnimationDebug extends MusicBeatState
 			_windowCloseFn = null;
 		}
 		#end
+
+		// Limpiar timer reutilizable
+		if (_flashTimer != null)
+		{
+			_flashTimer.cancel();
+			_flashTimer.destroy();
+			_flashTimer = null;
+		}
+
+		// Vaciar caches de referencias (los objetos se destruyen con el grupo)
+		_offsetLabels.resize(0);
+		_ghostBadgeBgs.resize(0);
+		_ghostBadgeLabels.resize(0);
+		_rowBgs.resize(0);
+
 		_unsavedDlg = null;
 		super.destroy();
 	}

@@ -6,6 +6,7 @@ import coolui.CoolNumericStepper;
 import coolui.CoolCheckBox;
 import coolui.CoolDropDown;
 import coolui.CoolTabMenu;
+
 import flixel.FlxBasic;
 import flixel.FlxCamera;
 import flixel.FlxG;
@@ -22,6 +23,7 @@ import flixel.tweens.FlxTween;
 import coolui.CoolButton;
 import flixel.util.FlxColor;
 import flixel.util.FlxTimer;
+
 import funkin.data.Conductor;
 import funkin.data.CoolUtil;
 import funkin.data.MetaData;
@@ -150,40 +152,37 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	static inline final MENU_H       : Int = 22;   // menu bar
 	static inline final TOPBAR_H     : Int = 38;   // transport bar
 	static inline final STATUS_H     : Int = 20;
-	static inline final INSP_W       : Int = 270;  // right inspector width
+	static inline final INSP_W       : Int = 264;  // right inspector width
 	static inline final TL_LABEL_W   : Int = 108;  // track label column
 	static inline final TL_RULER_H   : Int = 22;   // ruler height
-	static inline final TL_SCRUB_H   : Int = 24;   // scrubber height
-	static inline final TL_TRACK_H   : Int = 30;   // each track row height
+	static inline final TL_SCRUB_H   : Int = 20;   // scrubber height
+	static inline final TL_TRACK_H   : Int = 28;   // each track row height
 	static inline final TL_MAX_TRACKS: Int = 8;    // max track rows visible
 	static inline final HEADER_H     : Int = 60;   // MENU_H + TOPBAR_H
+	static inline final VP_PAD       : Int = 6;    // padding around centered game viewport
 
 	// ── Colors ────────────────────────────────────────────────────────────────
-	static inline final C_BG         : Int = 0xFF1C1C28;
-	static inline final C_MENU       : Int = 0xFF141420;
-	static inline final C_TOPBAR     : Int = 0xFF1A1A2C;
-	static inline final C_PANEL      : Int = 0xFF202030;
-	static inline final C_INSP       : Int = 0xFF1E1E2E;
-	static inline final C_BORDER     : Int = 0xFF383850;
-	static inline final C_ACCENT     : Int = 0xFF00C8F0;
-	static inline final C_ACCENT2    : Int = 0xFF00F0A0;
-	static inline final C_TEXT       : Int = 0xFFDDDDEE;
-	static inline final C_SUBTEXT    : Int = 0xFF7878A0;
-	static inline final C_PLAYHEAD   : Int = 0xFFFF3A3A;
-	static inline final C_TL_BG      : Int = 0xFF111120;
-	static inline final C_TL_RULER   : Int = 0xFF191928;
-	static inline final C_UNSAVED    : Int = 0xFFFFAA00;
-	static inline final C_SELECT     : Int = 0xFFFFFFFF;
-	static inline final C_MENU_HOVER : Int = 0xFF2A2A44;
+	static inline final C_BG         : Int = 0xFF14141F;  // deepest background
+	static inline final C_MENU       : Int = 0xFF0F0F1A;  // menu bar
+	static inline final C_TOPBAR     : Int = 0xFF161622;  // transport bar
+	static inline final C_PANEL      : Int = 0xFF1C1C2C;  // general panels
+	static inline final C_INSP       : Int = 0xFF181828;  // inspector bg
+	static inline final C_BORDER     : Int = 0xFF2E2E46;  // subtle borders
+	static inline final C_ACCENT     : Int = 0xFF00C8F0;  // primary accent (cyan)
+	static inline final C_ACCENT2    : Int = 0xFF00E894;  // secondary accent (mint)
+	static inline final C_TEXT       : Int = 0xFFE0E0F0;  // primary text
+	static inline final C_SUBTEXT    : Int = 0xFF626280;  // secondary text
+	static inline final C_PLAYHEAD   : Int = 0xFFFF3355;  // playhead
+	static inline final C_TL_BG      : Int = 0xFF0D0D1A;  // timeline bg
+	static inline final C_TL_RULER   : Int = 0xFF141420;  // ruler bg
+	static inline final C_UNSAVED    : Int = 0xFFFFAA00;  // unsaved dot
+	static inline final C_SELECT     : Int = 0xFFFFFFFF;  // selection
+	static inline final C_MENU_HOVER : Int = 0xFF252538;  // menu hover
+	static inline final C_VP_FRAME   : Int = 0xFF0A0A15;  // viewport surround
 
-	// Default track definitions (can be extended)
+	// Only ONE track exists by default. The user adds more via Generate > Add Track.
 	static final DEFAULT_TRACKS : Array<PSETrack> = [
-		{ id:'camera',    name:'Camera',    color:0xFF4488FF, visible:true, locked:false, height:TL_TRACK_H },
-		{ id:'character', name:'Character', color:0xFF44FF88, visible:true, locked:false, height:TL_TRACK_H },
-		{ id:'visual',    name:'Visual',    color:0xFFFF8844, visible:true, locked:false, height:TL_TRACK_H },
-		{ id:'script',    name:'Script',    color:0xFFCC44FF, visible:true, locked:false, height:TL_TRACK_H },
-		{ id:'song',      name:'Song',      color:0xFFFFCC00, visible:true, locked:false, height:TL_TRACK_H },
-		{ id:'custom',    name:'Custom',    color:0xFF44FFCC, visible:true, locked:false, height:TL_TRACK_H },
+		{ id:'camera', name:'Camera', color:0xFF4488FF, visible:true, locked:false, height:TL_TRACK_H },
 	];
 
 	// ── Cameras ───────────────────────────────────────────────────────────────
@@ -194,6 +193,18 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	var _freeCam  : Bool  = false;
 	var _freeCamX : Float = 0;
 	var _freeCamY : Float = 0;
+
+	// ── Camera Proxy (visible camera indicator in game world) ─────────────────
+	/** Outline rectangle showing what PlayState's camera sees (visible when zoomed out) */
+	var camProxy        : FlxSprite = null;
+	/** Small label shown on the proxy frame */
+	var camProxyLabel   : FlxText   = null;
+	/** Whether the camera proxy overlay is active */
+	var _showCamProxy   : Bool = true;
+
+	// ── Playback speed ────────────────────────────────────────────────────────
+	var _playbackSpeed  : Float = 1.0;
+	var speedLbl        : FlxText  = null;
 
 	// ── Gameplay ──────────────────────────────────────────────────────────────
 	var currentStage        : Stage;
@@ -387,6 +398,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		metaData = MetaData.load(currentSong, CoolUtil.difficultySuffix());
 		_setupHUD();
 		_loadPSEData();
+		_applyGameViewport(); // re-apply now that tracks.length is known
 		_setupAudio();
 
 		// ── Cargar scripts de la canción + eventos del chart (igual que PlayState) ──
@@ -424,7 +436,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		ScriptHandler.setOnScripts('game', this);
 
 		isPlaying = false;
-		_showStatus('PlayState Editor v2  |  SPACE=play  Ctrl+S=save  ESC=back  Dbl-click track=add event');
+		_showStatus('PlayState Editor v2  |  SPACE=play  Ctrl+S=save  ESC=back  Scroll(game)=zoom  C=camProxy  [/]=speed');
 
 		#if sys
 		_windowCloseFn = function() { if (hasUnsaved) try { _savePSEData(); } catch (_) {} };
@@ -439,14 +451,18 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	// ─────────────────────────────────────────────────────────────────────────
 	function _setupCameras():Void
 	{
+		// Render order (back → front):
+		//   camUI  (full-screen, transparent bg)
+		//   camHUD (full-screen, transparent bg — menus / timeline / inspector)
+		//   camGame (sub-viewport, on TOP so stage & chars are never covered by HUD sprites)
 		camUI = new FlxCamera(); camUI.bgColor.alpha = 0;
 		FlxG.cameras.reset(camUI);
 
-		camGame = new FlxCamera(); camGame.bgColor = FlxColor.BLACK;
-		FlxG.cameras.add(camGame, false);
-
 		camHUD = new FlxCamera(); camHUD.bgColor.alpha = 0;
 		FlxG.cameras.add(camHUD, false);
+
+		camGame = new FlxCamera(); camGame.bgColor = FlxColor.fromRGB(10, 10, 18);
+		FlxG.cameras.add(camGame, false);   // added last → renders on top of HUD
 
 		@:privateAccess FlxCamera._defaultCameras = [camGame];
 		_applyGameViewport();
@@ -455,10 +471,25 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	function _applyGameViewport():Void
 	{
 		if (camGame == null) return;
-		camGame.x      = 0;
-		camGame.y      = HEADER_H;
-		camGame.width  = _gameW();
-		camGame.height = _gameH();
+		var availW = SW - INSP_W;
+		var availH = _gameH() - VP_PAD * 2;
+
+		// Fit within available area maintaining 16:9 aspect ratio
+		var targetW = availW - VP_PAD * 2;
+		var targetH = Std.int(targetW * 9 / 16);
+		if (targetH > availH)
+		{
+			targetH = availH;
+			targetW = Std.int(targetH * 16 / 9);
+		}
+		if (targetW > availW - VP_PAD * 2) targetW = availW - VP_PAD * 2;
+		if (targetH > availH)              targetH = availH;
+
+		// Center horizontally within the non-inspector area
+		camGame.x      = Std.int((availW - targetW) / 2);
+		camGame.y      = HEADER_H + VP_PAD;
+		camGame.width  = targetW;
+		camGame.height = targetH;
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -508,6 +539,9 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 
 		characterController = new CharacterController();
 		characterController.initFromSlots(characterSlots);
+
+		// Build the camera proxy frame (visible when zoomed out)
+		_buildCamProxy();
 	}
 
 	function _loadCharacters():Void
@@ -542,6 +576,99 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 			}
 			characterSlots.push(slot);
 			add(slot.character);
+		}
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	//  Camera Proxy — visible frame in game world showing camera FOV
+	// ─────────────────────────────────────────────────────────────────────────
+	/**
+	 * Crea un sprite 320×180 (escalado en runtime al FOV real del juego)
+	 * que muestra DÓNDE mira la cámara del juego.
+	 * Se renderiza en camGame (vive en coordenadas mundo) y se escala con el
+	 * editor. Al hacer zoom out muy lejos puedes ver todo el stage Y el recuadro
+	 * de la cámara moviéndose a medida que los eventos se disparan.
+	 *
+	 * Atajo: tecla C para mostrar/ocultar.
+	 */
+	function _buildCamProxy():Void
+	{
+		final W = 320; final H = 180;
+		camProxy = new FlxSprite(0, 0);
+		camProxy.makeGraphic(W, H, FlxColor.TRANSPARENT, true);
+
+		// Borde exterior — cyan
+		final BC : Int = 0xBB00C8F0;
+		flixel.util.FlxSpriteUtil.drawRect(camProxy, 0,     0,     W, 3, BC);
+		flixel.util.FlxSpriteUtil.drawRect(camProxy, 0,     H - 3, W, 3, BC);
+		flixel.util.FlxSpriteUtil.drawRect(camProxy, 0,     0,     3, H, BC);
+		flixel.util.FlxSpriteUtil.drawRect(camProxy, W - 3, 0,     3, H, BC);
+
+		// Marcas en esquinas (rojo/rosa)
+		final CC : Int = 0xCCFF3355;
+		final CS : Int = 24;
+		flixel.util.FlxSpriteUtil.drawRect(camProxy, 0,      0,      CS, 5,  CC);
+		flixel.util.FlxSpriteUtil.drawRect(camProxy, 0,      0,      5,  CS, CC);
+		flixel.util.FlxSpriteUtil.drawRect(camProxy, W - CS, 0,      CS, 5,  CC);
+		flixel.util.FlxSpriteUtil.drawRect(camProxy, W - 5,  0,      5,  CS, CC);
+		flixel.util.FlxSpriteUtil.drawRect(camProxy, 0,      H - 5,  CS, 5,  CC);
+		flixel.util.FlxSpriteUtil.drawRect(camProxy, 0,      H - CS, 5,  CS, CC);
+		flixel.util.FlxSpriteUtil.drawRect(camProxy, W - CS, H - 5,  CS, 5,  CC);
+		flixel.util.FlxSpriteUtil.drawRect(camProxy, W - 5,  H - CS, 5,  CS, CC);
+
+		// Cruz central
+		flixel.util.FlxSpriteUtil.drawRect(camProxy, W / 2 - 1, H / 2 - 12, 2, 24, 0x88FF3355);
+		flixel.util.FlxSpriteUtil.drawRect(camProxy, W / 2 - 12, H / 2 - 1, 24, 2,  0x88FF3355);
+
+		camProxy.cameras = [camGame];
+		camProxy.scrollFactor.set(1, 1);
+		camProxy.alpha   = 0.8;
+		camProxy.active  = false;
+		camProxy.visible = false;
+		add(camProxy);
+
+		// Etiqueta "CAM"
+		camProxyLabel = new FlxText(0, 0, 80, 'CAM', 8);
+		camProxyLabel.setFormat(Paths.font('vcr.ttf'), 8, 0xFF00C8F0, LEFT);
+		camProxyLabel.cameras = [camGame];
+		camProxyLabel.scrollFactor.set(1, 1);
+		camProxyLabel.active  = false;
+		camProxyLabel.visible = false;
+		add(camProxyLabel);
+	}
+
+	/**
+	 * Llama cada frame desde update().
+	 * Posiciona y escala el recuadro proxy para que coincida con el FOV
+	 * de PlayState en coordenadas mundo. Solo visible cuando zoom editor < 0.88.
+	 */
+	function _updateCamProxy():Void
+	{
+		if (camProxy == null || camGame == null) return;
+
+		var dz : Float = (cameraController != null && cameraController.defaultZoom > 0)
+			? cameraController.defaultZoom : 1.0;
+
+		// Tamaño del FOV de PlayState en unidades mundo
+		var vw : Float = 1280.0 / dz;
+		var vh : Float =  720.0 / dz;
+
+		// Centro de lo que la cámara editor está viendo, en espacio mundo
+		var cx : Float = camGame.scroll.x + camGame.width  / (2.0 * camGame.zoom);
+		var cy : Float = camGame.scroll.y + camGame.height / (2.0 * camGame.zoom);
+
+		// Escalar el sprite 320×180 al tamaño FOV real
+		camProxy.scale.set(vw / 320.0, vh / 180.0);
+		camProxy.updateHitbox();
+		camProxy.setPosition(cx - vw * 0.5, cy - vh * 0.5);
+
+		var show = _showCamProxy && camGame.zoom < 0.88;
+		camProxy.visible = show;
+
+		if (camProxyLabel != null)
+		{
+			camProxyLabel.setPosition(cx - vw * 0.5 + 6, cy - vh * 0.5 + 4);
+			camProxyLabel.visible = show;
 		}
 	}
 
@@ -618,7 +745,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	function _onSongEnd():Void
 	{
 		isPlaying = false; _syncAudio(false);
-		_showStatus('♪ Canción terminada — pulsa ▶ o SPACE para reproducir de nuevo');
+		_showStatus('Song ended -- press > or SPACE para reproducir de nuevo');
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -651,10 +778,6 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 			for (t in DEFAULT_TRACKS) tracks.push({ id:t.id, name:t.name, color:t.color, visible:t.visible, locked:t.locked, height:t.height });
 			pseData.tracks = tracks;
 		}
-
-		// Always have at least one custom track slot at end
-		if (!Lambda.exists(tracks, t -> t.id == 'custom2'))
-			tracks.push({ id:'custom2', name:'Custom 2', color:0xFF88CCFF, visible:true, locked:false, height:TL_TRACK_H });
 
 		_rebuildSorted();
 		_refreshDiffList();
@@ -728,10 +851,54 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	// ─────────────────────────────────────────────────────────────────────────
 	function _buildBackground():Void
 	{
-		// Dark overlay between game area and the UI
+		// ── Full editor background ────────────────────────────────────────────
 		var bg = new FlxSprite(0, 0).makeGraphic(SW, SH, C_BG);
-		bg.cameras = [camHUD]; bg.scrollFactor.set(); bg.alpha = 0.0; // game shows through
-		add(bg);
+		bg.cameras = [camHUD]; bg.scrollFactor.set(); add(bg);
+
+		// ── Game area: only draw the 4 border strips AROUND the viewport ─────
+		// (the viewport itself is left uncovered so camGame content is visible)
+		var areaW = SW - INSP_W;
+		var areaH = _gameH();
+		var vpX   = camGame != null ? Std.int(camGame.x)      : 0;
+		var vpY   = camGame != null ? Std.int(camGame.y)      : HEADER_H;
+		var vpW   = camGame != null ? camGame.width            : areaW;
+		var vpH   = camGame != null ? camGame.height           : areaH;
+
+		// Strip above viewport
+		if (vpY > HEADER_H)
+		{
+			var top = new FlxSprite(0, HEADER_H).makeGraphic(areaW, vpY - HEADER_H, C_VP_FRAME);
+			top.cameras = [camHUD]; top.scrollFactor.set(); add(top);
+		}
+		// Strip below viewport
+		var belowY = vpY + vpH;
+		if (belowY < HEADER_H + areaH)
+		{
+			var bot = new FlxSprite(0, belowY).makeGraphic(areaW, HEADER_H + areaH - belowY, C_VP_FRAME);
+			bot.cameras = [camHUD]; bot.scrollFactor.set(); add(bot);
+		}
+		// Strip left of viewport
+		if (vpX > 0)
+		{
+			var left = new FlxSprite(0, vpY).makeGraphic(vpX, vpH, C_VP_FRAME);
+			left.cameras = [camHUD]; left.scrollFactor.set(); add(left);
+		}
+		// Strip right of viewport
+		if (vpX + vpW < areaW)
+		{
+			var right = new FlxSprite(vpX + vpW, vpY).makeGraphic(areaW - (vpX + vpW), vpH, C_VP_FRAME);
+			right.cameras = [camHUD]; right.scrollFactor.set(); add(right);
+		}
+
+		// ── Accent border (1px cyan glow around the viewport) ────────────────
+		var fTop = new FlxSprite(vpX - 1, vpY - 1).makeGraphic(vpW + 2, 1, C_ACCENT);
+		fTop.cameras = [camHUD]; fTop.scrollFactor.set(); fTop.alpha = 0.35; add(fTop);
+		var fBot = new FlxSprite(vpX - 1, vpY + vpH).makeGraphic(vpW + 2, 1, C_ACCENT);
+		fBot.cameras = [camHUD]; fBot.scrollFactor.set(); fBot.alpha = 0.35; add(fBot);
+		var fL = new FlxSprite(vpX - 1, vpY).makeGraphic(1, vpH, C_ACCENT);
+		fL.cameras = [camHUD]; fL.scrollFactor.set(); fL.alpha = 0.22; add(fL);
+		var fR = new FlxSprite(vpX + vpW, vpY).makeGraphic(1, vpH, C_ACCENT);
+		fR.cameras = [camHUD]; fR.scrollFactor.set(); fR.alpha = 0.22; add(fR);
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -764,13 +931,13 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		}
 
 		// Song name in center of menu bar
-		var snTxt = new FlxText(0, 3, SW, currentSong.toUpperCase(), 11);
-		snTxt.setFormat(Paths.font('vcr.ttf'), 11, C_ACCENT, CENTER);
+		var snTxt = new FlxText(0, 4, SW, currentSong.toUpperCase(), 10);
+		snTxt.setFormat(Paths.font('vcr.ttf'), 10, C_SUBTEXT, CENTER);
 		snTxt.scrollFactor.set(); snTxt.cameras = [camHUD]; add(snTxt);
 
-		// Right-side: "PROTOTYPE" badge
-		var proto = new FlxText(SW - 260, 4, 250, 'PROTOTYPE  Functionality is subject to change.', 9);
-		proto.setFormat(Paths.font('vcr.ttf'), 9, C_SUBTEXT, RIGHT);
+		// Right-side: PSE version tag (subtle)
+		var proto = new FlxText(SW - 80, 5, 74, 'PSE v2.0', 8);
+		proto.setFormat(Paths.font('vcr.ttf'), 8, 0xFF333350, RIGHT);
 		proto.scrollFactor.set(); proto.cameras = [camHUD]; add(proto);
 	}
 
@@ -788,6 +955,8 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 				{ label:'Toggle Inspector', sep:false, cb:() -> { inspBg.visible = !inspBg.visible; _rebuildRuler(); _rebuildEventBlocks(); } },
 				{ label:'Toggle HUD', sep:false, cb:() -> { if (uiManager != null) uiManager.visible = !uiManager.visible; } },
 				{ label:'Free Camera (F)', sep:false, cb:_toggleFreeCam },
+				{ label:'Toggle Camera Proxy (C)', sep:false, cb:() -> { _showCamProxy = !_showCamProxy; _showStatus(_showCamProxy ? '[CAM] Camera proxy ON' : '[CAM] Camera proxy OFF'); } },
+				{ label:'Reset Game Zoom (0)', sep:false, cb:() -> { _gameZoom = 1.0; if (camGame != null) camGame.zoom = _gameZoom; _showStatus('Zoom reset → 100%'); } },
 			];
 			case 2: [ // Playback
 				{ label:'Play / Pause  SPACE', sep:false, cb:_onPlayPause },
@@ -796,6 +965,12 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 				{ label:'---', sep:true, cb:null },
 				{ label:'Jump to Start  Home', sep:false, cb:() -> autoSeekTime = 0 },
 				{ label:'Jump to End  End', sep:false, cb:() -> autoSeekTime = songLength - 50 },
+				{ label:'---', sep:true, cb:null },
+				{ label:'Speed 0.25x', sep:false, cb:() -> { _playbackSpeed = 0.25; if (speedLbl != null) speedLbl.text = '0.25x'; _applyPlaybackSpeed(); _showStatus('Speed: 0.25x'); } },
+				{ label:'Speed 0.5x', sep:false, cb:() -> { _playbackSpeed = 0.5;  if (speedLbl != null) speedLbl.text = '0.5x';  _applyPlaybackSpeed(); _showStatus('Speed: 0.5x'); } },
+				{ label:'Speed 1.0x  (Normal)', sep:false, cb:() -> { _playbackSpeed = 1.0;  if (speedLbl != null) speedLbl.text = '1.0x';  _applyPlaybackSpeed(); _showStatus('Speed: 1.0x'); } },
+				{ label:'Speed 1.5x', sep:false, cb:() -> { _playbackSpeed = 1.5;  if (speedLbl != null) speedLbl.text = '1.5x';  _applyPlaybackSpeed(); _showStatus('Speed: 1.5x'); } },
+				{ label:'Speed 2.0x', sep:false, cb:() -> { _playbackSpeed = 2.0;  if (speedLbl != null) speedLbl.text = '2.0x';  _applyPlaybackSpeed(); _showStatus('Speed: 2.0x'); } },
 			];
 			case 3: [ // Generate
 				{ label:'Add Camera Follow Event', sep:false, cb:() -> _createEventAtPlayhead('Camera Follow', 'bf', 0) },
@@ -815,10 +990,14 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 				{ label:'SPACE  Play/Pause', sep:false, cb:null },
 				{ label:'R  Restart', sep:false, cb:null },
 				{ label:'F  Free Camera', sep:false, cb:null },
+				{ label:'C  Toggle Cam Proxy', sep:false, cb:null },
+				{ label:'0  Reset game zoom', sep:false, cb:null },
+				{ label:'[ / ]  Speed down/up', sep:false, cb:null },
 				{ label:'Ctrl+Z/Y  Undo/Redo', sep:false, cb:null },
 				{ label:'Ctrl+S / F5  Save', sep:false, cb:null },
 				{ label:'Scroll  Pan timeline', sep:false, cb:null },
 				{ label:'Ctrl+Scroll  Zoom timeline', sep:false, cb:null },
+				{ label:'Scroll (game area)  Zoom', sep:false, cb:null },
 				{ label:'Dbl-click track  New event', sep:false, cb:null },
 				{ label:'Drag event  Move event', sep:false, cb:null },
 				{ label:'Drag event right edge  Resize', sep:false, cb:null },
@@ -847,15 +1026,15 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		var ty = MENU_H;
 		topBg = new FlxSprite(0, ty).makeGraphic(SW, TOPBAR_H, C_TOPBAR);
 		topBg.cameras = [camHUD]; topBg.scrollFactor.set(); add(topBg);
-		var sep = new FlxSprite(0, ty + TOPBAR_H - 1).makeGraphic(SW, 1, C_ACCENT);
-		sep.cameras = [camHUD]; sep.scrollFactor.set(); sep.alpha = 0.4; add(sep);
+		var sep = new FlxSprite(0, ty + TOPBAR_H - 1).makeGraphic(SW, 1, C_BORDER);
+		sep.cameras = [camHUD]; sep.scrollFactor.set(); sep.alpha = 0.6; add(sep);
 
 		var bx = 6.0; var by = ty + 4.0;
 
 		// Transport buttons
-		restartBtn = _mkBtn(bx, by, '⏮', 28, 29, C_PANEL, function() _onRestart()); bx += 32;
-		stopBtn    = _mkBtn(bx, by, '⏹', 28, 29, C_PANEL, function() _onStop());    bx += 32;
-		playBtn    = _mkBtn(bx, by, '▶', 36, 29, 0xFF1A3A1A, function() _onPlayPause()); bx += 42;
+		restartBtn = _mkBtn(bx, by, '|<', 28, 29, C_PANEL,     function() _onRestart());   bx += 32;
+		stopBtn    = _mkBtn(bx, by, '[]', 28, 29, C_PANEL,     function() _onStop());      bx += 32;
+		playBtn    = _mkBtn(bx, by, '>',  36, 29, 0xFF1A3A1A,  function() _onPlayPause()); bx += 42;
 
 		// Separator
 		var s1 = new FlxSprite(bx, by + 3).makeGraphic(1, 22, C_BORDER); s1.cameras = [camHUD]; s1.scrollFactor.set(); add(s1); bx += 8;
@@ -881,7 +1060,21 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 
 		// Snap checkbox
 		snapCheck = new CoolCheckBox(bx, by + 7, null, null, 'Snap', 56);
-		snapCheck.checked = true; snapCheck.cameras = [camHUD]; snapCheck.scrollFactor.set(); add(snapCheck); bx += 68;
+		snapCheck.checked = true; snapCheck.cameras = [camHUD]; snapCheck.scrollFactor.set(); add(snapCheck); bx += 72;
+
+		// Separator
+		var s4 = new FlxSprite(bx, by + 3).makeGraphic(1, 22, C_BORDER); s4.cameras = [camHUD]; s4.scrollFactor.set(); add(s4); bx += 8;
+
+		// ── Playback speed control ──────────────────────────────────────────────
+		var splbl = new FlxText(bx, by + 8, 32, 'SPD:', 9);
+		splbl.setFormat(Paths.font('vcr.ttf'), 9, C_SUBTEXT, LEFT); splbl.cameras = [camHUD]; splbl.scrollFactor.set(); add(splbl); bx += 34;
+
+		_mkBtn(bx, by, '<<', 22, 29, C_PANEL, function() _changeSpeed(-0.25)); bx += 25;
+
+		speedLbl = new FlxText(bx, by + 8, 34, '1.0x', 9);
+		speedLbl.setFormat(Paths.font('vcr.ttf'), 9, C_ACCENT, CENTER); speedLbl.cameras = [camHUD]; speedLbl.scrollFactor.set(); add(speedLbl); bx += 36;
+
+		_mkBtn(bx, by, '>>', 22, 29, C_PANEL, function() _changeSpeed(0.25)); bx += 26;
 
 		// Right-side controls
 		var rbx = SW - INSP_W - 6.0;
@@ -890,8 +1083,8 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		unsavedDot = new FlxSprite(rbx - 14, by + 10).makeGraphic(10, 10, C_UNSAVED);
 		unsavedDot.cameras = [camHUD]; unsavedDot.scrollFactor.set(); unsavedDot.visible = false; add(unsavedDot);
 
-		freeCamBtn = _mkBtn(rbx, by, '🎥', 36, 29, 0xFF1A2A3A, function() _toggleFreeCam()); rbx -= 42;
-		var saveB  = _mkBtn(rbx, by, '💾', 36, 29, 0xFF1A2A1A, function() _savePSEData()); rbx -= 42;
+		freeCamBtn = _mkBtn(rbx, by, 'CAM', 36, 29, 0xFF1A2A3A, function() _toggleFreeCam()); rbx -= 42;
+		var saveB  = _mkBtn(rbx, by, 'SAV', 36, 29, 0xFF1A2A1A, function() _savePSEData()); rbx -= 42;
 
 		// Zoom label + slider
 		var zlbl = new FlxText(rbx - 86, by + 8, 50, 'Zoom:', 9);
@@ -1128,7 +1321,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 
 	function _rebuildEventBlocks():Void
 	{
-		for (b in eventBlocks) { remove(b); if (b.lblTxt != null) { remove(b.lblTxt); b.lblTxt.destroy(); } b.destroy(); }
+		for (b in eventBlocks) { FlxTween.cancelTweensOf(b); remove(b); if (b.lblTxt != null) { remove(b.lblTxt); b.lblTxt.destroy(); } b.destroy(); }
 		eventBlocks = [];
 		if (pseData == null) return;
 
@@ -1184,7 +1377,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 			var yPos = _tlY() + TL_RULER_H + trackI * TL_TRACK_H + 2;
 			var col  = 0xFFCC44FF;
 
-			var block = new PSEEventBlock(xPos, yPos, 36, TL_TRACK_H - 4, col, 'script_' + scr.id, false, '📝 ' + scr.name);
+			var block = new PSEEventBlock(xPos, yPos, 36, TL_TRACK_H - 4, col, 'script_' + scr.id, false, '[S] ' + scr.name);
 			block.cameras = [camHUD]; block.scrollFactor.set(); block.isScriptBlock = true;
 			eventBlocks.push(block); add(block);
 
@@ -1236,7 +1429,55 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 
 		if (selectedEventId == '')
 		{
-			_iLabel('No event selected.\nDouble-click on a track\nto create a new event,\nor click an event block\nto select it.', ix, iy, 0xFFAAAAAA, INSP_W - 16);
+			_iLabel('No event selected.', ix, iy, C_ACCENT, INSP_W - 16, 10); iy += 18;
+			_iSep(ix, iy, INSP_W - 16); iy += 10;
+
+			// ── Tips panel ────────────────────────────────────────────────────
+			_iLabel('TIPS & SHORTCUTS', ix, iy, C_ACCENT2, INSP_W - 16, 9); iy += 16;
+
+			final tips : Array<String> = [
+				'SPACE  Play / Pause',
+				'R      Restart from start',
+				'F      Toggle Free Camera',
+				'C      Toggle Camera Proxy',
+				'0      Reset zoom to 100%',
+				'[ / ]  Speed down / up',
+				'Del    Delete selected event',
+				'Ctrl+Z / Y   Undo / Redo',
+				'Ctrl+S / F5  Save',
+				'',
+				'Scroll (game area)',
+				'  -> Zoom in/out',
+				'Ctrl+Scroll (timeline)',
+				'  -> Zoom timeline',
+				'',
+				'Double-click a track',
+				'  -> Create new event',
+				'Right-click a track',
+				'  -> Context menu',
+				'Drag event block',
+				'  -> Move in time/track',
+				'Drag event right edge',
+				'  -> Resize duration',
+				'',
+				'Camera proxy frame',
+				'  shows where PlayState',
+				'  camera is looking.',
+				'  Zoom out to see it.',
+			];
+
+			for (tip in tips)
+			{
+				if (tip == '')
+				{
+					iy += 4;
+					continue;
+				}
+				var col = tip.startsWith(' ') ? C_SUBTEXT : C_TEXT;
+				var sz  = 8;
+				_iLabel(tip, ix, iy, col, INSP_W - 16, sz);
+				iy += 13;
+			}
 			return;
 		}
 
@@ -1301,7 +1542,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		ty += 26;
 
 		// At-playhead button
-		var athBtn = _iBtn(ix, ty, '⏱ Set to Playhead', 0xFF1A2A3A, function()
+		var athBtn = _iBtn(ix, ty, 'Set to Playhead', 0xFF1A2A3A, function()
 		{
 			var step = Conductor.songPosition / Conductor.stepCrochet;
 			evt.stepTime = _snapEnabled ? Math.round(step) : step;
@@ -1349,7 +1590,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		// Open script editor button for script events
 		if (evt.type.toLowerCase() == 'script')
 		{
-			var scrEdBtn = _iBtn(ix, ty, '📝 Open Script Editor', 0xFF1A1A3A, function()
+			var scrEdBtn = _iBtn(ix, ty, 'Open Script Editor', 0xFF1A1A3A, function()
 			{
 				openSubState(new ScriptEditorSubState(PlayState.SONG, evt.value, camHUD));
 			}, iw); ty += 28;
@@ -1431,7 +1672,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	function _buildScriptInspector(scr:PSEScript, ix:Float, ty:Float):Void
 	{
 		var iw = INSP_W - 16;
-		_iLabel('📝 Script: ${scr.name}', ix, ty, C_ACCENT, iw, 11); ty += 20;
+		_iLabel('Script: ${scr.name}', ix, ty, C_ACCENT, iw, 11); ty += 20;
 		_iSep(ix, ty, iw); ty += 8;
 
 		_iLabel('Name:', ix, ty, C_SUBTEXT, iw); ty += 13;
@@ -1522,7 +1763,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		var savedLoc = scr.savePath ?? 'inline';
 
 		// Abrir editor de código
-		_iBtn(ix, ty, '📝 Open Full Script Editor', 0xFF1A1A3A, function()
+		_iBtn(ix, ty, 'Open Full Script Editor', 0xFF1A1A3A, function()
 		{
 			var onSaveCb = function(code:String)
 			{
@@ -1539,7 +1780,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 						var dir = haxe.io.Path.directory(rp);
 						if (dir != '' && !sys.FileSystem.exists(dir)) sys.FileSystem.createDirectory(dir);
 						sys.io.File.saveContent(rp, code);
-						_showStatus('💾 Script guardado: $rp', 3.0);
+						_showStatus('[SAVED] Script saved: $rp', 3.0);
 					}
 					catch (ex:Dynamic) { _showStatus('⚠ Error al guardar: $ex', 4.0); }
 				}
@@ -1555,7 +1796,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		// Guardar al archivo ahora (solo si no es inline)
 		if (savedLoc != 'inline' && savedLoc != '' && savedLoc != null)
 		{
-			_iBtn(ix, ty, '💾 Save to File Now', 0xFF1A2A1A, function()
+			_iBtn(ix, ty, 'Save to File Now', 0xFF1A2A1A, function()
 			{
 				#if sys
 				var rp = _resolveSavePath(scr);
@@ -1566,17 +1807,17 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 						var dir = haxe.io.Path.directory(rp);
 						if (dir != '' && !sys.FileSystem.exists(dir)) sys.FileSystem.createDirectory(dir);
 						sys.io.File.saveContent(rp, scr.code ?? '');
-						_showStatus('💾 Guardado: $rp', 3.0);
+						_showStatus('[OK] Saved: $rp', 3.0);
 					}
 					catch (ex:Dynamic) { _showStatus('⚠ Error: $ex', 4.0); }
 				}
 				#else
-				_showStatus('⚠ File I/O no disponible en esta plataforma');
+				_showStatus('[ERR] File IO not available en esta plataforma');
 				#end
 			}, iw); ty += 28;
 		}
 
-		_iBtn(ix, ty, '▶ Test Run Now', 0xFF1A2A1A, function() _runScript(scr), iw); ty += 28;
+		_iBtn(ix, ty, '> Test Run Now', 0xFF1A2A1A, function() _runScript(scr), iw); ty += 28;
 		_iBtn(ix, ty, 'DELETE Script', 0xFF3A1A1A, function() { _deleteSelected(); }, iw);
 	}
 
@@ -1680,6 +1921,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		_handleTimelineInput();
 		_handleEventInteraction();
 		_handleFreeCam(elapsed);
+		_updateCamProxy();
 		_updateTimeDisplay();
 		_updateCursorInfo();
 
@@ -1764,9 +2006,9 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		for (b in eventBlocks) if (b.eventId == evt.id)
 		{
 			FlxTween.cancelTweensOf(b); b.alpha = 1.0;
-			FlxTween.tween(b, {alpha: 0.7}, 0.25, {ease: FlxEase.quadOut, onComplete:_ -> b.alpha = 0.85}); break;
+			FlxTween.tween(b, {alpha: 0.7}, 0.25, {ease: FlxEase.quadOut, onComplete: function(_) { if (b != null && b.alive && b.exists) b.alpha = 0.85; }}); break;
 		}
-		_showStatus('▶ ${evt.type}  ${evt.value}', 1.5);
+		_showStatus('> ${evt.type}  ${evt.value}', 1.5);
 	}
 
 	/**
@@ -1825,6 +2067,13 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		// BPM Change — también funciona aquí vía built-in (no depende de PlayState)
 		// Flash / Fade — lo mismo
 		// Run Script — el built-in llama ScriptHandler.callOnScripts, funciona
+
+		// ── Stub out handlers that require PlayState.instance or a video player ──
+		// These chart-event HScripts (MidSongVideo, HudVisible, PlayAnim, AltAnim)
+		// call PlayState.instance.xxx or access video/flash objects that don't exist
+		// in the editor, producing the "object does not have the property 'alpha'" crash.
+		for (unsafeEvt in ['MidSongVideo', 'HudVisible', 'PlayAnim', 'AltAnim'])
+			EventManager.registerCustomEvent(unsafeEvt, function(_) return true);
 	}
 
 	function _runScript(scr:PSEScript):Void
@@ -1842,9 +2091,9 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 			scriptInstances.set(scr.id, inst);
 		}
 		inst.call('onTrigger', [Conductor.songPosition]);
-		_showStatus('▶ Script: ${scr.name}', 1.5);
+		_showStatus('> Script: ${scr.name}', 1.5);
 		#else
-		_showStatus('⚠ HScript not available in this build');
+		_showStatus('[WARN] HScript not available in this build');
 		#end
 	}
 
@@ -2017,11 +2266,16 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 			}
 		}
 
-		// Wheel on game area = camera zoom
+		// Wheel on game area = camera zoom  (Ctrl NOT held, free cam NOT active)
 		if (my >= HEADER_H && my < tlY && mx < SW - INSP_W && !FlxG.keys.pressed.CONTROL && !_freeCam)
 		{
 			var w = FlxG.mouse.wheel;
-			if (w != 0) { _gameZoom = FlxMath.bound(_gameZoom * (w > 0 ? 1.12 : 0.89), 0.2, 3.0); if (camGame != null) camGame.zoom = _gameZoom; _showStatus('Zoom ${Math.round(_gameZoom * 100)}%', 0.6); }
+			if (w != 0)
+			{
+				_gameZoom = FlxMath.bound(_gameZoom * (w > 0 ? 1.12 : 0.89), 0.05, 5.0);
+				if (camGame != null) camGame.zoom = _gameZoom;
+				_showStatus('Zoom ${Math.round(_gameZoom * 100)}%  (C = toggle cam proxy)', 0.8);
+			}
 		}
 	}
 
@@ -2154,7 +2408,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 			freeCamBtn.makeGraphic(36, 29, _freeCam ? 0xFF1A4A3A : 0xFF1A2A3A);
 			freeCamBtn.label.color = _freeCam ? C_ACCENT2 : C_TEXT;
 		}
-		_showStatus(_freeCam ? '🎥 Free Camera ON — WASD/arrows or drag to pan, scroll to zoom' : '🎥 Free Camera OFF', 2.5);
+		_showStatus(_freeCam ? '[CAM] Free Camera ON - WASD/arrows to pan, scroll=zoom, C=proxy' : '[CAM] Free Camera OFF', 2.5);
 	}
 
 	function _handleFreeCam(elapsed:Float):Void
@@ -2180,7 +2434,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		var w = FlxG.mouse.wheel;
 		if (w != 0 && FlxG.mouse.y > HEADER_H && FlxG.mouse.y < _tlY())
 		{
-			_gameZoom = FlxMath.bound(_gameZoom * (w > 0 ? 1.12 : 0.89), 0.1, 5.0);
+			_gameZoom = FlxMath.bound(_gameZoom * (w > 0 ? 1.12 : 0.89), 0.05, 8.0);
 			camGame.zoom = _gameZoom;
 		}
 	}
@@ -2206,6 +2460,25 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		// Zoom timeline
 		if (ctrl && FlxG.keys.pressed.PLUS)  { tlZoom = FlxMath.bound(tlZoom * 1.1, 0.005, 3.0); _rebuildRuler(); _rebuildEventBlocks(); }
 		if (ctrl && FlxG.keys.pressed.MINUS)   { tlZoom = FlxMath.bound(tlZoom * 0.9, 0.005, 3.0); _rebuildRuler(); _rebuildEventBlocks(); }
+
+		// Playback speed  [ = slower,  ] = faster
+		if (FlxG.keys.justPressed.LBRACKET  && !ctrl && !_anyInputFocused()) _changeSpeed(-0.25);
+		if (FlxG.keys.justPressed.RBRACKET  && !ctrl && !_anyInputFocused()) _changeSpeed( 0.25);
+
+		// Toggle camera proxy overlay  (C)
+		if (FlxG.keys.justPressed.C && !ctrl && !_anyInputFocused())
+		{
+			_showCamProxy = !_showCamProxy;
+			_showStatus(_showCamProxy ? '[CAM] Camera proxy ON  (zoom out to see it)' : '[CAM] Camera proxy OFF', 2.5);
+		}
+
+		// Reset game zoom to 1  (0)
+		if (FlxG.keys.justPressed.ZERO && !ctrl && !_anyInputFocused())
+		{
+			_gameZoom = 1.0;
+			if (camGame != null) camGame.zoom = _gameZoom;
+			_showStatus('Zoom reset → 100%', 1.0);
+		}
 	}
 
 	function _anyInputFocused():Bool
@@ -2221,15 +2494,15 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	{
 		isPlaying = !isPlaying;
 		_syncAudio(isPlaying);
-		if (playBtn != null) { playBtn.label.text = isPlaying ? '⏸' : '▶'; playBtn.label.color = isPlaying ? 0xFFFFAA00 : C_ACCENT2; }
-		_showStatus(isPlaying ? '▶ Playing' : '⏸ Paused');
+		if (playBtn != null) { playBtn.label.text = isPlaying ? '||' : '>'; playBtn.label.color = isPlaying ? 0xFFFFAA00 : C_ACCENT2; }
+		_showStatus(isPlaying ? '> Playing' : '|| Paused');
 	}
 
 	function _onStop():Void
 	{
 		isPlaying = false; _syncAudio(false); _doSeek(0);
-		if (playBtn != null) { playBtn.label.text = '▶'; playBtn.label.color = C_ACCENT2; }
-		_showStatus('⏹ Stopped');
+		if (playBtn != null) { playBtn.label.text = '>'; playBtn.label.color = C_ACCENT2; }
+		_showStatus('[] Stopped');
 	}
 
 	function _onRestart():Void
@@ -2238,8 +2511,43 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 		if (cameraController  != null) cameraController.resetToInitial();
 		if (characterController != null) characterController.forceIdleAll();
 		isPlaying = true; _syncAudio(true);
-		if (playBtn != null) { playBtn.label.text = '⏸'; playBtn.label.color = 0xFFFFAA00; }
-		_showStatus('⏮ Restart');
+		if (playBtn != null) { playBtn.label.text = '||'; playBtn.label.color = 0xFFFFAA00; }
+		_showStatus('|< Restart');
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	//  Playback speed
+	// ─────────────────────────────────────────────────────────────────────────
+	/**
+	 * Sube o baja la velocidad de reproducción en `delta` pasos (0.25 = un step).
+	 * Aplica `pitch` al audio si la versión de lime lo soporta.
+	 */
+	function _changeSpeed(delta:Float):Void
+	{
+		_playbackSpeed = FlxMath.bound(
+			Math.round((_playbackSpeed + delta) * 4) / 4.0,  // snap to 0.25 grid
+			0.25, 3.0);
+		if (speedLbl != null) speedLbl.text = '${_playbackSpeed}x';
+		_applyPlaybackSpeed();
+		_showStatus('Speed: ${_playbackSpeed}x   ( [ slower   ] faster )', 1.8);
+	}
+
+	/** Aplica _playbackSpeed al pitch del audio. Requiere lime 7+ / OpenFL 9+. */
+	function _applyPlaybackSpeed():Void
+	{
+		try
+		{
+			if (FlxG.sound.music != null) FlxG.sound.music.pitch = _playbackSpeed;
+			for (s in vocalsMap)    if (s != null) s.pitch = _playbackSpeed;
+			if (vocalsBf  != null) vocalsBf.pitch  = _playbackSpeed;
+			if (vocalsDad != null) vocalsDad.pitch  = _playbackSpeed;
+			if (vocals    != null) vocals.pitch     = _playbackSpeed;
+		}
+		catch (e:Dynamic)
+		{
+			// pitch no disponible en esta build (HaxeFlixel < 5 / lime < 7)
+			_showStatus('[WARN] Pitch change not supported in this build', 2.5);
+		}
 	}
 
 	function _doSeek(ms:Float):Void
@@ -2261,7 +2569,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	function _syncAudio(play:Bool):Void
 	{
 		if (FlxG.sound.music == null) return;
-		if (play) { FlxG.sound.music.volume = 1; FlxG.sound.music.play(); }
+		if (play) { FlxG.sound.music.volume = 1; FlxG.sound.music.play(); _applyPlaybackSpeed(); }
 		else       FlxG.sound.music.pause();
 		_syncVocals(FlxG.sound.music.time, play);
 	}
@@ -2407,7 +2715,7 @@ class PlayStateEditorState extends funkin.states.MusicBeatState
 	{
 		var pos = Conductor.songPosition; var len = songLength;
 		if (timeTxt != null) timeTxt.text = '${_fmtMs(pos)} / ${_fmtMs(len)}';
-		if (playBtn != null) playBtn.label.text = isPlaying ? '⏸' : '▶';
+		if (playBtn != null) playBtn.label.text = isPlaying ? '||' : '>';
 		// Snap check sync
 		if (snapCheck != null) _snapEnabled = snapCheck.checked;
 	}
