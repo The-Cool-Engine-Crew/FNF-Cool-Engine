@@ -67,6 +67,9 @@ class ScriptEditorSubState extends FlxSubState
 	var _isDirty       : Bool   = false;
 	var _scripts       : Map<String, String> = new Map();
 
+	/** Callback invocado al guardar — recibe el código actual del script activo. */
+	var _onSave        : Null<String->Void> = null;
+
 	// ── Caret (posición absoluta en _currentCode) ─────────────────────────────
 	var _caretPos      : Int    = 0;
 	var _cursorLine    : Int    = 0;
@@ -125,11 +128,22 @@ class ScriptEditorSubState extends FlxSubState
 	];
 
 	// ─────────────────────────────────────────────────────────────────────────
-	public function new(song:SwagSong, ?scriptName:String, ?camHUD:FlxCamera)
+	/**
+	 * @param song        Datos de la canción (para acceder a SONG.events).
+	 * @param scriptName  Nombre del script a abrir por defecto.
+	 * @param camHUD      Cámara HUD del estado padre.
+	 * @param initialCode Código inicial a inyectar (usado por PSEScript inline/file).
+	 *                    Si es null se busca en SONG.events como siempre.
+	 * @param onSave      Callback(code) invocado cada vez que el usuario guarda.
+	 *                    Permite al PSEEditor actualizar `scr.code` y escribir archivos.
+	 */
+	public function new(song:SwagSong, ?scriptName:String, ?camHUD:FlxCamera,
+	                    ?initialCode:String, ?onSave:String->Void)
 	{
 		super(0x88000000);
 		_song   = song;
 		_camHUD = camHUD;
+		_onSave = onSave;
 		if (scriptName != null) _currentName = scriptName;
 
 		if (_song?.events != null) {
@@ -140,6 +154,10 @@ class ScriptEditorSubState extends FlxSubState
 				}
 			}
 		}
+
+		// Si se pasó código inicial (PSEScript), inyectarlo en el mapa
+		if (initialCode != null && initialCode != '')
+			_scripts.set(_currentName, initialCode);
 
 		_currentCode = _scripts.exists(_currentName)
 			? _scripts.get(_currentName)
@@ -664,6 +682,9 @@ class ScriptEditorSubState extends FlxSubState
 		_scripts.set(_currentName, _currentCode);
 		_isDirty = false;
 		_updateScriptEventInSong(_currentName, _currentCode);
+		// Notificar al editor padre (PSEEditor) para que actualice scr.code
+		// y escriba en disco si tiene savePath configurado
+		if (_onSave != null) _onSave(_currentCode);
 		_showStatus('💾 Saved "$_currentName"');
 		FlxG.sound.play(Paths.sound('menus/confirmMenu'), 0.4);
 	}
