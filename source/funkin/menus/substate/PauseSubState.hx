@@ -189,7 +189,7 @@ class PauseSubState extends funkin.states.MusicBeatSubstate {
 	// ─────────────────────────────────────────────────────────────────────────
 
 	override function update(elapsed:Float) {
-		if (pauseMusic != null && pauseMusic.volume < 0.5)
+		if (pauseMusic != null && pauseMusic.volume < 0.6)
 			pauseMusic.volume += 0.01 * elapsed;
 
 		super.update(elapsed);
