@@ -236,6 +236,8 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 	var _lastStep:Int = -1;
 	var _nextEventIdx:Int = 0;
 	var _nextScriptIdx:Int = 0;
+	var _chartNotes:Array<{time:Float, direction:Int, isPlayer:Bool, isGF:Bool}> = [];
+	var _nextNoteIdx:Int = 0;
 
 	// ── Editor data ───────────────────────────────────────────────────────────
 	var pseData:PSEData;
@@ -424,8 +426,8 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		_loadPSEData();
 		_applyGameViewport(); // re-apply now that tracks.length is known
 		_setupAudio();
+		_buildChartNotes();
 
-		// ── Cargar scripts de la canción + eventos del chart (igual que PlayState) ──
 		ScriptHandler.init();
 		ScriptHandler.loadSongScripts(currentSong);
 		EventManager.loadEventsFromSong();
@@ -568,7 +570,6 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 
 		currentStage.cameras = [camGame];
 		_assignCams(currentStage, [camGame]);
-		add(currentStage);
 
 		_loadCharacters();
 		if (currentStage._useCharAnchorSystem) {
@@ -612,13 +613,11 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 
 		characterController = new CharacterController();
 		characterController.initFromSlots(characterSlots);
+		characterController.forceIdleAll();
 
 		// Build the camera proxy frame (visible when zoomed out)
 		_buildCamProxy();
 
-		// Safety: force camGame on ALL members added so far (stage + characters).
-		// This catches any background sprites the Stage added to FlxG.state with
-		// wrong cameras (e.g. the default camHUD from FlxG.cameras.reset earlier).
 		for (m in members)
 			if (m != null)
 				_assignCams(m, [camGame]);
@@ -723,7 +722,6 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 				}
 			}
 			characterSlots.push(slot);
-			add(slot.character);
 		}
 	}
 
@@ -1230,6 +1228,8 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 							_gameZoom = 1.0;
 							if (camGame != null)
 								camGame.zoom = _gameZoom;
+
+							if (cameraController != null) cameraController.zoomEnabled = true;
 							_showStatus('Zoom reset → 100%');
 						}
 					},
@@ -2688,6 +2688,19 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 	function _fireEditorEvents():Void {
 		var posMs = Conductor.songPosition;
 
+		// ── Canto de personajes sincronizado con el chart ─────────────────────
+		while (_nextNoteIdx < _chartNotes.length && _chartNotes[_nextNoteIdx].time <= posMs) {
+			var n = _chartNotes[_nextNoteIdx++];
+			if (characterController != null) {
+				if (n.isGF)
+					characterController.singGF(n.direction);
+				else if (n.isPlayer)
+					characterController.singByIndex(characterController.findPlayerIndex(), n.direction);
+				else
+					characterController.singByIndex(characterController.findOpponentIndex(), n.direction);
+			}
+		}
+
 		// ── Eventos del chart (cargados de SONG por EventManager) ─────────────
 		try {
 			EventManager.update(posMs);
@@ -3074,7 +3087,8 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 				if (camGame != null)
 					camGame.zoom = _gameZoom;
 
-				
+				if (cameraController != null)
+					cameraController.zoomEnabled = false;
 				_showStatus('Zoom ${Math.round(_gameZoom * 100)}%  (C = toggle cam proxy)', 0.8);
 			}
 		}
@@ -3449,6 +3463,27 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		}
 	}
 
+	function _buildChartNotes():Void {
+		_chartNotes = [];
+		var SONG = PlayState.SONG;
+		if (SONG == null || SONG.notes == null) return;
+		for (section in SONG.notes) {
+			if (section == null || section.sectionNotes == null) continue;
+			var mustHit:Bool = section.mustHitSection ?? true;
+			var gfSing:Bool  = section.gfSing ?? false;
+			for (rawNote in section.sectionNotes) {
+				var strumTime:Float = rawNote[0];
+				var rawData:Int     = Std.int(rawNote[1]);
+				var direction:Int   = rawData % 4;
+				var isPlayer:Bool = (mustHit && rawData < 4) || (!mustHit && rawData >= 4);
+				var isGF:Bool     = !isPlayer && gfSing;
+				_chartNotes.push({time: strumTime, direction: direction, isPlayer: isPlayer, isGF: isGF});
+			}
+		}
+		_chartNotes.sort((a, b) -> a.time < b.time ? -1 : (a.time > b.time ? 1 : 0));
+		_nextNoteIdx = 0;
+	}
+
 	function _doSeek(ms:Float):Void {
 		Conductor.songPosition = ms;
 		if (FlxG.sound.music != null)
@@ -3463,6 +3498,9 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		// Avanzar punteros de eventos/scripts PSE
 		_nextEventIdx = 0;
 		_nextScriptIdx = 0;
+		_nextNoteIdx = 0;
+		while (_nextNoteIdx < _chartNotes.length && _chartNotes[_nextNoteIdx].time < ms)
+			_nextNoteIdx++;
 		while (_nextEventIdx < sortedEvents.length && Conductor.stepCrochet * sortedEvents[_nextEventIdx].stepTime < ms)
 			_nextEventIdx++;
 		while (_nextScriptIdx < sortedScripts.length

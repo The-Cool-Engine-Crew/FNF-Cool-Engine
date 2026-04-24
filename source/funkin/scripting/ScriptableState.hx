@@ -136,8 +136,30 @@ class ScriptableState extends MusicBeatState {
 	}
 
 	override function destroy():Void {
-		StateScriptHandler.callOnScripts('onDestroy', []);
-		StateScriptHandler.clearStateScripts();
+		var isOurScriptActive = false;
+		if (_scripts != null && _scripts.length > 0) {
+			for (s in _scripts) {
+				if (StateScriptHandler.scripts.exists(s.name) && StateScriptHandler.scripts.get(s.name) == s) {
+					isOurScriptActive = true;
+					break;
+				}
+			}
+		}
+
+		if (isOurScriptActive) {
+			StateScriptHandler.callOnScripts('onDestroy', []);
+			StateScriptHandler.clearStateScripts();
+		} else {
+			if (_scripts != null) {
+				for (s in _scripts) {
+					if (s != null) {
+						try { s.call('onDestroy', []); } catch(e:Dynamic) {}
+						try { s.destroy(); } catch(e:Dynamic) {}
+					}
+				}
+			}
+		}
+
 		super.destroy();
 	}
 

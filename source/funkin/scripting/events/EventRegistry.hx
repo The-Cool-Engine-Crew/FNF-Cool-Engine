@@ -140,7 +140,7 @@ class EventRegistry
 		// 4. Sincronizar de vuelta a EventInfoSystem para que el ChartEditor lo vea
 		_syncToEventInfoSystem();
 
-		trace('[EventRegistry] ${_ordered.length} eventos registrados (${_defs.keys().hasNext() ? Lambda.count(_defs) : 0} únicos).');
+		trace('[EventRegistry] ${_ordered.length} events registered (${_defs.keys().hasNext() ? Lambda.count(_defs) : 0} unique).');
 	}
 
 	/**

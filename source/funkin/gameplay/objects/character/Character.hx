@@ -204,25 +204,6 @@ class Character extends FunkinSprite {
 	 */
 	static var _pathCache:Map<String, String> = [];
 
-	/**
-	 * Pool de personajes precacheados.
-	 *
-	 * Cada entrada es un Character "dummy" creado durante la fase de carga
-	 * de la canción. Mantenerlos vivos (en lugar de destruirlos) es esencial:
-	 * mientras el dummy existe, sus atlases tienen destroyOnNoUse = false,
-	 * lo que garantiza que el BitmapData permanezca en VRAM hasta el momento
-	 * en que el swap real ocurre.
-	 *
-	 * Sin este pool, releaseTrackedAtlases() en destroy() pondría
-	 * destroyOnNoUse = true y el GC de Flixel podría liberar la textura
-	 * entre el precacheo y el evento Change Character → re-upload a GPU → lag.
-	 *
-	 * Ciclo de vida:
-	 *   1. precacheCharacter(name) → crea dummy y lo guarda aquí.
-	 *   2. reloadCharacter(name)   → carga usando el caché caliente,
-	 *                                luego destruye el dummy del pool.
-	 *   3. releasePrecachePool()   → limpia todo al terminar la canción.
-	 */
 	static var _precachePool:Map<String, Character> = [];
 
 	/** Invalida las entradas de un personaje específico (recarga de mod). */
@@ -283,12 +264,6 @@ class Character extends FunkinSprite {
 	 * @param name  Nombre del personaje a precachear
 	 */
 	public static function precacheCharacter(name:String):Void {
-		// BUGFIX: se eliminó `|| _dataCache.exists(name)` de la guarda.
-		// Antes, si el JSON del personaje ya estaba en _dataCache (cargado en otra
-		// canción o como personaje activo), no se creaba el dummy → las texturas
-		// NO quedaban pinned en VRAM y podían ser liberadas por el GC de Flixel
-		// entre el precacheo y el evento Change Character → GPU re-upload → lag.
-		// Ahora siempre se crea el dummy salvo que ya exista uno en el pool.
 		if (name == null || name == '' || _precachePool.exists(name))
 			return;
 
@@ -326,24 +301,14 @@ class Character extends FunkinSprite {
 
 		dance();
 
-		// El isPlayer del constructor (pasado por CharacterSlot segun el tipo de slot)
-		// es la fuente de verdad en runtime. characterData.isPlayer solo puede promover
-		// de false -> true, nunca de true -> false.
-		// Necesario para mods Psych: PsychConverter siempre pone isPlayer:false
-		// porque no conoce el rol en runtime, y no debe sobreescribir al isPlayer real.
 		if (characterData.isPlayer)
 			isPlayer = true;
 
-		// flipX del JSON es la única fuente de verdad — isPlayer ya NO voltea el personaje.
-		// Para que un personaje mire a la derecha, pon flipX: true en su JSON.
 		if (characterData.flipX != null)
 			flipX = characterData.flipX;
 
-		// Guardar el flipX base AQUÍ, cuando ya está aplicado el flipX del JSON.
-		// playAnim() usará este valor como base para el XOR con AnimData.flipX.
 		_baseFlipX = this.flipX;
 
-		// Re-danzar con el _baseFlipX ya correcto para que la pose inicial sea la adecuada.
 		dance();
 	}
 
