@@ -457,7 +457,7 @@ class Project extends HXProject
     if (isMac())
     {
       setHaxedef("objc");
-      config.push("compilerflag", "-fno-digraphs");
+      config.push("compiler-flag", "-fno-digraphs");
     }
 
     if (!debug)
