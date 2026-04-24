@@ -44,6 +44,7 @@ class DialogueBoxImproved extends FlxSpriteGroup
 
 	// === PORTRAITS CACHE ===
 	var portraitCache:Map<String, FlxSprite> = new Map<String, FlxSprite>();
+	var portraitGroup:FlxSpriteGroup;
 	var activePortrait:FlxSprite = null;
 
 	// === BOXES CACHE ===
@@ -105,8 +106,11 @@ class DialogueBoxImproved extends FlxSpriteGroup
 			default: DialogueStyle.CUSTOM;
 		}
 
-		// 4. Crear elementos visuales
 		createBackground();
+
+		portraitGroup = new FlxSpriteGroup();
+		add(portraitGroup);
+
 		createDialogueBox();
 		createTextArea();
 		createControlsText();
@@ -429,7 +433,7 @@ class DialogueBoxImproved extends FlxSpriteGroup
 		var portrait = loadPortrait(portraitName);
 		if (portrait != null)
 		{
-			add(portrait);
+			portraitGroup.add(portrait);
 			portraitCache.set(portraitName, portrait);
 		}
 
@@ -745,6 +749,12 @@ class DialogueBoxImproved extends FlxSpriteGroup
 	// sprite.destroy() on them.
 	override public function destroy():Void
 	{
+		if (portraitGroup != null)
+		{
+			portraitGroup.destroy();
+			portraitGroup = null;
+		}
+
 		// Destroy every cached portrait sprite so its BitmapData is freed.
 		for (_ => portrait in portraitCache)
 			if (portrait != null) try portrait.destroy() catch (_:Dynamic) {}
