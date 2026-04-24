@@ -1481,23 +1481,8 @@ class FreeplayState extends funkin.states.MusicBeatState
 			discSpr = null;
 		}
 
-		// ── FIX Bug 3a: iconArray acumulaba HealthIcon sin destruir ──────────
-		// Flixel los destruye eventualmente, pero el GC no los recoge antes del
-		// siguiente create() → la RAM sube con cada ciclo FreeplayState → PlayState.
-		// FIX Bug 2: además de destroy(), eliminar explícitamente el FlxGraphic
-		// de cada ícono de FlxG.bitmap. HealthIcon.destroy() destruye el FlxSprite
-		// pero no llama FlxG.bitmap.removeByKey(), así que el BitmapData del ícono
-		// queda vivo en el cache de Flixel indefinidamente (useCount cae a 0 pero
-		// persist=true lo blinda contra el clearUnused automático de Flixel).
-		// Con removeByKey() explícito, el bitmap se dispone inmediatamente y no
-		// necesita esperar a clearSecondLayer() del siguiente cambio de state.
-		for (icon in iconArray) {
-			if (icon == null) continue;
-			final gKey = icon.graphic?.key;
-			icon.destroy();
-			if (gKey != null && gKey != '')
-				try { FlxG.bitmap.removeByKey(gKey); } catch (_:Dynamic) {}
-		}
+		for (icon in iconArray)
+			if (icon != null) icon.destroy();
 		iconArray = [];
 
 		// ── diffPills: clear() solo los saca del grupo sin destruirlos ────────
