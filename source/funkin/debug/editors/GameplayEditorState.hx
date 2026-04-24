@@ -106,7 +106,7 @@ typedef PSEData = {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  GameplayEditorState  v2.0 — FL Studio–style block timeline
+//  GameplayEditorState  v0.1 — FL Studio–style block timeline
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -389,6 +389,8 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 	inline function _gameW():Int
 		return SW - INSP_W;
 
+	var versionEditor:String = '0.1';
+
 	// ─────────────────────────────────────────────────────────────────────────
 	//  Constructor
 	// ─────────────────────────────────────────────────────────────────────────
@@ -542,6 +544,8 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		camGame.y = HEADER_H + VP_PAD;
 		camGame.width = targetW;
 		camGame.height = targetH;
+
+		camGame.zoom = _gameZoom * (camGame.width / SW);
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -1169,7 +1173,7 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		add(snTxt);
 
 		// Right-side: PSE version tag (subtle)
-		var proto = new FlxText(SW - 80, 5, 74, 'PSE v2.0', 8);
+		var proto = new FlxText(SW - 80, 5, 74, 'GE v'+versionEditor, 8);
 		proto.setFormat(Paths.font('vcr.ttf'), 8, 0xFF333350, RIGHT);
 		proto.scrollFactor.set();
 		proto.cameras = [camHUD];
@@ -1423,10 +1427,10 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		s3.cameras = [camHUD];
 		s3.scrollFactor.set();
 		add(s3);
-		bx += 8;
+		bx += 18;
 
 		// Snap checkbox
-		snapCheck = new CoolCheckBox(bx, by + 7, null, null, 'Snap', 56);
+		snapCheck = new CoolCheckBox(bx + 20, by + 7, null, null, 'Snap', 56);
 		snapCheck.checked = true;
 		snapCheck.callback = function(v:Bool) {
 			_snapEnabled = v;
@@ -1434,7 +1438,7 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		snapCheck.cameras = [camHUD];
 		snapCheck.scrollFactor.set();
 		add(snapCheck);
-		bx += 72;
+		bx += 92;
 
 		// Separator
 		var s4 = new FlxSprite(bx, by + 3).makeGraphic(1, 22, C_BORDER);
@@ -1474,9 +1478,9 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		unsavedDot.visible = false;
 		add(unsavedDot);
 
-		freeCamBtn = _mkBtn(rbx, by, 'CAM', 36, 29, 0xFF1A2A3A, function() _toggleFreeCam());
+		freeCamBtn = _mkBtn(rbx + 30, by, 'CAM', 36, 29, 0xFF1A2A3A, function() _toggleFreeCam());
 		rbx -= 42;
-		var saveB = _mkBtn(rbx, by, 'SAV', 36, 29, 0xFF1A2A1A, function() _savePSEData());
+		var saveB = _mkBtn(rbx + 30, by, 'SAV', 36, 29, 0xFF1A2A1A, function() _savePSEData());
 		rbx -= 42;
 
 		// Zoom label + slider
@@ -3080,12 +3084,12 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		}
 
 		// Wheel on game area = camera zoom  (Ctrl NOT held, free cam NOT active)
-		if (my >= HEADER_H && my < tlY && mx < SW - INSP_W && !FlxG.keys.pressed.CONTROL && !_freeCam) {
+		if (my >= HEADER_H && my < tlY && mx < SW - INSP_W && !FlxG.keys.pressed.CONTROL) {
 			var w = FlxG.mouse.wheel;
 			if (w != 0) {
 				_gameZoom = FlxMath.bound(_gameZoom * (w > 0 ? 1.12 : 0.89), 0.05, 5.0);
 				if (camGame != null)
-					camGame.zoom = _gameZoom;
+					camGame.zoom = _gameZoom * (camGame.width / SW);
 
 				if (cameraController != null)
 					cameraController.zoomEnabled = false;
@@ -3295,13 +3299,13 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 			return;
 		var speed = 400 * elapsed / camGame.zoom;
 
-		if (FlxG.keys.pressed.W || FlxG.keys.pressed.UP)
+		if (controls.UP)
 			_freeCamY -= speed;
-		if (FlxG.keys.pressed.S || FlxG.keys.pressed.DOWN)
+		if (controls.DOWN)
 			_freeCamY += speed;
-		if (FlxG.keys.pressed.A || FlxG.keys.pressed.LEFT)
+		if (controls.LEFT)
 			_freeCamX -= speed;
-		if (FlxG.keys.pressed.D || FlxG.keys.pressed.RIGHT)
+		if (controls.RIGHT)
 			_freeCamX += speed;
 
 		// Mouse drag in game area
@@ -3375,7 +3379,7 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		if (FlxG.keys.justPressed.ZERO && !ctrl && !_anyInputFocused()) {
 			_gameZoom = 1.0;
 			if (camGame != null)
-				camGame.zoom = _gameZoom;
+				camGame.zoom = _gameZoom * (camGame.width / SW);
 			_showStatus('Zoom reset → 100%', 1.0);
 		}
 	}

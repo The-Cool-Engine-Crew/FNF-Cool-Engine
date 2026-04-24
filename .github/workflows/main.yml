@@ -122,7 +122,7 @@ jobs:
 
       - name: Install haxelibs
         run: |
-          haxelib install hxcpp                                                  --quiet --never
+          haxelib git hxcpp https://github.com/HaxeFoundation/hxcpp.git          --quiet --never
           haxelib install lime          ${{ env.LIME_VERSION }}                  --never
           haxelib install openfl        ${{ env.OPENFL_VERSION }}                --never
           haxelib install flixel        6.1.2                                    --never
