@@ -1458,9 +1458,6 @@ class FreeplayState extends funkin.states.MusicBeatState
 
 	override function destroy()
 	{
-		// ── Cancelar tweens activos ANTES de nullear referencias ─────────────
-		// Si no se cancelan, los callbacks de FlxTween se disparan después de
-		// que el state fue destruido → crash o referencias a objetos muertos.
 		if (colorTween != null)
 		{
 			colorTween.cancel();
@@ -1469,10 +1466,6 @@ class FreeplayState extends funkin.states.MusicBeatState
 		if (albumArt != null)    FlxTween.cancelTweensOf(albumArt);
 		if (albumTextSpr != null) FlxTween.cancelTweensOf(albumTextSpr);
 
-		// ── discSpr: puede estar en medio de un tween de salida ──────────────
-		// El tween tiene un onComplete que intenta discSpr.destroy().
-		// Si destroy() llega antes que el tween termine, el callback se ejecuta
-		// sobre un objeto ya muerto. Cancelamos y destruimos aquí.
 		if (discSpr != null)
 		{
 			FlxTween.cancelTweensOf(discSpr);
@@ -1485,16 +1478,11 @@ class FreeplayState extends funkin.states.MusicBeatState
 			if (icon != null) icon.destroy();
 		iconArray = [];
 
-		// ── diffPills: clear() solo los saca del grupo sin destruirlos ────────
-		// Cada píldora es un FlxSprite con bitmap propio (makeGraphic).
-		// Sin destroy() explícito los bitmaps quedan vivos en el cache de OpenFL.
 		if (diffPills != null)
 		{
 			diffPills.forEach(function(s) if (s != null) s.destroy(), true);
 			diffPills.clear();
 		}
-		// diffTexts son FlxText añadidos directamente al state — super.destroy()
-		// los limpia vía members, pero vaciamos la referencia local igualmente.
 		diffTexts = [];
 
 		freeplayData = null;

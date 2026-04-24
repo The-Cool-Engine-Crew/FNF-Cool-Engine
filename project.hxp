@@ -158,12 +158,12 @@ class Project extends HXProject
     if (isAndroid())
     {
       addAssetPath("mods",   "assets/mods",   null, false);
-      addAssetPath("addons", "assets/addons",  null, false);
+      //addAssetPath("addons", "assets/addons",  null, false);
     }
     else
     {
       addAssetPath("mods",   "mods",   null, false);
-      addAssetPath("addons", "addons", null, false);
+      //addAssetPath("addons", "addons", null, false);
     }
 
     // DLLs / plugins nativos de Windows

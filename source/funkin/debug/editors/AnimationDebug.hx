@@ -365,10 +365,10 @@ class AnimationDebug extends MusicBeatState
 		add(hudHealthBar);
 
 		// ── Slide-in del panel derecho al abrir ───────────────────────────────
-		UI_box.x = PANEL_HIDDEN_X;
-		uiPanelBg.x = PANEL_HIDDEN_X - 4;
-		FlxTween.tween(UI_box, {x: FlxG.width - UI_box.width - 10}, 0.45, {ease: FlxEase.quartOut});
-		FlxTween.tween(uiPanelBg, {x: FlxG.width - UI_box.width - 14}, 0.45, {ease: FlxEase.quartOut});
+		UI_box.x = PANEL_HIDDEN_X + 30;
+		uiPanelBg.x = PANEL_HIDDEN_X - 4 + 30;
+		FlxTween.tween(UI_box, {x: FlxG.width - UI_box.width - 2}, 0.45, {ease: FlxEase.quartOut});
+		FlxTween.tween(uiPanelBg, {x: FlxG.width - UI_box.width - 6}, 0.45, {ease: FlxEase.quartOut});
 
 		// Fade-in del panel izquierdo
 		leftPanel.alpha = 0;
@@ -419,7 +419,7 @@ class AnimationDebug extends MusicBeatState
 		UI_box = new CoolTabMenu(null, tabs, true);
 		UI_box.cameras = [camHUD];
 		UI_box.resize(320, 450);
-		UI_box.x = FlxG.width - UI_box.width - 10;
+		UI_box.x = FlxG.width - UI_box.width - 2;
 		UI_box.y = 10;
 
 		// Panel oscuro detrás del tab menu (se crea aquí para poder referenciar el tamaño)

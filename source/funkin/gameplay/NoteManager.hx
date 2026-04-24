@@ -623,14 +623,11 @@ class NoteManager {
 			if (note == null || !note.alive)
 				continue;
 
-			// FIX: CPU hit BEFORE updateNotePosition so wasGoodHit=true when clipRect is evaluated,
-			// preventing sustains from flashing 1 frame above the strum line on their hit frame.
 			if (!note.mustPress && note.strumTime <= songPosition && !(note.isSustainNote && note.wasGoodHit)) {
 				handleCPUNote(note);
 				if (!note.isSustainNote)
 					continue;
 			}
-
 			updateNotePosition(note, songPosition);
 
 			if (note.mustPress) {
@@ -1088,8 +1085,9 @@ class NoteManager {
 					} else
 						note.clipRect = null;
 				}
-			} else
+			} else if (note.mustPress) {
 				note.clipRect = null;
+			}
 		}
 	}
 

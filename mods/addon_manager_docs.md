@@ -45,8 +45,10 @@ Addons live in:
 
 ------------------------------------------------------------------------
 
-# Expected Folder Structure
-
+# Expected Folder Structure in 
+    assets/...
+    manifest/...
+    mods/...
     addons/
     └── my-addon/
         ├── addon.json        # metadata and hook/system declarations

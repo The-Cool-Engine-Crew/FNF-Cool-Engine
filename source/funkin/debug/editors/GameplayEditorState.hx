@@ -915,7 +915,15 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 	function _onSongEnd():Void {
 		isPlaying = false;
 		_syncAudio(false);
-		_showStatus('Song ended');
+		// Reset position to start so pressing Play again works correctly.
+		// Without this, Conductor.songPosition stays at the song end and the next
+		// play() call immediately re-fires onComplete.
+		_doSeek(0);
+		if (playBtn != null) {
+			playBtn.label.text = '>';
+			playBtn.label.color = C_ACCENT2;
+		}
+		_showStatus('Song ended  —  press Play to restart');
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -1231,7 +1239,7 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 						cb: () -> {
 							_gameZoom = 1.0;
 							if (camGame != null)
-								camGame.zoom = _gameZoom;
+								camGame.zoom = _gameZoom * (camGame.width / SW);
 
 							if (cameraController != null) cameraController.zoomEnabled = true;
 							_showStatus('Zoom reset → 100%');
@@ -2596,8 +2604,14 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 			_fireEditorEvents();
 		}
 
-		if (cameraController != null)
+		if (cameraController != null) {
 			cameraController.update(elapsed);
+			// CameraController sets camGame.zoom assuming a 1280px full-screen display.
+			// When it controls the zoom (zoomEnabled=true) we must scale the result down
+			// so the gameplay view fits correctly inside the smaller editor preview viewport.
+			if (!_freeCam && cameraController.zoomEnabled)
+				camGame.zoom = camGame.zoom * _gameZoom * (camGame.width / SW);
+		}
 		if (characterController != null)
 			characterController.update(elapsed);
 
@@ -2936,6 +2950,7 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 
 		// Auto-scroll
 		if (isPlaying && !_scrubDrag && !_hScrollDrag) {
+			var prevScrollX = tlScrollX;
 			var rel = (posMs - tlScrollX) * tlZoom;
 			if (rel > areaW * 0.78)
 				tlScrollX = posMs - areaW * 0.2 / tlZoom;
@@ -2943,6 +2958,12 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 				tlScrollX = posMs;
 			if (tlScrollX < 0)
 				tlScrollX = 0;
+			// When the scroll offset changes, the ruler labels and event blocks
+			// must be rebuilt — they are positioned relative to tlScrollX.
+			if (tlScrollX != prevScrollX) {
+				_rebuildRuler();
+				_rebuildEventBlocks();
+			}
 		}
 
 		var xp = TL_LABEL_W + (posMs - tlScrollX) * tlZoom;
@@ -3084,12 +3105,17 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		}
 
 		// Wheel on game area = camera zoom  (Ctrl NOT held, free cam NOT active)
-		if (my >= HEADER_H && my < tlY && mx < SW - INSP_W && !FlxG.keys.pressed.CONTROL) {
+		if (my >= HEADER_H && my < tlY && mx < SW - INSP_W && !FlxG.keys.pressed.CONTROL && !_freeCam) {
 			var w = FlxG.mouse.wheel;
 			if (w != 0) {
 				_gameZoom = FlxMath.bound(_gameZoom * (w > 0 ? 1.12 : 0.89), 0.05, 5.0);
-				if (camGame != null)
-					camGame.zoom = _gameZoom * (camGame.width / SW);
+				if (camGame != null) {
+					// Include the stage defaultCamZoom so that _gameZoom=1.0 matches
+					// what PlayState would show (adapted to the editor viewport size).
+					var baseZoom = (cameraController != null && cameraController.defaultZoom > 0)
+						? cameraController.defaultZoom : 1.0;
+					camGame.zoom = baseZoom * _gameZoom * (camGame.width / SW);
+				}
 
 				if (cameraController != null)
 					cameraController.zoomEnabled = false;
@@ -3320,7 +3346,10 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		var w = FlxG.mouse.wheel;
 		if (w != 0 && FlxG.mouse.y > HEADER_H && FlxG.mouse.y < _tlY()) {
 			_gameZoom = FlxMath.bound(_gameZoom * (w > 0 ? 1.12 : 0.89), 0.05, 8.0);
-			camGame.zoom = _gameZoom;
+			// Apply the same viewport correction as the normal zoom path so the
+			// world view scales consistently with the editor preview size.
+			if (camGame != null)
+				camGame.zoom = _gameZoom * (camGame.width / SW);
 		}
 	}
 
