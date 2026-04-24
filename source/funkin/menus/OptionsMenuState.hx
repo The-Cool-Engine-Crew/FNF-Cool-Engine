@@ -2805,6 +2805,11 @@ class OptionsMenuState extends MusicBeatSubstate
 		_bgMenuShader = null;
 		_gridShader = null;
 
+		if (_checkboxSprites != null){
+			_checkboxSprites.destroy();
+			_checkboxSprites = null;
+		}
+
 		// BUGFIX: limpiar listeners de hot-plug
 		FlxG.gamepads.deviceConnected.remove(_onGamepadConnectedInMenu);
 		FlxG.gamepads.deviceDisconnected.remove(_onGamepadDisconnectedInMenu);
