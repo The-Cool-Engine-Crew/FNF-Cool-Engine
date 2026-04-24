@@ -143,7 +143,7 @@ function _updateIcons()
 	// ── Beat bounce decay ───────────────────────────────────────────────────
 	// Decay the bounce multiplier towards 1.0 exponentially each frame.
 	// This is independent of setGraphicSize so it never moves iconTargetX.
-	var decayFactor = Math.exp(-BOUNCE_DECAY * FlxG.elapsed);
+	var decayFactor = 1 - (BOUNCE_DECAY * FlxG.elapsed);
 	iconP1Bounce = 1.0 + (iconP1Bounce - 1.0) * decayFactor;
 	iconP2Bounce = 1.0 + (iconP2Bounce - 1.0) * decayFactor;
 

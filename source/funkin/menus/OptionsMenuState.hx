@@ -2378,6 +2378,7 @@ class OptionsMenuState extends MusicBeatSubstate
 			"Downscroll",
 			"Middlescroll",
 			"Note Splashes",
+			"Sustain Penalty",
 			"Perfect Mode",
 			"Sick Mode",
 			"Static Stage",

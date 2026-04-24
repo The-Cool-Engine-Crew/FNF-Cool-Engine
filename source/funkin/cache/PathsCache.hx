@@ -492,14 +492,8 @@ class PathsCache {
 				_lruOrder.splice(i, 1);
 				_graphicCount--;
 				evicted++;
-				// FIX Issue #5 — liberar la textura de GPU/RAM real al evictar.
-				// Antes, solo se eliminaba del mapa interno y del _lruOrder, pero
-				// el FlxGraphic seguía vivo en FlxG.bitmap._cache (persist=true),
-				// reteniendo toda la VRAM/RAM de la textura. El LRU era cosmético.
-				// removeByKey() llama g.destroy() → bitmap.dispose() → libera la
-				// textura nativa. La siguiente llamada a cacheGraphic(k) descubrirá
-				// que el graphic ya no existe y lo recargará desde disco.
-				try { FlxG.bitmap.removeByKey(k); } catch (_) {}
+				
+				//try { FlxG.bitmap.removeByKey(k); } catch (_) {}
 			} else
 				i++;
 		}
