@@ -148,6 +148,16 @@ jobs:
       - name: Rebuild Lime for arm64
         run: arch -arm64 haxelib run lime rebuild mac
 
+      - name: Patch hxcpp digraph bug (arm64 clang)
+        run: |
+          HXCPP="$(haxelib path hxcpp | head -1)"
+          sed -i '' 's/IsClass<::cpp::/IsClass< ::cpp::/g' "$HXCPP/include/Dynamic.h"
+          sed -i '' 's/ReturnNull<::cpp::/ReturnNull< ::cpp::/g' "$HXCPP/include/Array.h"
+          sed -i '' 's/ArrayTraits<::cpp::/ArrayTraits< ::cpp::/g' "$HXCPP/include/Array.h"
+          sed -i '' 's/NewNull<::cpp::/NewNull< ::cpp::/g' "$HXCPP/include/Array.h"
+          sed -i '' 's/ArrayClassId<::cpp::/ArrayClassId< ::cpp::/g' "$HXCPP/include/Array.h"
+          sed -i '' 's/ClassOf<::cpp::/ClassOf< ::cpp::/g' "$HXCPP/include/hx/Class.h"
+
       - name: Build (macOS release)
         run: arch -arm64 haxelib run lime build mac -final
 

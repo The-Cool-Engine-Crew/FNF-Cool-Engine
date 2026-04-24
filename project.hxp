@@ -457,7 +457,9 @@ class Project extends HXProject
     if (isMac())
     {
       setHaxedef("objc");
-      config.push("compiler-flag", "-fno-digraphs");
+      // "-fno-digraphs" se aplica parcheando los headers de hxcpp en CI
+      // (ver el step "Patch hxcpp digraph" en main.yml).
+      // config.push("compiler-flag", ...) no llega a la pipeline interna de hxcpp para .mm
     }
 
     if (!debug)
