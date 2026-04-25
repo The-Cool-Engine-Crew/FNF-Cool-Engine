@@ -1774,11 +1774,11 @@ class ModEditSubState extends funkin.states.MusicBeatSubstate {
 	}
 
 	function _handleTextInput():Void {
-		if (controls.BACK) {
+		if (FlxG.keys.justPressed.ESCAPE) {
 			_endEdit(false);
 			return;
 		}
-		if (controls.ACCEPT) {
+		if (FlxG.keys.justPressed.ENTER) {
 			_endEdit(true);
 			return;
 		}

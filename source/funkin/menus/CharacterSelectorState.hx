@@ -1,7 +1,6 @@
 package funkin.menus;
 import coolui.CoolInputText;
 
-
 import flixel.FlxG;
 import flixel.FlxSprite;
 import flixel.group.FlxGroup.FlxTypedGroup;
