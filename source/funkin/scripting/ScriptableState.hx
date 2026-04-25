@@ -112,27 +112,32 @@ class ScriptableState extends MusicBeatState {
 	}
 
 	override function update(elapsed:Float):Void {
-		StateScriptHandler.callOnScripts('onUpdate', [elapsed]);
-
-		// Propagación de input a scripts (cancelable)
+		// FIX: MusicBeatState.update() ya llama callOnScripts('onUpdate') y
+		// callOnScripts('onUpdatePost') internamente. Si los duplicamos aquí
+		// el script se ejecuta DOS VECES por frame, lo que provoca que tweens
+		// y animaciones corran doble y — en transiciones — accedan a sprites
+		// ya destruidos ("Cannot queue X. This sprite was destroyed.").
+		// Solo propagamos el input, que MusicBeatState no maneja.
 		#if !mobile
-		for (key in _getPressedKeys())
-			StateScriptHandler.callOnScripts('onKeyJustPressed', [key]);
+		if (Lambda.count(StateScriptHandler.scripts) > 0)
+		{
+			for (key in _getPressedKeys())
+				StateScriptHandler.callOnScripts('onKeyJustPressed', [key]);
+		}
 		#end
 
 		super.update(elapsed);
-
-		StateScriptHandler.callOnScripts('onUpdatePost', [elapsed]);
 	}
 
 	override function beatHit():Void {
+		// FIX: MusicBeatState.beatHit() ya lanza fireRaw('onBeatHit').
+		// Llamar callOnScripts aquí también provocaba un doble disparo.
 		super.beatHit();
-		StateScriptHandler.callOnScripts('onBeatHit', [curBeat]);
 	}
 
 	override function stepHit():Void {
+		// FIX: MusicBeatState.stepHit() ya lanza fireRaw('onStepHit').
 		super.stepHit();
-		StateScriptHandler.callOnScripts('onStepHit', [curStep]);
 	}
 
 	override function destroy():Void {

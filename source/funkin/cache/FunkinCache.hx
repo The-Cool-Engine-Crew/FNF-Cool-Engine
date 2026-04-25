@@ -61,6 +61,17 @@ class FunkinCache extends AssetCache {
 	var _soundCount:Int = 0;
 	var _fontCount:Int = 0;
 
+	// ── Cola de dispose() diferido ────────────────────────────────────────────
+	// b.dispose() libera la textura GPU y puede tardar varios milisegundos por
+	// bitmap. Hacer todos los disposes del clearSecondLayer() en un solo frame
+	// (el primero del nuevo state) provoca la bajada de FPS en cada cambio de
+	// state. En su lugar se acumulan aquí y se procesan a razón de
+	// _DISPOSE_PER_FRAME por ENTER_FRAME, repartiendo el trabajo en varios frames
+	// invisibles mientras el overlay de transición cubre la pantalla.
+	var _disposeQueue:Array<BitmapData> = [];
+	var _disposeFrameListener:Null<openfl.events.Event->Void> = null;
+	static inline final _DISPOSE_PER_FRAME:Int = 10; // texturas liberadas por frame
+
 	/**
 	 * Callback llamado cuando un asset se destruye.
 	 * Firma: (key:String, assetType:String) → Void
@@ -186,85 +197,58 @@ class FunkinCache extends AssetCache {
 
 		FlxG.signals.postStateSwitch.add(function() {
 			// ── FIX Bug 4: disableCount puede desincronizarse ─────────────────
-			// Si PlayState es destruido por excepción/crash antes de llegar a su
-			// destroy(), resumeGC() nunca se llama y disableCount queda en 1+.
-			// El GC permanece desactivado para todas las sesiones siguientes →
-			// la RAM sube sin parar. Este reset forzado es la red de seguridad.
 			if (MemoryUtil.disableCount > 0) {
 				trace('[FunkinCache] WARN: disableCount=${MemoryUtil.disableCount} al cambiar state — GC forzado a reactivar.');
 				@:privateAccess MemoryUtil.disableCount = 0;
 				@:privateAccess MemoryUtil._enableGC();
 			}
 
+			// ── FASE SÍNCRONA (frame 1 del nuevo state) ───────────────────────
+			// clearSecondLayer() toma las decisiones de rescate/eviction y retira
+			// todos los assets de los mapas de caché inmediatamente. Los dispose()
+			// reales de los bitmaps se encolan en _disposeQueue y se reparten en
+			// frames siguientes (_flushDisposeQueue) para NO colapsar el frame 1.
 			instance.clearSecondLayer();
-
-			// ── Limpiar wrappers FlxGraphic huérfanos de PathsCache ───────────────
-			// clearSecondLayer() ya dispuso los BitmapData nativos vía removeByKey().
-			// PathsCache._previousGraphics sigue sosteniendo los wrappers FlxGraphic
-			// (con bitmap=null). Liberarlos aquí, DESPUÉS de clearSecondLayer(),
-			// para que el GC pueda recogerlos en el collectMajor() siguiente.
 			funkin.cache.PathsCache.instance.clearPreviousGraphics();
-
-			// ── Limpiar sonidos huérfanos de PathsCache ───────────────────────
-			// clearSecondLayer() ya cerró los Sound natives vía s.close().
-			// PathsCache._previousSounds aún sostenía esas referencias cerradas,
-			// bloqueando al GC. Llamar aquí, DESPUÉS de clearSecondLayer().
 			funkin.cache.PathsCache.instance.clearPreviousSounds();
-
 			Paths.pruneAtlasCache();
+			try { FlxG.bitmap.clearUnused(); } catch (_:Dynamic) {}
 
-			try {
-				FlxG.bitmap.clearUnused();
-			} catch (_:Dynamic) {}
-
-			haxe.Timer.delay(function() {
-				try {
-					funkin.cache.PathsCache.instance.flushGPUCache();
-				} catch (_:Dynamic) {}
-			}, 80);
+			// ── FASE DIFERIDA: GPU flush + GC mayor ───────────────────────────
+			// Se retrasan hasta DESPUÉS de que la animación de entrada del nuevo
+			// state haya terminado. La duración por defecto de la transición es
+			// globalDuration s (fade-out) + globalDuration*0.5 s (fade-in) ≈ 350ms.
+			// Añadimos un margen generoso para que el overlay ya haya desaparecido.
+			//
+			// compact=false en collectMajor(): Gc.compact() es un stop-the-world
+			// de varios ms que provoca el stutter visible; se omite aquí y se deja
+			// para collectMajor() completo en el próximo PlayState.destroy() o al
+			// volver al menú principal.
+			final transMs = Std.int(funkin.transitions.StateTransition.globalDuration * 1000 + 200);
+			final gcMs    = transMs + 150;
 
 			#if lime
-			try {
-				lime.utils.Assets.cache.clear('songs');
-			} catch (_:Dynamic) {}
-			try {
-				lime.utils.Assets.cache.clear('music');
-			} catch (_:Dynamic) {}
-			try {
-				lime.utils.Assets.cache.clear('sounds');
-			} catch (_:Dynamic) {}
-			try {
-				lime.utils.Assets.cache.clear('images');
-			} catch (_:Dynamic) {}
+			try { lime.utils.Assets.cache.clear('songs');  } catch (_:Dynamic) {}
+			try { lime.utils.Assets.cache.clear('music');  } catch (_:Dynamic) {}
+			try { lime.utils.Assets.cache.clear('sounds'); } catch (_:Dynamic) {}
+			try { lime.utils.Assets.cache.clear('images'); } catch (_:Dynamic) {}
 			#end
 
-			// FIX Bug 5 — GC diferido: en C++ los destructores de los objetos
-			// liberados por clearSecondLayer() se encolan para ejecutarse en el
-			// hilo del GC. Si llamamos Gc.run() en el mismo frame, muchos objetos
-			// aún no tienen finalizer listo y el GC no los recoge, así que
-			// System.totalMemory no baja. Diferir 2 frames (~32ms a 60fps) da
-			// tiempo a que todos los destructores terminen antes del ciclo mayor.
+			haxe.Timer.delay(function() {
+				try { funkin.cache.PathsCache.instance.flushGPUCache(); } catch (_:Dynamic) {}
+			}, transMs);
+
 			#if (android || mobileC || ios)
-			try {
-				MemoryUtil.collectMinor();
-			} catch (_:Dynamic) {} // inmediato: limpia gen. joven
-			haxe.Timer.delay(function() // ~130ms después
-			{
-				try {
-					MemoryUtil.collectMajor();
-				} catch (_:Dynamic) {}
-				try {
-					flixel.FlxG.bitmap.clearUnused();
-				} catch (_:Dynamic) {}
-			}, 130);
+			try { MemoryUtil.collectMinor(); } catch (_:Dynamic) {}
+			haxe.Timer.delay(function() {
+				try { MemoryUtil.collectMajor(false); } catch (_:Dynamic) {}
+				try { flixel.FlxG.bitmap.clearUnused(); } catch (_:Dynamic) {}
+			}, gcMs);
 			#else
-			haxe.Timer.delay(function() // ~2 frames a 60fps
-			{
-				MemoryUtil.collectMajor();
-				try {
-					FlxG.bitmap.clearUnused();
-				} catch (_:Dynamic) {}
-			}, 32);
+			haxe.Timer.delay(function() {
+				MemoryUtil.collectMajor(false);
+				try { FlxG.bitmap.clearUnused(); } catch (_:Dynamic) {}
+			}, gcMs);
 			#end
 		});
 	}
@@ -285,6 +269,42 @@ class FunkinCache extends AssetCache {
 		_bitmapCount = 0;
 		_soundCount = 0;
 		_fontCount = 0;
+	}
+
+	// ══════════════════════════════════════════════════════════════════════════
+	// DISPOSE QUEUE — reparte dispose() en varios frames para no colapsar frame 1
+	// ══════════════════════════════════════════════════════════════════════════
+
+	/**
+	 * Encola un BitmapData para dispose() diferido.
+	 * Si el listener de ENTER_FRAME no está activo, lo registra.
+	 */
+	function _queueDispose(b:BitmapData):Void {
+		if (b == null) return;
+		_disposeQueue.push(b);
+		if (_disposeFrameListener == null) {
+			_disposeFrameListener = _flushDisposeQueue;
+			FlxG.stage.addEventListener(openfl.events.Event.ENTER_FRAME, _disposeFrameListener);
+		}
+	}
+
+	/**
+	 * Listener de ENTER_FRAME: dispone hasta _DISPOSE_PER_FRAME bitmaps por frame.
+	 * Cuando la cola se vacía se desregistra solo y lanza un collectMinor().
+	 */
+	function _flushDisposeQueue(_:openfl.events.Event):Void {
+		var count = 0;
+		while (_disposeQueue.length > 0 && count < _DISPOSE_PER_FRAME) {
+			final b = _disposeQueue.shift();
+			if (b != null) try { b.dispose(); } catch (_:Dynamic) {}
+			count++;
+		}
+		if (_disposeQueue.length == 0) {
+			FlxG.stage.removeEventListener(openfl.events.Event.ENTER_FRAME, _disposeFrameListener);
+			_disposeFrameListener = null;
+			// Ciclo menor rápido ahora que todos los BitmapData nativos están libres
+			try { MemoryUtil.collectMinor(); } catch (_:Dynamic) {}
+		}
 	}
 
 	/**
@@ -363,26 +383,18 @@ class FunkinCache extends AssetCache {
 		}
 
 		// Fase 2b: evictar bitmaps.
-		// CRÍTICO: dispose() libera la textura nativa (GPU/Stage3D).
-		// Sin esto el wrapper Haxe se GC-ea pero la VRAM/RAM nativa queda retenida.
-		// FIX Bug 2: no destruir BitmapData que PathsCache considera permanentes.
-		// FunkinCache solo veía useCount de FlxG.bitmap; si el useCount era 0
-		// en ese instante (e.g. entre frames) llamaba dispose() aunque el asset
-		// estuviera en _permanentGraphics de PathsCache → textura destruida,
-		// recarga innecesaria y subida de RAM en cada visita a FreeplayState.
+		// CRÍTICO: _queueDispose() encola la liberación de textura nativa para
+		// repartirla en frames posteriores y no colapsar el frame 1 del nuevo state.
+		// FlxG.bitmap.removeByKey() se hace aquí (síncrono) porque Flixel no debe
+		// ver estos bitmaps desde el frame 1; el dispose() nativo puede diferirse.
 		for (k in bmpEvict) {
 			final b = bitmapData2.get(k);
-			// FIX doble dispose: removeByKey() → g.destroy() ya llama dispose() si
-			// destroyOnNoUseCount=true. Capturar si el bitmap sigue vivo ANTES de
-			// removeByKey() para no llamar dispose() una segunda vez → corrupción.
 			final existingGraphic = FlxG.bitmap.get(k);
 			final bitmapAlreadyDisposed = existingGraphic == null || existingGraphic.bitmap == null;
 			FlxG.bitmap.removeByKey(k);
 			#if lime LimeAssets.cache.image.remove(k); #end
 			if (!bitmapAlreadyDisposed && b != null && !funkin.cache.PathsCache.instance.isPermanent(k))
-				try {
-					b.dispose();
-				} catch (_:Dynamic) {}
+				_queueDispose(b); // diferido — no dispose() síncrono aquí
 			bitmapData2.remove(k);
 			if (onEvict != null)
 				try {

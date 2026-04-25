@@ -27,8 +27,7 @@ import openfl.system.System;
  * @author  Cool Engine Team
  * @since   0.5.1
  */
-class MemoryUtil
-{
+class MemoryUtil {
 	// ── Estado del GC ─────────────────────────────────────────────────────────
 
 	/** Número de llamadas a pauseGC() sin su correspondiente resumeGC(). */
@@ -41,28 +40,28 @@ class MemoryUtil
 	 * Solicita pausar el GC.  El GC se desactiva sólo cuando disableCount > 0.
 	 * Siempre acompañar con `resumeGC()` en un bloque try/finally.
 	 */
-	public static function pauseGC():Void
-	{
+	public static function pauseGC():Void {
 		disableCount++;
-		if (disableCount > 0) _disableGC();
+		if (disableCount > 0)
+			_disableGC();
 	}
 
 	/**
 	 * Libera una pausa del GC.
 	 * El GC se reactiva cuando disableCount vuelve a 0.
 	 */
-	public static function resumeGC():Void
-	{
-		if (disableCount > 0) disableCount--;
-		if (disableCount == 0) _enableGC();
+	public static function resumeGC():Void {
+		if (disableCount > 0)
+			disableCount--;
+		if (disableCount == 0)
+			_enableGC();
 	}
 
 	/**
 	 * Fuerza un ciclo menor del GC (rápido, solo generación joven).
 	 * Llamar entre canciones o al cambiar de estado.
 	 */
-	public static function collectMinor():Void
-	{
+	public static function collectMinor():Void {
 		#if (cpp || hl)
 		Gc.run(false);
 		#end
@@ -73,25 +72,29 @@ class MemoryUtil
 	 * Llamar al volver al menú principal o después de una carga pesada.
 	 * Evitar durante gameplay — provoca un stutter visible.
 	 *
+	 * @param compact  Si true (por defecto) se llama a Gc.compact() después de
+	 *                 Gc.run(). Pasar false en el path post-state-switch para
+	 *                 evitar el stop-the-world que provoca la bajada de FPS
+	 *                 justo cuando el nuevo state está pintando sus primeros frames.
+	 *                 La compactación se puede omitir sin riesgo porque el heap
+	 *                 se compactará en el siguiente collectMajor() completo (p.ej.
+	 *                 al volver al menú principal).
+	 *
 	 * NOTA MÓVIL: Gc.compact() puede bloquear el hilo principal en Android.
-	 * Quedó desactivado en versiones anteriores por miedo al ANR (5 s límite
-	 * del OS). Sin embargo, con el fix de isInCurrentSession() en FunkinCache,
-	 * clearSecondLayer() ya libera MUCHOS más objetos antes de llegar aquí,
-	 * así que Gc.compact() tiene menos trabajo y es más rápido.
-	 * Se mantiene el guard: si Gc.compact() tarda > 2 s el OS ya habría matado
-	 * el proceso de todas formas, así que no hay riesgo adicional.
 	 */
-	public static function collectMajor():Void
-	{
+	public static function collectMajor(compact:Bool = true):Void {
 		// openfl.system.System.gc() notifica al motor nativo de OpenFL para que
 		// libere referencias en su propio heap (Bitmap pools, Sound buffers, etc.)
 		// antes de que el GC de hxcpp/HL barra los objetos Haxe.
 		// Es un no-op en targets que no lo soportan → siempre seguro llamarlo.
-		try { openfl.system.System.gc(); } catch (_:Dynamic) {}
+		try {
+			openfl.system.System.gc();
+		} catch (_:Dynamic) {}
 
 		#if cpp
 		Gc.run(true);
-		Gc.compact();
+		if (compact)
+			Gc.compact();
 		#elseif hl
 		Gc.major();
 		#end
@@ -113,19 +116,16 @@ class MemoryUtil
 	 * Es una aproximación — no cuenta mipmaps ni alineación de hardware.
 	 * @return Estimación en MB.
 	 */
-	public static function estimateVRAMMB():Int
-	{
+	public static function estimateVRAMMB():Int {
 		var total:Float = 0;
-		try
-		{
-			for (graphic in @:privateAccess flixel.FlxG.bitmap._cache)
-			{
-				if (graphic == null || graphic.bitmap == null) continue;
+		try {
+			for (graphic in @:privateAccess flixel.FlxG.bitmap._cache) {
+				if (graphic == null || graphic.bitmap == null)
+					continue;
 				final b = graphic.bitmap;
 				total += b.width * b.height * (b.transparent ? 4 : 3);
 			}
-		}
-		catch (_:Dynamic) {}
+		} catch (_:Dynamic) {}
 		return Math.ceil(total / (1024 * 1024));
 	}
 
@@ -133,11 +133,13 @@ class MemoryUtil
 	 * Formatea bytes en una string legible: "152 MB" / "1.2 GB".
 	 * @param bytes  Cantidad en bytes.
 	 */
-	public static function formatBytes(bytes:Float):String
-	{
-		if (bytes < 0) return "0 B";
-		if (bytes < 1024) return Std.int(bytes) + " B";
-		if (bytes < 1024 * 1024) return Std.int(bytes / 1024) + " KB";
+	public static function formatBytes(bytes:Float):String {
+		if (bytes < 0)
+			return "0 B";
+		if (bytes < 1024)
+			return Std.int(bytes) + " B";
+		if (bytes < 1024 * 1024)
+			return Std.int(bytes / 1024) + " KB";
 		if (bytes < 1024 * 1024 * 1024)
 			return Std.int(bytes / (1024 * 1024)) + " MB";
 		var gb:Float = bytes / (1024 * 1024 * 1024);
@@ -146,14 +148,12 @@ class MemoryUtil
 
 	// ── Internals ─────────────────────────────────────────────────────────────
 
-	static function _enableGC():Void
-	{
-		#if cpp Gc.enable(true);  #end
+	static function _enableGC():Void {
+		#if cpp Gc.enable(true); #end
 		// HashLink: enable no-op — Gc.major() lo reactiva implícitamente
 	}
 
-	static function _disableGC():Void
-	{
+	static function _disableGC():Void {
 		#if cpp Gc.enable(false); #end
 		// HashLink no expone disable — la pausa se simula no llamando a Gc.major()
 	}
