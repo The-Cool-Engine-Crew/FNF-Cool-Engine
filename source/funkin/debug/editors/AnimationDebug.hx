@@ -173,6 +173,18 @@ class AnimationDebug extends MusicBeatState
 	var _unsavedDlg:funkin.debug.EditorDialogs.UnsavedChangesDialog = null;
 	var _windowCloseFn:Void->Void = null;
 
+	// ── Undo stack ────────────────────────────────────────────────────────────
+	// Cada entrada es un JSON snapshot de currentAnimData en ese momento.
+	// _pushUndo() se llama ANTES de cualquier operación destructiva.
+	// _doUndo() restaura el último snapshot y recarga el personaje.
+	var _undoStack:Array<String> = [];
+	static inline var MAX_UNDO:Int = 30;
+	// Evita empujar un snapshot idéntico al que ya está en el tope de la pila
+	// (p.ej. al mantener pulsada una flecha varias veces seguidas y luego hacer
+	// Ctrl+Z: cada pulsación ya era distinta, pero si por algún bug se llama dos
+	// veces sin cambio intermedio, no duplicamos entradas inútiles).
+	var _lastUndoJson:String = "";
+
 	public function new(daAnim:String = 'bf')
 	{
 		super();
@@ -263,7 +275,7 @@ class AnimationDebug extends MusicBeatState
 
 		textControls = new FlxText(8, 42, 328, '', 10);
 		textControls.text = "W/S · Switch Anim   ARROWS · Offset (SHIFT=x10)\n" + "I/K · Cam Up/Down   J/L · Cam Left/Right\n"
-			+ "SCROLL · Zoom   SPACE · Play   R · Reset   T · Ghost\n" + "RIGHT DRAG · Move Offset (SHIFT=x3)   ESC · Exit";
+			+ "SCROLL · Zoom   SPACE · Play   R · Reset   T · Ghost\n" + "RIGHT DRAG · Move Offset (SHIFT=x3)   Ctrl+Z · Undo   ESC · Exit";
 		textControls.setBorderStyle(FlxTextBorderStyle.OUTLINE, 0xFF0A0A0F, 1);
 		textControls.color = funkin.debug.themes.EditorTheme.current.textSecondary;
 		textControls.cameras = [camHUD];
@@ -1053,6 +1065,9 @@ class AnimationDebug extends MusicBeatState
 			return;
 		}
 
+		// Guardar estado anterior antes de modificar
+		_pushUndo();
+
 		var newAnim:AnimData = {
 			name: newName,
 			prefix: newPrefix,
@@ -1194,6 +1209,9 @@ class AnimationDebug extends MusicBeatState
 	{
 		if (animList.length == 0 || curAnim < 0 || curAnim >= animList.length)
 			return;
+
+		// Guardar estado anterior antes de borrar
+		_pushUndo();
 
 		var animName = animList[curAnim];
 
@@ -2191,6 +2209,14 @@ class AnimationDebug extends MusicBeatState
 			camGame.zoom = Math.max(0.1, camGame.zoom + FlxG.mouse.wheel * 0.1);
 		}
 
+		// ── Undo — Ctrl+Z (siempre activo, incluso si hay texto enfocado) ──────
+		// Se permite fuera de isTyping() para que funcione aunque un campo esté
+		// activo; no modifica el texto del campo.
+		if (FlxG.keys.pressed.CONTROL && FlxG.keys.justPressed.Z)
+		{
+			_doUndo();
+		}
+
 		// ── Todo lo demás se bloquea si el usuario está escribiendo en un campo ─
 		if (isTyping())
 			return;
@@ -2283,6 +2309,9 @@ class AnimationDebug extends MusicBeatState
 
 			if (offsets != null)
 			{
+				// Guardar estado anterior una vez por pulsación de tecla
+				_pushUndo();
+
 				if (upP)
 					offsets[1] += 1 * mult;
 				if (downP)
@@ -2337,6 +2366,8 @@ class AnimationDebug extends MusicBeatState
 				isDraggingOffset = true;
 				dragLastX = FlxG.mouse.gameX;
 				dragLastY = FlxG.mouse.gameY;
+				// Guardar estado antes de comenzar el arrastre (un solo push por drag)
+				_pushUndo();
 			}
 
 			if (isDraggingOffset && FlxG.mouse.pressedRight)
@@ -2385,6 +2416,48 @@ class AnimationDebug extends MusicBeatState
 				isDraggingOffset = false;
 		}
 	} // end update
+
+	// ── Undo helpers ──────────────────────────────────────────────────────────
+
+	/**
+	 * Guarda un snapshot de currentAnimData en el stack de undo.
+	 * Llama esto ANTES de cualquier operación que modifique datos.
+	 *
+	 * No duplica el snapshot si currentAnimData no cambió respecto al
+	 * último push (evita entradas inútiles al mantener teclas pulsadas).
+	 */
+	function _pushUndo():Void
+	{
+		var snap = Json.stringify(currentAnimData);
+		if (snap == _lastUndoJson)
+			return; // sin cambios desde el último push → no apilar duplicado
+		_undoStack.push(snap);
+		_lastUndoJson = snap;
+		if (_undoStack.length > MAX_UNDO)
+			_undoStack.shift();
+	}
+
+	/**
+	 * Restaura el último snapshot del stack, recarga el personaje y
+	 * sincroniza los offsets en memoria (char.animOffsets).
+	 *
+	 * Usa reloadCharacterWithNewAnims() para garantizar consistencia
+	 * tanto si se deshace un cambio de offset como si se deshace
+	 * un add/delete de animación.
+	 */
+	function _doUndo():Void
+	{
+		if (_undoStack.length == 0)
+		{
+			setHelp("↩ Nothing to undo", FlxColor.WHITE);
+			return;
+		}
+		var snap = _undoStack.pop();
+		_lastUndoJson = snap; // actualizar marca para evitar re-push inmediato
+		currentAnimData = cast Json.parse(snap);
+		reloadCharacterWithNewAnims();
+		setHelp("↩ Undo  (" + _undoStack.length + " left)", FlxColor.CYAN);
+	}
 
 	// ── Helpers ───────────────────────────────────────────────────────────────
 

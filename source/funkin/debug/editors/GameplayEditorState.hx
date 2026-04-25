@@ -194,6 +194,20 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 	var _freeCamX:Float = 0;
 	var _freeCamY:Float = 0;
 
+	/** World-space center that CameraController is currently targeting.
+	 *  Updated every frame (even in free-cam mode) so the proxy always shows
+	 *  where PlayState's camera is actually pointing. */
+	var _ccTargetX:Float = 0;
+	var _ccTargetY:Float = 0;
+
+	/**
+	 * The "raw" zoom value that CameraController last wrote to camGame.zoom,
+	 * before we apply the viewport-size correction.  Stored so that when
+	 * zoomEnabled=false (manual zoom mode) we still know what zoom CC intended
+	 * and don't accidentally double-scale on subsequent frames.
+	 */
+	var _lastCCZoom:Float = 1.0;
+
 	// ── Camera Proxy (visible camera indicator in game world) ─────────────────
 
 	/** Outline rectangle showing what PlayState's camera sees (visible when zoomed out) */
@@ -362,6 +376,10 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 
 	// ── Track management ──────────────────────────────────────────────────────
 	var _trackScrollY:Int = 0; // first visible track index
+	var lbSep:FlxSprite; // label-column right border (kept for z-ordering)
+	var trackAddBtn:PSEBtn = null; // "+" button above first track
+	var trackDelBtns:Array<PSEBtn> = []; // "X" delete button per track slot
+	var _vpFrameSprites:Array<FlxSprite> = []; // viewport frame drawn on camUI
 
 	// ── Internal ──────────────────────────────────────────────────────────────
 	var _songMeta:SongMetadata;
@@ -467,6 +485,7 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 
 		// ── Build UI ──
 		_buildBackground();
+		_buildViewportFrame(); // draws frame on camUI so it renders above camGame
 		_buildMenuBar();
 		_buildTopBar();
 		_buildTimeline();
@@ -545,7 +564,7 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		camGame.width = targetW;
 		camGame.height = targetH;
 
-		camGame.zoom = _gameZoom * (camGame.width / SW);
+		camGame.zoom = _lastCCZoom * _gameZoom * (camGame.width / SW);
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -797,26 +816,29 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		if (camProxy == null || camGame == null)
 			return;
 
-		var dz:Float = (cameraController != null && cameraController.defaultZoom > 0) ? cameraController.defaultZoom : 1.0;
+		// FOV de PlayState en coordenadas mundo usando el zoom ACTUAL del CC (no el defaultZoom).
+		// Con esto el proxy siempre refleja lo que PlayState vería en este instante,
+		// y a _gameZoom == 1.0 llena exactamente el viewport del editor.
+		var ccZoom:Float = (_lastCCZoom > 0) ? _lastCCZoom : 1.0;
+		var vw:Float = SW / ccZoom;
+		var vh:Float = SH / ccZoom;
 
-		// Tamaño del FOV de PlayState en unidades mundo
-		var vw:Float = 1280.0 / dz;
-		var vh:Float = 720.0 / dz;
-
-		// Centro de lo que la cámara editor está viendo, en espacio mundo
-		var cx:Float = camGame.scroll.x + camGame.width / (2.0 * camGame.zoom);
-		var cy:Float = camGame.scroll.y + camGame.height / (2.0 * camGame.zoom);
-
-		// Escalar el sprite 320×180 al tamaño FOV real
+		// _ccTargetX/Y es el centro mundo que el CameraController está mirando.
+		// En modo normal   → coincide con el centro del viewport del editor.
+		// En free cam      → el editor vaga libremente mientras el proxy permanece
+		//                    anclado a donde apuntaría PlayState.
 		camProxy.scale.set(vw / 320.0, vh / 180.0);
 		camProxy.updateHitbox();
-		camProxy.setPosition(cx - vw * 0.5, cy - vh * 0.5);
+		camProxy.setPosition(_ccTargetX - vw * 0.5, _ccTargetY - vh * 0.5);
 
-		var show = _showCamProxy && camGame.zoom < 0.88;
+		// En modo normal: proxy visible sólo cuando el zoom del editor es menor que 0.88
+		// (es decir, cuando el usuario hizo zoom-out y puede ver fuera de los bordes del FOV).
+		// En free cam: siempre visible para que el usuario pueda localizar dónde apunta el juego.
+		var show:Bool = _showCamProxy && (_freeCam || camGame.zoom < 0.88);
 		camProxy.visible = show;
 
 		if (camProxyLabel != null) {
-			camProxyLabel.setPosition(cx - vw * 0.5 + 6, cy - vh * 0.5 + 4);
+			camProxyLabel.setPosition(_ccTargetX - vw * 0.5 + 6, _ccTargetY - vh * 0.5 + 4);
 			camProxyLabel.visible = show;
 		}
 	}
@@ -913,17 +935,16 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		}
 
 	function _onSongEnd():Void {
-		isPlaying = false;
-		_syncAudio(false);
-		// Reset position to start so pressing Play again works correctly.
-		// Without this, Conductor.songPosition stays at the song end and the next
-		// play() call immediately re-fires onComplete.
+		// Auto-loop: seek back to the start and keep playing so the editor behaves
+		// like a DAW — the song loops seamlessly without any manual intervention.
 		_doSeek(0);
+		isPlaying = true;
+		_syncAudio(true);
 		if (playBtn != null) {
-			playBtn.label.text = '>';
-			playBtn.label.color = C_ACCENT2;
+			playBtn.label.text = '||';
+			playBtn.label.color = 0xFFFFAA00;
 		}
-		_showStatus('Song ended  —  press Play to restart');
+		_showStatus('↺ Looped — press [] to stop');
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -1043,8 +1064,22 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		}
 		_redoStack.push(Json.stringify(pseData));
 		pseData = cast Json.parse(_undoStack.pop());
+		// BUGFIX: after replacing pseData the `tracks` field must be re-synced;
+		// previously it kept pointing to the pre-undo array, causing the timeline
+		// to render with stale track data (wrong count, names, colours) and making
+		// events appear on non-existent tracks or be clipped to track 0.
+		tracks = (pseData.tracks != null && pseData.tracks.length > 0)
+			? pseData.tracks
+			: [for (t in DEFAULT_TRACKS) {id: t.id, name: t.name, color: t.color, visible: t.visible, locked: t.locked, height: t.height}];
+		pseData.tracks = tracks;
 		_rebuildSorted();
 		_refreshDiffList();
+		// Re-apply layout because track count may have changed (game viewport size
+		// depends on _tlH() which depends on tracks.length).
+		_applyGameViewport();
+		_buildViewportFrame();
+		_refreshTrackRows();
+		_rebuildRuler();
 		_rebuildEventBlocks();
 		_refreshInspector();
 		hasUnsaved = true;
@@ -1059,8 +1094,17 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		}
 		_undoStack.push(Json.stringify(pseData));
 		pseData = cast Json.parse(_redoStack.pop());
+		// BUGFIX: same tracks re-sync as _doUndo (see comment there).
+		tracks = (pseData.tracks != null && pseData.tracks.length > 0)
+			? pseData.tracks
+			: [for (t in DEFAULT_TRACKS) {id: t.id, name: t.name, color: t.color, visible: t.visible, locked: t.locked, height: t.height}];
+		pseData.tracks = tracks;
 		_rebuildSorted();
 		_refreshDiffList();
+		_applyGameViewport();
+		_buildViewportFrame();
+		_refreshTrackRows();
+		_rebuildRuler();
 		_rebuildEventBlocks();
 		_refreshInspector();
 		hasUnsaved = true;
@@ -1138,6 +1182,72 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		fR.scrollFactor.set();
 		fR.alpha = 0.22;
 		add(fR);
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	//  Viewport Frame (camUI layer — always above camGame)
+	// ─────────────────────────────────────────────────────────────────────────
+
+	/**
+	 * Draws the four border strips that surround the game viewport on camUI
+	 * (the topmost camera layer). This guarantees they always render above
+	 * camGame content regardless of HaxeFlixel's draw order, fixing the
+	 * "viewport covers the whole window" visual glitch.
+	 */
+	function _buildViewportFrame():Void {
+		// Destroy any previously built frame sprites
+		for (s in _vpFrameSprites) {
+			remove(s);
+			s.destroy();
+		}
+		_vpFrameSprites = [];
+
+		if (camGame == null)
+			return;
+
+		var areaW = SW - INSP_W;
+		var areaH = _gameH();
+		var vpX   = Std.int(camGame.x);
+		var vpY   = Std.int(camGame.y);
+		var vpW   = camGame.width;
+		var vpH   = camGame.height;
+
+		inline function _addStrip(sx:Int, sy:Int, sw:Int, sh:Int):Void {
+			if (sw <= 0 || sh <= 0) return;
+			var s = new FlxSprite(sx, sy).makeGraphic(sw, sh, C_VP_FRAME);
+			s.cameras = [camUI];
+			s.scrollFactor.set();
+			add(s);
+			_vpFrameSprites.push(s);
+		}
+
+		// Strip above viewport
+		_addStrip(0, HEADER_H, areaW, vpY - HEADER_H);
+		// Strip below viewport
+		var belowY = vpY + vpH;
+		_addStrip(0, belowY, areaW, HEADER_H + areaH - belowY);
+		// Strip left of viewport
+		_addStrip(0, vpY, vpX, vpH);
+		// Strip right of viewport
+		_addStrip(vpX + vpW, vpY, areaW - (vpX + vpW), vpH);
+
+		// Thin cyan accent border (slightly brighter than camHUD version so it
+		// stays visible through any camGame bleed)
+		var fTop = new FlxSprite(vpX - 1, vpY - 1).makeGraphic(vpW + 2, 1, C_ACCENT);
+		fTop.cameras = [camUI]; fTop.scrollFactor.set(); fTop.alpha = 0.55; add(fTop);
+		_vpFrameSprites.push(fTop);
+
+		var fBot = new FlxSprite(vpX - 1, vpY + vpH).makeGraphic(vpW + 2, 1, C_ACCENT);
+		fBot.cameras = [camUI]; fBot.scrollFactor.set(); fBot.alpha = 0.55; add(fBot);
+		_vpFrameSprites.push(fBot);
+
+		var fL = new FlxSprite(vpX - 1, vpY).makeGraphic(1, vpH, C_ACCENT);
+		fL.cameras = [camUI]; fL.scrollFactor.set(); fL.alpha = 0.28; add(fL);
+		_vpFrameSprites.push(fL);
+
+		var fR = new FlxSprite(vpX + vpW, vpY).makeGraphic(1, vpH, C_ACCENT);
+		fR.cameras = [camUI]; fR.scrollFactor.set(); fR.alpha = 0.28; add(fR);
+		_vpFrameSprites.push(fR);
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -1239,7 +1349,7 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 						cb: () -> {
 							_gameZoom = 1.0;
 							if (camGame != null)
-								camGame.zoom = _gameZoom * (camGame.width / SW);
+								camGame.zoom = _lastCCZoom * _gameZoom * (camGame.width / SW);
 
 							if (cameraController != null) cameraController.zoomEnabled = true;
 							_showStatus('Zoom reset → 100%');
@@ -1547,7 +1657,7 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		add(tlLabelColBg);
 
 		// Label col right border
-		var lbSep = new FlxSprite(TL_LABEL_W - 1, tlY + TL_RULER_H).makeGraphic(1, TL_MAX_TRACKS * TL_TRACK_H + 100, C_BORDER);
+		lbSep = new FlxSprite(TL_LABEL_W - 1, tlY + TL_RULER_H).makeGraphic(1, TL_MAX_TRACKS * TL_TRACK_H + 100, C_BORDER);
 		lbSep.cameras = [camHUD];
 		lbSep.scrollFactor.set();
 		lbSep.alpha = 0.6;
@@ -1557,6 +1667,7 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		_allocRulerLabels(220);
 		_allocGridLines(220);
 		_allocTrackRows();
+		_buildTrackButtons(); // adds "+" and "X" buttons for track management
 
 		// Scrubber
 		var scrY = tlY + TL_RULER_H + Std.int(Math.min(tracks.length, TL_MAX_TRACKS)) * TL_TRACK_H + 12;
@@ -1681,16 +1792,16 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 			trackColors.push(tacc);
 			add(tacc);
 
-			// Track label
-			var tlbl = new FlxText(18, ty + 8, TL_LABEL_W - 40, '', 9);
+			// Track label (narrowed to leave room for X + lock buttons)
+			var tlbl = new FlxText(18, ty + 8, TL_LABEL_W - 54, '', 9);
 			tlbl.setFormat(Paths.font('vcr.ttf'), 9, C_SUBTEXT, LEFT);
 			tlbl.cameras = [camHUD];
 			tlbl.scrollFactor.set();
 			trackLabels.push(tlbl);
 			add(tlbl);
 
-			// Lock button
-			var lkBtn = _mkBtn(TL_LABEL_W - 22, ty + 6, '🔓', 16, 16, 0xFF0A0A1A, function() {});
+			// Lock button (shifted left to leave room for delete button)
+			var lkBtn = _mkBtn(TL_LABEL_W - 38, ty + 6, '🔓', 14, 16, 0xFF0A0A1A, function() {});
 			trackLocks.push(lkBtn);
 		}
 
@@ -1702,27 +1813,30 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		var visibleTracks = tracks.slice(_trackScrollY, _trackScrollY + TL_MAX_TRACKS);
 		for (i in 0...TL_MAX_TRACKS) {
 			var hasTrack = i < visibleTracks.length;
-			if (trackBgs.length > i && trackBgs[i] != null)
+			var ty = tlY + TL_RULER_H + i * TL_TRACK_H;
+
+			if (trackBgs.length > i && trackBgs[i] != null) {
 				trackBgs[i].visible = hasTrack;
+				trackBgs[i].y = ty; // reposition to match current _tlY()
+			}
 			if (trackColors.length > i && trackColors[i] != null) {
 				trackColors[i].visible = hasTrack;
-				if (hasTrack)
+				if (hasTrack) {
 					trackColors[i].makeGraphic(3, TL_TRACK_H - 6, visibleTracks[i].color);
+					trackColors[i].y = ty + 3;
+				}
 			}
 			if (trackLabels.length > i && trackLabels[i] != null) {
 				trackLabels[i].visible = hasTrack;
 				if (hasTrack) {
 					trackLabels[i].text = visibleTracks[i].name;
 					trackLabels[i].color = visibleTracks[i].color;
-					var ty = tlY + TL_RULER_H + i * TL_TRACK_H;
 					trackLabels[i].y = ty + 9;
-					trackColors[i].y = ty + 3;
 				}
 			}
 			if (trackLocks.length > i && trackLocks[i] != null) {
 				trackLocks[i].visible = hasTrack;
 				if (hasTrack) {
-					var ty = tlY + TL_RULER_H + i * TL_TRACK_H;
 					var t = visibleTracks[i];
 					final idx2 = i + _trackScrollY;
 					trackLocks[i].y = ty + 6;
@@ -1737,6 +1851,141 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 				}
 			}
 		}
+
+		// Reposition static elements that depend on _tlY()
+		var trackN  = Std.int(Math.min(tracks.length - _trackScrollY, TL_MAX_TRACKS));
+		var tracksH = trackN * TL_TRACK_H;
+		var hsY     = tlY + TL_RULER_H + tracksH;
+		var scrY    = hsY + 12;
+
+		// BUGFIX: resize and reposition the main timeline background so it always
+		// covers the full height — previously the sprite kept its initial height
+		// (based on 1 track) and became too short as tracks were added.
+		if (tlBg != null) {
+			var newH = Std.int(_tlH() + 20);
+			if (newH < 1) newH = 1;
+			tlBg.y = tlY;
+			tlBg.makeGraphic(SW, newH, C_TL_BG);
+		}
+		// BUGFIX: ruler bg Y was only updated inside _rebuildRuler(); ensure it's
+		// correct here too so delete/undo/redo don't leave it at the wrong position.
+		if (tlRulerBg != null) tlRulerBg.y = tlY;
+
+		if (tlLabelColBg != null) tlLabelColBg.y = tlY + TL_RULER_H;
+		if (lbSep        != null) lbSep.y        = tlY + TL_RULER_H;
+		if (tlScrubBg    != null) tlScrubBg.y    = scrY;
+		if (tlHScrollBg  != null) tlHScrollBg.y  = hsY;
+
+		_refreshTrackButtons();
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	//  Track add / delete buttons
+	// ─────────────────────────────────────────────────────────────────────────
+
+	/**
+	 * Creates the "+" add-track button (anchored in the ruler area above
+	 * the label column) and one "X" delete button per visible track slot.
+	 * Called once from _buildTimeline; positions are refreshed by
+	 * _refreshTrackButtons() whenever the layout changes.
+	 */
+	function _buildTrackButtons():Void {
+		var tlY = _tlY();
+
+		// "+" button — sits at the right edge of the ruler / label column
+		trackAddBtn = new PSEBtn(TL_LABEL_W - 20, tlY + 3, 18, TL_RULER_H - 6, '+', 0xFF0D2E0D, C_ACCENT2, _addTrack);
+		trackAddBtn.cameras = [camHUD];
+		trackAddBtn.scrollFactor.set();
+		trackAddBtn.label.cameras = [camHUD];
+		trackAddBtn.label.scrollFactor.set();
+		add(trackAddBtn);
+		add(trackAddBtn.label);
+
+		// "X" delete buttons — one slot per TL_MAX_TRACKS
+		for (i in 0...TL_MAX_TRACKS) {
+			var ty = tlY + TL_RULER_H + i * TL_TRACK_H;
+			final slotIdx = i;
+			var delBtn = new PSEBtn(TL_LABEL_W - 18, ty + 6, 14, 16, 'X', 0xFF2E0D0D, 0xFFFF4444, function() {
+				_deleteTrack(slotIdx + _trackScrollY);
+			});
+			delBtn.cameras = [camHUD];
+			delBtn.scrollFactor.set();
+			delBtn.label.cameras = [camHUD];
+			delBtn.label.scrollFactor.set();
+			trackDelBtns.push(delBtn);
+			add(delBtn);
+			add(delBtn.label);
+		}
+
+		_refreshTrackButtons();
+	}
+
+	/**
+	 * Re-positions and shows/hides the add/delete track buttons to match
+	 * the current track list and scroll offset.
+	 */
+	function _refreshTrackButtons():Void {
+		var tlY = _tlY();
+		var visN = Std.int(Math.min(tracks.length - _trackScrollY, TL_MAX_TRACKS));
+
+		// "+" button always visible in the ruler strip
+		if (trackAddBtn != null) {
+			trackAddBtn.y = tlY + 3;
+			if (trackAddBtn.label != null)
+				trackAddBtn.label.y = tlY + 3 + (trackAddBtn.height - trackAddBtn.label.height) / 2;
+		}
+
+		for (i in 0...trackDelBtns.length) {
+			var btn = trackDelBtns[i];
+			if (btn == null)
+				continue;
+			var hasTrack = i < visN;
+			btn.visible = hasTrack;
+			if (btn.label != null)
+				btn.label.visible = hasTrack;
+			if (hasTrack) {
+				var ty = tlY + TL_RULER_H + i * TL_TRACK_H;
+				btn.y = ty + 6;
+				if (btn.label != null)
+					btn.label.y = ty + 6 + (btn.height - btn.label.height) / 2;
+				final tIdx = i + _trackScrollY;
+				btn.onClick = function() _deleteTrack(tIdx);
+			}
+		}
+	}
+
+	/**
+	 * Deletes the track at the given absolute index.
+	 * Events on the deleted track are reassigned to track 0; events on
+	 * higher-numbered tracks have their index decremented.
+	 */
+	function _deleteTrack(idx:Int):Void {
+		if (idx < 0 || idx >= tracks.length)
+			return;
+		if (tracks.length <= 1) {
+			_showStatus('Cannot delete the last track', 2.5);
+			return;
+		}
+		_pushUndo();
+		tracks.splice(idx, 1);
+		if (pseData.events != null) {
+			for (e in pseData.events) {
+				if (e.trackIndex == idx)
+					e.trackIndex = 0;
+				else if (e.trackIndex > idx)
+					e.trackIndex--;
+			}
+		}
+		pseData.tracks = tracks;
+		// Recalculate viewport + timeline layout — _tlY() changed
+		_applyGameViewport();
+		_buildViewportFrame();
+		_refreshTrackRows();
+		_rebuildRuler(); // BUGFIX: was missing — without this tlBg.y stayed at the old position after a delete
+		_rebuildEventBlocks();
+		hasUnsaved = true;
+		_updateUnsavedDot();
+		_showStatus('✓ Track deleted');
 	}
 
 	function _rebuildRuler():Void {
@@ -1896,6 +2145,50 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 			block.lblTxt = lbl;
 			add(lbl);
 		}
+
+		// Ensure the label column and playhead always render on top of event blocks.
+		_bringOverlayToFront();
+	}
+
+	/**
+	 * Re-inserts the label-column panel, playhead, track buttons, and lock
+	 * buttons at the END of the display list so they render above the event
+	 * blocks that _rebuildEventBlocks() just added.
+	 *
+	 * All of these sprites live on camHUD so "top of display list" means
+	 * "drawn last → visually in front of everything else on that camera".
+	 */
+	function _bringOverlayToFront():Void {
+		// Label column background + separator
+		if (tlLabelColBg != null) { remove(tlLabelColBg); add(tlLabelColBg); }
+		if (lbSep        != null) { remove(lbSep);        add(lbSep); }
+
+		// Per-track color accents, labels, and lock buttons
+		for (c in trackColors)
+			if (c != null) { remove(c); add(c); }
+		for (l in trackLabels)
+			if (l != null) { remove(l); add(l); }
+		for (b in trackLocks) {
+			if (b == null) continue;
+			remove(b); add(b);
+			if (b.label != null) { remove(b.label); add(b.label); }
+		}
+
+		// Add / delete track buttons
+		if (trackAddBtn != null) {
+			remove(trackAddBtn); add(trackAddBtn);
+			if (trackAddBtn.label != null) { remove(trackAddBtn.label); add(trackAddBtn.label); }
+		}
+		for (b in trackDelBtns) {
+			if (b == null) continue;
+			remove(b); add(b);
+			if (b.label != null) { remove(b.label); add(b.label); }
+		}
+
+		// Playhead (must be the very last thing drawn in the timeline)
+		if (tlPlayhead     != null) { remove(tlPlayhead);     add(tlPlayhead); }
+		if (tlPlayheadHead != null) { remove(tlPlayheadHead); add(tlPlayheadHead); }
+		if (_resizeHandleViz != null) { remove(_resizeHandleViz); add(_resizeHandleViz); }
 	}
 
 	function _getScriptTrackVisualIdx():Int {
@@ -2035,16 +2328,15 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		var ty = iy;
 
 		// Event type header
-		var hdr = _iLabel(evt.type, ix, ty, C_ACCENT, iw, 12);
-		ty += 20;
-		var sep1 = _iSep(ix, ty, iw);
-		ty += 8;
+		_iLabel(evt.type, ix, ty, C_ACCENT, iw, 11);
+		ty += 18;
+		_iSep(ix, ty, iw);
+		ty += 7;
 
-		// Event type dropdown
-		_iLabel('Event Type:', ix, ty, C_SUBTEXT, iw);
-		ty += 14;
-		var etypes = _getEventTypes();
-		ipEventType = _iDropdown(ix, ty, iw, etypes, evt.type, function(id:String) {
+		// Event type dropdown — label + control on the same row
+		_iLabel('Type:', ix, ty + 3, C_SUBTEXT, Std.int(iw * 0.35));
+		ipEventType = _iDropdown(ix + Std.int(iw * 0.36), ty, Std.int(iw * 0.64), _getEventTypes(), evt.type, function(id:String) {
+			var etypes = _getEventTypes();
 			var i = Std.parseInt(id);
 			if (i != null && i >= 0 && i < etypes.length)
 				evt.type = etypes[i];
@@ -2052,57 +2344,60 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 			_rebuildEventBlocks();
 			_showStatus('Type → ${evt.type}');
 		});
-		ty += 28;
+		ty += 26;
 
-		// Label
-		_iLabel('Label:', ix, ty, C_SUBTEXT, iw);
-		ty += 13;
-		ipEventLabel = _iInput(ix, ty, iw, evt.label ?? '', function(v:String) {
+		// Label + Value on the same row
+		_iLabel('Label:', ix, ty + 3, C_SUBTEXT, Std.int(iw * 0.30));
+		ipEventLabel = _iInput(ix + Std.int(iw * 0.31), ty, Std.int(iw * 0.69), evt.label ?? '', function(v:String) {
 			evt.label = v;
 			hasUnsaved = true;
 			_updateUnsavedDot();
 		});
 		ty += 26;
 
-		// Value
-		_iLabel('Value (v1|v2):', ix, ty, C_SUBTEXT, iw);
-		ty += 13;
-		ipEventValue = _iInput(ix, ty, iw, evt.value ?? '', function(v:String) {
+		_iLabel('Value:', ix, ty + 3, C_SUBTEXT, Std.int(iw * 0.30));
+		ipEventValue = _iInput(ix + Std.int(iw * 0.31), ty, Std.int(iw * 0.69), evt.value ?? '', function(v:String) {
 			evt.value = v;
 			hasUnsaved = true;
 			_updateUnsavedDot();
 		});
 		ty += 26;
 
-		var sep2 = _iSep(ix, ty, iw);
-		ty += 8;
+		_iSep(ix, ty, iw);
+		ty += 7;
 
-		// Camera-specific section
+		// Camera-specific section — BUGFIX: previously used hardcoded ty += 170 which
+		// was ~86 px shorter than the real section height, causing severe overlap.
+		// _buildCamEventSection now returns the updated ty.
 		if (evt.type.toLowerCase().contains('camera') || evt.type.toLowerCase().contains('zoom')) {
-			_buildCamEventSection(evt, ix, ty, iw);
-			ty += 170;
-			var sep3 = _iSep(ix, ty, iw);
-			ty += 8;
+			ty = _buildCamEventSection(evt, ix, ty, iw);
+			_iSep(ix, ty, iw);
+			ty += 7;
 		}
 
-		// Step + Duration
-		_iLabel('Step Time:', ix, ty, C_SUBTEXT, Std.int(iw / 2 - 4));
-		ty += 13;
-		ipEventStep = _iStepper(ix, ty, Std.int(iw / 2 - 4), evt.stepTime, 0, 99999, 1, function(v:Float) {
+		// Step Time + Duration side by side (label on top, control below)
+		_iLabel('Step:', ix, ty + 3, C_SUBTEXT, Std.int(iw * 0.30));
+		ipEventStep = _iStepper(ix + Std.int(iw * 0.31), ty, Std.int(iw * 0.30), evt.stepTime, 0, 99999, 1, function(v:Float) {
 			evt.stepTime = v;
 			_pushUndo();
 			_rebuildEventBlocks();
 		});
-		_iLabel('Duration (steps):', ix + iw / 2, ty - 13, C_SUBTEXT, Std.int(iw / 2));
-		ipEventDur = _iStepper(ix + iw / 2, ty, Std.int(iw / 2), evt.duration ?? 4.0, 1, 9999, 1, function(v:Float) {
+		_iLabel('Dur(steps):', ix + Std.int(iw * 0.63), ty + 3, C_SUBTEXT, Std.int(iw * 0.37));
+		ipEventDur = _iStepper(ix + Std.int(iw * 0.63), ty + 14, Std.int(iw * 0.37), evt.duration ?? 4.0, 1, 9999, 1, function(v:Float) {
 			evt.duration = v;
 			_pushUndo();
 			_rebuildEventBlocks();
 		});
 		ty += 26;
 
-		// At-playhead button
-		var athBtn = _iBtn(ix, ty, 'Set to Playhead', 0xFF1A2A3A, function() {
+		// Track + Set-to-playhead on the same row
+		_iLabel('Track:', ix, ty + 3, C_SUBTEXT, Std.int(iw * 0.30));
+		ipEventTrack = _iStepper(ix + Std.int(iw * 0.31), ty, Std.int(iw * 0.30), evt.trackIndex, 0, tracks.length - 1, 1, function(v:Float) {
+			evt.trackIndex = Std.int(v);
+			_pushUndo();
+			_rebuildEventBlocks();
+		});
+		_iBtn(ix + Std.int(iw * 0.63), ty, 'At Playhead', 0xFF1A2A3A, function() {
 			var step = Conductor.songPosition / Conductor.stepCrochet;
 			evt.stepTime = _snapEnabled ? Math.round(step) : step;
 			if (ipEventStep != null)
@@ -2110,48 +2405,43 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 			_pushUndo();
 			_rebuildEventBlocks();
 			_showStatus('Step → ${Std.int(evt.stepTime)}');
-		}, iw);
-		ty += 28;
-
-		// Track
-		_iLabel('Track (0-${tracks.length - 1}):', ix, ty, C_SUBTEXT, iw);
-		ty += 13;
-		ipEventTrack = _iStepper(ix, ty, iw, evt.trackIndex, 0, tracks.length - 1, 1, function(v:Float) {
-			evt.trackIndex = Std.int(v);
-			_pushUndo();
-			_rebuildEventBlocks();
-		});
+		}, Std.int(iw * 0.37));
 		ty += 26;
 
-		var sep4 = _iSep(ix, ty, iw);
-		ty += 8;
+		_iSep(ix, ty, iw);
+		ty += 7;
 
-		// Difficulty checkboxes
+		// Difficulty checkboxes — BUGFIX: previous wrap condition placed up to 5
+		// checkboxes per row, overflowing the inspector panel by ~48 px on row-1.
+		// Now wraps as soon as the next box would exceed the right edge.
 		_iLabel('Difficulties:', ix, ty, C_SUBTEXT, iw);
 		ty += 14;
 		var dx = ix;
 		ipEventDiffChecks = [];
+		final chkW = 54;
+		final chkStep = 58;
 		for (diff in allDiffs.concat(['*'])) {
-			var chk = new CoolCheckBox(dx, ty, null, null, diff == '*' ? 'all' : diff, 56);
+			// Pre-wrap: if placing this checkbox would overflow, move to next row first
+			if (dx + chkW > ix + iw && dx > ix) {
+				dx = ix;
+				ty += 20;
+			}
+			var chk = new CoolCheckBox(dx, ty, null, null, diff == '*' ? 'all' : diff, chkW);
 			chk.checked = evt.difficulties.contains('*') ? (diff == '*') : evt.difficulties.contains(diff);
 			chk.cameras = [camHUD];
 			chk.scrollFactor.set();
 			add(chk);
 			_inspElements.push(chk);
 			ipEventDiffChecks.push(chk);
-			dx += 60;
-			if (dx > SW - INSP_W + iw + 4) {
-				dx = ix;
-				ty += 22;
-			}
+			dx += chkStep;
 		}
-		ty += 26;
+		ty += 24;
 
-		var sep5 = _iSep(ix, ty, iw);
-		ty += 8;
+		_iSep(ix, ty, iw);
+		ty += 7;
 
 		// Action buttons
-		var addBtn = _iBtn(ix, ty, 'UPDATE EVENT', 0xFF1A3A1A, function() {
+		_iBtn(ix, ty, 'UPDATE EVENT', 0xFF1A3A1A, function() {
 			var diffs:Array<String> = [];
 			for (i in 0...ipEventDiffChecks.length) {
 				var d = (i < allDiffs.length) ? allDiffs[i] : '*';
@@ -2171,66 +2461,49 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 			_updateUnsavedDot();
 			_showStatus('✓ Event updated: ${evt.type}');
 		}, Std.int(iw / 2 - 4));
-		var delBtn = _iBtn(ix + iw / 2 + 4, ty, 'DELETE', 0xFF3A1A1A, function() _deleteSelected(), Std.int(iw / 2 - 4));
+		_iBtn(ix + iw / 2 + 4, ty, 'DELETE', 0xFF3A1A1A, function() _deleteSelected(), Std.int(iw / 2 - 4));
 		ty += 28;
 
-		// Open script editor button for script events
 		if (evt.type.toLowerCase() == 'script') {
-			var scrEdBtn = _iBtn(ix, ty, 'Open Script Editor', 0xFF1A1A3A, function() {
+			_iBtn(ix, ty, 'Open Script Editor', 0xFF1A1A3A, function() {
 				openSubState(new ScriptEditorSubState(PlayState.SONG, evt.value, camHUD));
 			}, iw);
 			ty += 28;
 		}
 	}
 
-	function _buildCamEventSection(evt:PSEEvent, ix:Float, ty:Float, iw:Int):Void {
+	function _buildCamEventSection(evt:PSEEvent, ix:Float, ty:Float, iw:Int):Float {
 		_iLabel('── Camera Properties ──', ix, ty, C_ACCENT, iw, 9);
 		ty += 14;
 
-		// Zoom
+		// Zoom stepper (removed the decorative slider — it saved no space and was
+		// not linked to the stepper value reliably).
 		_iLabel('Zoom:', ix, ty, C_SUBTEXT, Std.int(iw / 2));
-		ty += 13;
 		var zoomVal = 1.0;
 		if (evt.value != null && evt.value != '') {
 			var pz = Std.parseFloat(evt.value.split('|')[0]);
 			if (!Math.isNaN(pz))
 				zoomVal = pz;
 		}
-		ipCamZoom = _iStepper(ix, ty, Std.int(iw - 30), zoomVal, 0.1, 5.0, 0.1, function(v:Float) {
+		ipCamZoom = _iStepper(ix + Std.int(iw / 2), ty, Std.int(iw / 2), zoomVal, 0.1, 5.0, 0.1, function(v:Float) {
 			var parts = (evt.value ?? '1.0').split('|');
-			parts[0] = Std.string(v);
+			parts[0] = Std.string(Math.round(v * 100) / 100.0);
 			evt.value = parts.join('|');
 			hasUnsaved = true;
 			_updateUnsavedDot();
 		});
-		// Zoom slider (visual like the screenshot)
-		var zsld = new PSESlider(ix, ty + 22, iw - 10, 0.1, 3.0, zoomVal, function(v:Float) {
-			var sv = Math.round(v * 10) / 10.0;
-			ipCamZoom.value = sv;
-			var parts = (evt.value ?? '1.0').split('|');
-			parts[0] = Std.string(sv);
-			evt.value = parts.join('|');
-			hasUnsaved = true;
-			_updateUnsavedDot();
-		});
-		zsld.cameras = [camHUD];
-		zsld.scrollFactor.set();
-		add(zsld);
-		_inspElements.push(zsld);
-		ty += 44;
+		ty += 26;
 
 		// Mode dropdown
-		_iLabel('Mode:', ix, ty, C_SUBTEXT, iw);
-		ty += 13;
+		_iLabel('Mode:', ix, ty, C_SUBTEXT, Std.int(iw / 2));
 		final camModes = ['Stage Zoom', 'UI Zoom', 'Both'];
-		ipCamMode = _iDropdown(ix, ty, iw, camModes, 'Stage Zoom', null);
-		ty += 28;
+		ipCamMode = _iDropdown(ix + Std.int(iw / 2), ty, Std.int(iw / 2), camModes, 'Stage Zoom', null);
+		ty += 26;
 
-		// Duration
-		_iLabel('Duration:', ix, ty, C_SUBTEXT, iw);
-		ty += 13;
+		// Duration stepper
+		_iLabel('Duration:', ix, ty, C_SUBTEXT, Std.int(iw / 2));
 		var durVal = evt.duration ?? 10.0;
-		ipCamDuration = _iStepper(ix, ty, iw, durVal, 1, 999, 1, function(v:Float) {
+		ipCamDuration = _iStepper(ix + Std.int(iw / 2), ty, Std.int(iw / 2), durVal, 1, 999, 1, function(v:Float) {
 			evt.duration = v;
 			hasUnsaved = true;
 			_updateUnsavedDot();
@@ -2238,53 +2511,15 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		});
 		ty += 26;
 
-		// Ease type + dir side by side
-		_iLabel('Ease Type:', ix, ty, C_SUBTEXT, Std.int(iw / 2));
-		ty += 13;
-		final easeTypes = [
-			'linear',
-			'quad',
-			'cube',
-			'quart',
-			'quint',
-			'sine',
-			'expo',
-			'circ',
-			'elastic',
-			'bounce',
-			'back'
-		];
-		final easeDirs = ['In', 'Out', 'InOut'];
-		ipCamEaseType = _iDropdown(ix, ty, Std.int(iw / 2 - 2), easeTypes, 'expo', null);
-		_iLabel('Direction:', ix + iw / 2, ty - 13, C_SUBTEXT, Std.int(iw / 2));
-		ipCamEaseDir = _iDropdown(ix + iw / 2, ty, Std.int(iw / 2 - 2), easeDirs, 'Out', null);
-		ty += 28;
+		// Ease type + direction on the same row
+		_iLabel('Ease:', ix, ty, C_SUBTEXT, Std.int(iw * 0.30));
+		final easeTypes = ['linear','quad','cube','quart','quint','sine','expo','circ','elastic','bounce','back'];
+		final easeDirs  = ['In', 'Out', 'InOut'];
+		ipCamEaseType = _iDropdown(ix + Std.int(iw * 0.30), ty, Std.int(iw * 0.40), easeTypes, 'expo', null);
+		ipCamEaseDir  = _iDropdown(ix + Std.int(iw * 0.72), ty, Std.int(iw * 0.28), easeDirs,  'Out',  null);
+		ty += 26;
 
-		// Ease curve preview (64x64 canvas)
-		_drawEaseCurve(ix, ty, iw);
-	}
-
-	function _drawEaseCurve(ix:Float, ty:Float, iw:Int):Void {
-		var w = 64;
-		var h = 64;
-		var cs = new FlxSprite(ix + iw / 2 - w / 2, ty).makeGraphic(w, h, 0xFF0A0A18, true);
-		// Draw a simple ease-out curve
-		for (xi in 0...w) {
-			var t = xi / w;
-			var yt = 1 - (1 - t) * (1 - t); // ease-out quad
-			var yi = Std.int((1 - yt) * (h - 4) + 2);
-			flixel.util.FlxSpriteUtil.drawRect(cs, xi, yi, 1, h - yi - 2, C_ACCENT);
-		}
-		// Border
-		flixel.util.FlxSpriteUtil.drawRect(cs, 0, 0, w, 1, C_BORDER);
-		flixel.util.FlxSpriteUtil.drawRect(cs, 0, h - 1, w, 1, C_BORDER);
-		flixel.util.FlxSpriteUtil.drawRect(cs, 0, 0, 1, h, C_BORDER);
-		flixel.util.FlxSpriteUtil.drawRect(cs, w - 1, 0, 1, h, C_BORDER);
-		cs.cameras = [camHUD];
-		cs.scrollFactor.set();
-		ipCamCurve = cs;
-		add(cs);
-		_inspElements.push(cs);
+		return ty;
 	}
 
 	function _buildScriptInspector(scr:PSEScript, ix:Float, ty:Float):Void {
@@ -2605,12 +2840,37 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		}
 
 		if (cameraController != null) {
-			cameraController.update(elapsed);
-			// CameraController sets camGame.zoom assuming a 1280px full-screen display.
-			// When it controls the zoom (zoomEnabled=true) we must scale the result down
-			// so the gameplay view fits correctly inside the smaller editor preview viewport.
-			if (!_freeCam && cameraController.zoomEnabled)
-				camGame.zoom = camGame.zoom * _gameZoom * (camGame.width / SW);
+			// Restore the full-screen zoom before handing control to CameraController so it
+			// can do its lerp / zoom calculations against the values it originally wrote.
+			// After CC.update() we extract the world-space target it computed (stored as
+			// _ccTargetX/Y) and then re-apply the viewport-scale + user-zoom overlay.
+			// _ccTargetX/Y is updated in BOTH modes so the camera proxy always knows where
+			// PlayState's camera is pointing, even when the editor is in free-cam mode.
+			if (camGame != null) {
+				camGame.zoom = _lastCCZoom;
+				cameraController.update(elapsed);
+
+				// Capture whatever zoom CC wrote (always, not just when zoomEnabled).
+				_lastCCZoom = camGame.zoom;
+
+				// CC wrote scroll assuming a SW×SH (1280×720) camera.
+				// Extract its world-space target center from that scroll.
+				_ccTargetX = camGame.scroll.x + SW * 0.5 / _lastCCZoom;
+				_ccTargetY = camGame.scroll.y + SH * 0.5 / _lastCCZoom;
+
+				// Re-apply viewport scale + user zoom.
+				var finalZoom:Float = _lastCCZoom * _gameZoom * (camGame.width / SW);
+				camGame.zoom = finalZoom;
+
+				if (!_freeCam) {
+					// Re-centre the viewport on the CC's current target.
+					camGame.scroll.x = _ccTargetX - (camGame.width  * 0.5) / finalZoom;
+					camGame.scroll.y = _ccTargetY - (camGame.height * 0.5) / finalZoom;
+				}
+				// In free-cam mode _handleFreeCam() overrides scroll with (_freeCamX, _freeCamY).
+			} else {
+				cameraController.update(elapsed);
+			}
 		}
 		if (characterController != null)
 			characterController.update(elapsed);
@@ -2622,6 +2882,11 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		_updateCamProxy();
 		_updateTimeDisplay();
 		_updateCursorInfo();
+
+		// BUGFIX: some audio backends report length = 0 right after load (decoding is
+		// async). Re-read it every frame until we get a non-zero value.
+		if (songLength <= 0 && FlxG.sound.music != null && FlxG.sound.music.length > 0)
+			songLength = FlxG.sound.music.length;
 
 		if (_statusTimer > 0) {
 			_statusTimer -= elapsed;
@@ -3104,24 +3369,9 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 			}
 		}
 
-		// Wheel on game area = camera zoom  (Ctrl NOT held, free cam NOT active)
-		if (my >= HEADER_H && my < tlY && mx < SW - INSP_W && !FlxG.keys.pressed.CONTROL && !_freeCam) {
-			var w = FlxG.mouse.wheel;
-			if (w != 0) {
-				_gameZoom = FlxMath.bound(_gameZoom * (w > 0 ? 1.12 : 0.89), 0.05, 5.0);
-				if (camGame != null) {
-					// Include the stage defaultCamZoom so that _gameZoom=1.0 matches
-					// what PlayState would show (adapted to the editor viewport size).
-					var baseZoom = (cameraController != null && cameraController.defaultZoom > 0)
-						? cameraController.defaultZoom : 1.0;
-					camGame.zoom = baseZoom * _gameZoom * (camGame.width / SW);
-				}
-
-				if (cameraController != null)
-					cameraController.zoomEnabled = false;
-				_showStatus('Zoom ${Math.round(_gameZoom * 100)}%  (C = toggle cam proxy)', 0.8);
-			}
-		}
+		// El zoom del área de juego sólo está disponible en free cam (via _handleFreeCam).
+		// En modo normal la rueda del ratón sobre el viewport no hace nada para no
+		// interferir con el CameraController.
 	}
 
 	function _handleEventInteraction():Void {
@@ -3313,6 +3563,12 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 	// ─────────────────────────────────────────────────────────────────────────
 	function _toggleFreeCam():Void {
 		_freeCam = !_freeCam;
+		if (_freeCam && camGame != null) {
+			// Inicializar el scroll de la free cam en la posición actual de la cámara
+			// para que no salte al activarla.
+			_freeCamX = camGame.scroll.x;
+			_freeCamY = camGame.scroll.y;
+		}
 		if (freeCamBtn != null) {
 			freeCamBtn.makeGraphic(36, 29, _freeCam ? 0xFF1A4A3A : 0xFF1A2A3A);
 			freeCamBtn.label.color = _freeCam ? C_ACCENT2 : C_TEXT;
@@ -3346,10 +3602,8 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		var w = FlxG.mouse.wheel;
 		if (w != 0 && FlxG.mouse.y > HEADER_H && FlxG.mouse.y < _tlY()) {
 			_gameZoom = FlxMath.bound(_gameZoom * (w > 0 ? 1.12 : 0.89), 0.05, 8.0);
-			// Apply the same viewport correction as the normal zoom path so the
-			// world view scales consistently with the editor preview size.
 			if (camGame != null)
-				camGame.zoom = _gameZoom * (camGame.width / SW);
+				camGame.zoom = _lastCCZoom * _gameZoom * (camGame.width / SW);
 		}
 	}
 
@@ -3408,7 +3662,7 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 		if (FlxG.keys.justPressed.ZERO && !ctrl && !_anyInputFocused()) {
 			_gameZoom = 1.0;
 			if (camGame != null)
-				camGame.zoom = _gameZoom * (camGame.width / SW);
+				camGame.zoom = _lastCCZoom * _gameZoom * (camGame.width / SW);
 			_showStatus('Zoom reset → 100%', 1.0);
 		}
 	}
@@ -3679,6 +3933,10 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 	}
 
 	function _addTrack():Void {
+		// BUGFIX: push undo BEFORE mutating so the user can Ctrl+Z an accidental add.
+		// Previously adding tracks was not undoable; combined with the tracks-sync bug
+		// in _doUndo this meant the track list could silently diverge from pseData.
+		_pushUndo();
 		var idx = tracks.length;
 		tracks.push({
 			id: 'custom$idx',
@@ -3689,7 +3947,12 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 			height: TL_TRACK_H
 		});
 		pseData.tracks = tracks;
+		// Recalculate viewport + timeline layout — _tlY() changed
+		_applyGameViewport();
+		_buildViewportFrame();
 		_refreshTrackRows();
+		_rebuildRuler();
+		_rebuildEventBlocks();
 		hasUnsaved = true;
 		_updateUnsavedDot();
 		_showStatus('✓ Track added');
