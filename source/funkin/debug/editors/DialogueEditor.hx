@@ -546,12 +546,17 @@ class DialogueEditor extends funkin.states.MusicBeatState {
 		}
 
 		// Mode switch buttons (right side)
-		var modeLabels = ['SCENE', 'TIMELINE'];
+		var modeLabels    = ['SCENE', 'TIMELINE'];
+		var modeTooltips  = [
+			'SCENE BUILDER — arrastra retratos, cajas de texto y ajusta colores/posiciones de la skin',
+			'DIALOGUE EDITOR — crea mensajes y organiza clips en el timeline'
+		];
 		var modeW = 72;
 		var modeX = SW - (modeW + 4) * 2 - 4;
 		for (i in 0...2) {
 			var col = i == 0 ? C_ACCENT2 : 0xFF252540;
 			var btn = new DLGBtn(modeX + i * (modeW + 4), 2, modeW, MENU_H - 4, modeLabels[i], col, C_BG, null);
+			btn.tooltip = modeTooltips[i];
 			btn.scrollFactor.set();
 			btn.cameras = [camHUD];
 			btn.label.cameras = [camHUD];
@@ -585,11 +590,13 @@ class DialogueEditor extends funkin.states.MusicBeatState {
 		_btnNewSkin.scrollFactor.set(); _btnNewSkin.cameras = [camHUD]; _btnNewSkin.label.cameras = [camHUD]; add(_btnNewSkin); _topBarSprites.push(_btnNewSkin); _topBarSprites.push(_btnNewSkin.label);
 		x += 74;
 
-		_btnLoadSkin = new DLGBtn(x, MENU_H + 4, 70, 28, 'LOAD', C_PANEL, C_TEXT, _doLoadSkin);
+		_btnLoadSkin = new DLGBtn(x, MENU_H + 4, 80, 28, 'LOAD SKIN', C_PANEL, C_TEXT, _doLoadSkin);
+		_btnLoadSkin.tooltip = 'Cargar skin de diálogo (config.json)';
 		_btnLoadSkin.scrollFactor.set(); _btnLoadSkin.cameras = [camHUD]; _btnLoadSkin.label.cameras = [camHUD]; add(_btnLoadSkin); _topBarSprites.push(_btnLoadSkin); _topBarSprites.push(_btnLoadSkin.label);
-		x += 74;
+		x += 84;
 
-		_btnSaveSkin = new DLGBtn(x, MENU_H + 4, 70, 28, 'SAVE', C_ACCENT, C_BG, _doSaveSkin);
+		_btnSaveSkin = new DLGBtn(x, MENU_H + 4, 80, 28, 'SAVE SKIN', C_ACCENT, C_BG, _doSaveSkin);
+		_btnSaveSkin.tooltip = 'Guardar skin → assets/cutscenes/dialogue/<nombre>/config.json';
 		_btnSaveSkin.scrollFactor.set(); _btnSaveSkin.cameras = [camHUD]; _btnSaveSkin.label.cameras = [camHUD]; add(_btnSaveSkin); _topBarSprites.push(_btnSaveSkin); _topBarSprites.push(_btnSaveSkin.label);
 		x += 80;
 
@@ -600,16 +607,19 @@ class DialogueEditor extends funkin.states.MusicBeatState {
 		// ── Dialogue editor buttons ────────────────────────────────────────
 		x = 8;
 		_btnNewConv = new DLGBtn(x, MENU_H + 4, 60, 28, 'NEW', C_PANEL, C_ACCENT2, _doNewConv);
+		_btnNewConv.tooltip = 'Nueva conversación vacía';
 		_btnNewConv.scrollFactor.set(); _btnNewConv.cameras = [camHUD]; _btnNewConv.label.cameras = [camHUD]; add(_btnNewConv); _topBarSprites.push(_btnNewConv); _topBarSprites.push(_btnNewConv.label);
 		x += 64;
 
-		_btnLoadConv = new DLGBtn(x, MENU_H + 4, 60, 28, 'LOAD', C_PANEL, C_TEXT, _doLoadConv);
+		_btnLoadConv = new DLGBtn(x, MENU_H + 4, 76, 28, 'LOAD CONV', C_PANEL, C_TEXT, _doLoadConv);
+		_btnLoadConv.tooltip = 'Cargar conversación desde archivo JSON (intro.json / outro.json)';
 		_btnLoadConv.scrollFactor.set(); _btnLoadConv.cameras = [camHUD]; _btnLoadConv.label.cameras = [camHUD]; add(_btnLoadConv); _topBarSprites.push(_btnLoadConv); _topBarSprites.push(_btnLoadConv.label);
-		x += 64;
+		x += 80;
 
-		_btnSaveConv = new DLGBtn(x, MENU_H + 4, 60, 28, 'SAVE', C_ACCENT2, C_BG, _doSaveConv);
+		_btnSaveConv = new DLGBtn(x, MENU_H + 4, 76, 28, 'SAVE CONV', C_ACCENT2, C_BG, _doSaveConv);
+		_btnSaveConv.tooltip = 'Guardar conversación → assets/songs/<cancion>/<nombre>.json';
 		_btnSaveConv.scrollFactor.set(); _btnSaveConv.cameras = [camHUD]; _btnSaveConv.label.cameras = [camHUD]; add(_btnSaveConv); _topBarSprites.push(_btnSaveConv); _topBarSprites.push(_btnSaveConv.label);
-		x += 64;
+		x += 80;
 
 		_btnTestConv = new DLGBtn(x, MENU_H + 4, 60, 28, '▶ TEST', C_ACCENT3, C_BG, _doTestDialogue);
 		_btnTestConv.scrollFactor.set(); _btnTestConv.cameras = [camHUD]; _btnTestConv.label.cameras = [camHUD]; add(_btnTestConv); _topBarSprites.push(_btnTestConv); _topBarSprites.push(_btnTestConv.label);
@@ -1279,6 +1289,15 @@ class DialogueEditor extends funkin.states.MusicBeatState {
 		_statusTxt.setFormat(Paths.font('vcr.ttf'), 9, C_SUBTEXT, LEFT);
 		_statusTxt.scrollFactor.set(); _statusTxt.cameras = [camHUD];
 		add(_statusTxt);
+
+		// Tooltip de botón: se muestra a la derecha del status (izquierda del drop-hint)
+		// y se reemplaza con el último mensaje de estado al quitarse el hover.
+		var _tooltipTxt = new FlxText(SW - 500, SH - STATUS_H + 4, 290, '', 9);
+		_tooltipTxt.setFormat(Paths.font('vcr.ttf'), 9, 0xFF8888CC, RIGHT);
+		_tooltipTxt.scrollFactor.set(); _tooltipTxt.cameras = [camHUD];
+		add(_tooltipTxt);
+		// Conectar el callback: muestra tooltip mientras hay hover, lo limpia al salir
+		DLGBtn.onTooltip = (tip:String) -> _tooltipTxt.text = tip;
 
 		// Persistent drop hint on the right side of status bar
 		_dropHintTxt = new FlxText(SW - 194, SH - STATUS_H + 4, 190, '⬇ drop files to import', 9);
@@ -2581,15 +2600,60 @@ class DialogueEditor extends funkin.states.MusicBeatState {
 
 	function _doLoadConv():Void {
 		_closeMenus();
+		#if sys
+		// FIX: usar FileDialog en vez de songName (que por defecto es 'Test' y nunca
+		// encontraba el archivo). Ahora el usuario elige directamente el intro.json / outro.json.
+		var fd = new FileDialog();
+		fd.onSelect.add(function(path:String) {
+			try {
+				var content = sys.io.File.getContent(path);
+				var data:Dynamic = haxe.Json.parse(content);
+				if (data.messages == null) {
+					_showStatus('El archivo seleccionado no parece una conversación (falta "messages")');
+					return;
+				}
+				_pushUndo();
+				conversation = cast data;
+				// FIX: auto-cargar la skin referenciada en la conversación
+				if (conversation.skinName != null && conversation.skinName != '') {
+					var skin = DialogueData.loadSkin(conversation.skinName);
+					if (skin != null) {
+						currentSkinName = conversation.skinName;
+						currentSkin = skin;
+						_rebuildCanvasSprites();
+						_refreshSkinInspectorFields();
+					} else {
+						_showStatus('Conversación cargada pero no se encontró la skin "${conversation.skinName}"');
+					}
+				}
+				_syncClipsFromConversation();
+				_updateConvInfoText();
+				// FIX: cambiar al modo timeline donde se ven los clips
+				if (_mode != 'timeline') _switchMode('timeline');
+				else { _rebuildTimeline(); _rebuildTimelineAssets(); }
+				_showStatus('Conversación cargada: ${conversation.name}  (${conversation.messages.length} mensajes)  |  skin: ${conversation.skinName ?? "ninguna"}');
+			} catch (e:Dynamic) {
+				_showStatus('Error al leer la conversación: $e');
+			}
+		});
+		fd.browse(lime.ui.FileDialogType.OPEN, 'json', null, 'Seleccionar archivo de conversación (intro.json / outro.json)');
+		#else
+		// Web: intentar carga por songName como fallback
 		var conv = DialogueData.loadConversation(songName, 'intro');
 		if (conv != null) {
 			conversation = conv;
+			if (conversation.skinName != null && conversation.skinName != '') {
+				var skin = DialogueData.loadSkin(conversation.skinName);
+				if (skin != null) { currentSkinName = conversation.skinName; currentSkin = skin; _rebuildCanvasSprites(); _refreshSkinInspectorFields(); }
+			}
 			_syncClipsFromConversation();
 			_updateConvInfoText();
-			_showStatus('Loaded conversation: ${conv.name}');
+			if (_mode != 'timeline') _switchMode('timeline');
+			_showStatus('Conversación cargada: ${conv.name}');
 		} else {
-			_showStatus('No conversation found for song: $songName');
+			_showStatus('No se encontró conversación para la canción: $songName');
 		}
+		#end
 	}
 
 	function _doSaveConv():Void {
@@ -3287,17 +3351,47 @@ class DialogueEditor extends funkin.states.MusicBeatState {
 			var data    = haxe.Json.parse(content);
 
 			if (data.portraits != null) {
-				// Looks like a skin config.json — guide the user
-				_showStatus('Dropped JSON looks like a skin config — use File → Load Skin to import it properly');
+				// Es un config.json de skin — cargarlo directamente
+				// FIX: antes solo mostraba un mensaje de error; ahora carga la skin real.
+				var skinDir  = haxe.io.Path.directory(path);
+				var skinName = haxe.io.Path.withoutDirectory(skinDir);
+				var skin = DialogueData.loadSkin(skinName);
+				if (skin != null) {
+					_pushUndo();
+					currentSkinName = skinName;
+					currentSkin = skin;
+					_selectedElementIdx = -1;
+					_rebuildCanvasSprites();
+					_refreshSkinInspectorFields();
+					_updateConvInfoText();
+					if (_mode != 'scene') _switchMode('scene');
+					_showStatus('Skin cargada: $skinName');
+				} else {
+					_showStatus('No se pudo cargar la skin. Asegúrate de que config.json esté en assets/cutscenes/dialogue/<nombre>/config.json');
+				}
 			} else if (data.messages != null) {
-				// Looks like a conversation file
+				// Es una conversación
+				// FIX: antes no cargaba la skin ni cambiaba de modo → no se veía nada.
 				_pushUndo();
 				conversation = cast data;
+				// Auto-cargar la skin referenciada en la conversación
+				if (conversation.skinName != null && conversation.skinName != '') {
+					var skin = DialogueData.loadSkin(conversation.skinName);
+					if (skin != null) {
+						currentSkinName = conversation.skinName;
+						currentSkin = skin;
+						_rebuildCanvasSprites();
+						_refreshSkinInspectorFields();
+					}
+				}
 				_syncClipsFromConversation();
 				_updateConvInfoText();
-				_showStatus('Conversation imported from dropped JSON  (${conversation.messages.length} messages)');
+				// Cambiar al modo timeline donde se ven los clips de diálogo
+				if (_mode != 'timeline') _switchMode('timeline');
+				else { _rebuildTimeline(); _rebuildTimelineAssets(); }
+				_showStatus('Conversación importada (${conversation.messages.length} mensajes)  |  skin: ${conversation.skinName ?? "ninguna"}');
 			} else {
-				_showStatus('Unrecognized JSON — expected a skin config or conversation file');
+				_showStatus('JSON no reconocido — se esperaba un config de skin o un archivo de conversación');
 			}
 		} catch (e:Dynamic) {
 			_showStatus('Error reading JSON: $e');
@@ -3316,6 +3410,7 @@ class DialogueEditor extends funkin.states.MusicBeatState {
 		lime.app.Application.current.window.onDropFile.remove(_onDropFile);
 		#end
 		_closeDropOverlay();
+		DLGBtn.onTooltip = null;
 		super.destroy();
 	}
 }
@@ -3326,6 +3421,10 @@ class DialogueEditor extends funkin.states.MusicBeatState {
 private class DLGBtn extends FlxSprite {
 	public var label:FlxText;
 	public var onClick:Void->Void;
+	/** Texto de tooltip que se muestra en la barra de estado al hacer hover. */
+	public var tooltip:String = '';
+	/** Callback global que el editor registra para mostrar tooltips. */
+	public static var onTooltip:Null<String->Void> = null;
 
 	public var _base:Int;
 	var _hover:Int;
@@ -3375,6 +3474,9 @@ private class DLGBtn extends FlxSprite {
 		if (ov != _over) {
 			_drawBtn(ov ? _hover : _base);
 			_over = ov;
+			// Mostrar / limpiar tooltip en la barra de estado
+			if (onTooltip != null)
+				onTooltip(ov && tooltip != '' ? tooltip : '');
 		}
 		label.x = x; label.y = y + (height - label.height) / 2;
 		if (ov && FlxG.mouse.justPressed && onClick != null) onClick();
