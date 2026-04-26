@@ -413,6 +413,8 @@ class AnimationDebug extends MusicBeatState
 		lime.app.Application.current.window.onClose.add(_windowCloseFn);
 		#end
 
+		funkin.transitions.StateTransition.onStateCreated();
+
 		super.create();
 	}
 
@@ -456,23 +458,11 @@ class AnimationDebug extends MusicBeatState
 		var tab = new coolui.CoolUIGroup();
 		tab.name = "Character";
 
-		var characters:Array<String> = funkin.gameplay.objects.character.CharacterList.getAllCharacters();
-
-		tab.add(new FlxText(10, 10, 0, "Select Character:", 12));
-
-		var charDropdown = new CoolDropDown(10, 30, CoolDropDown.makeStrIdLabelArray(characters, true), function(character:String)
-		{
-			daAnim = characters[Std.parseInt(character)];
-			displayCharacter(daAnim);
-			loadCharacterData();
-		});
-		charDropdown.selectedLabel = daAnim;
-
-		playerCheckbox = new CoolCheckBox(10, 70, null, null, "Player Character", 150);
+		playerCheckbox = new CoolCheckBox(10, 10, null, null, "Player Character", 150);
 		playerCheckbox.checked = false;
 		tab.add(playerCheckbox);
 
-		charFlipXCheckbox = new CoolCheckBox(165, 70, null, null, "FlipX", 80);
+		charFlipXCheckbox = new CoolCheckBox(165, 10, null, null, "FlipX", 80);
 		charFlipXCheckbox.checked = false;
 		charFlipXCheckbox.callback = function(_:Bool)
 		{
@@ -481,19 +471,19 @@ class AnimationDebug extends MusicBeatState
 		};
 		tab.add(charFlipXCheckbox);
 
-		tab.add(new FlxText(10, 95, 0, "Death Character:", 10));
-		charDeathInput = new CoolInputText(10, 108, 200, '', 8);
+		tab.add(new FlxText(10, 47, 0, "Death Character:", 10));
+		charDeathInput = new CoolInputText(10, 58, 200, '', 8);
 		tab.add(charDeathInput);
-		var charDeathHint = new FlxText(10, 122, 280, "Ej: bf-dead  (empty = default)", 8);
+		var charDeathHint = new FlxText(10, 72, 280, "Ej: bf-dead  (empty = default)", 8);
 		charDeathHint.color = FlxColor.WHITE;
 		tab.add(charDeathHint);
 
 		// ── Game Over ──────────────────────────────────────────────────────────
-		var goLabel = new FlxText(10, 140, 0, "── Game Over ──", 10);
+		var goLabel = new FlxText(10, 90, 0, "── Game Over ──", 10);
 		goLabel.setBorderStyle(FlxTextBorderStyle.OUTLINE, 0xFF0A0A0F, 1);
 		tab.add(goLabel);
 
-		var yGO = 157;
+		var yGO = 107;
 
 		tab.add(new FlxText(10, yGO, 0, "Death SFX  (Paths.sound):", 8));
 		gameOverSoundInput = new CoolInputText(10, yGO + 12, 200, '', 8);
@@ -505,26 +495,26 @@ class AnimationDebug extends MusicBeatState
 
 		tab.add(new FlxText(10, yGO, 0, "Loop Music  (Paths.music):", 8));
 		gameOverMusicInput = new CoolInputText(10, yGO + 12, 200, '', 8);
-		var goMusHint = new FlxText(10, yGO + 26, 280, "Default: gameplay/gameOver", 7);
+		var goMusHint = new FlxText(10, yGO + 36, 280, "Default: gameplay/gameOver", 7);
 		goMusHint.color = FlxColor.WHITE;
 		tab.add(gameOverMusicInput);
 		tab.add(goMusHint);
 		yGO += 42;
 
-		tab.add(new FlxText(10, yGO, 0, "End/Retry SFX  (Paths.music):", 8));
-		gameOverEndInput = new CoolInputText(10, yGO + 12, 200, '', 8);
-		var goEndHint = new FlxText(10, yGO + 26, 280, "Default: gameplay/gameOverEnd", 7);
+		tab.add(new FlxText(10, yGO + 10, 0, "End/Retry SFX  (Paths.music):", 8));
+		gameOverEndInput = new CoolInputText(10, yGO + 22, 200, '', 8);
+		var goEndHint = new FlxText(10, yGO + 36, 280, "Default: gameplay/gameOverEnd", 7);
 		goEndHint.color = FlxColor.WHITE;
 		tab.add(gameOverEndInput);
 		tab.add(goEndHint);
 		yGO += 42;
 
-		tab.add(new FlxText(10, yGO, 0, "BPM:", 8));
-		gameOverBpmStepper = new CoolNumericStepper(60, yGO + 1, 1, 100, 1, 999, 1);
+		tab.add(new FlxText(10, yGO + 12, 0, "BPM:", 8));
+		gameOverBpmStepper = new CoolNumericStepper(60, yGO + 11, 1, 100, 1, 999, 1);
 		tab.add(gameOverBpmStepper);
 
-		tab.add(new FlxText(130, yGO, 0, "Cam Frame:", 8));
-		gameOverCamFrameStepper = new CoolNumericStepper(200, yGO + 1, 1, 12, 0, 60, 0);
+		tab.add(new FlxText(150, yGO + 12, 0, "Cam Frame:", 8));
+		gameOverCamFrameStepper = new CoolNumericStepper(200, yGO + 31, 1, 12, 0, 60, 0);
 		tab.add(gameOverCamFrameStepper);
 
 		yGO += 24;
@@ -541,8 +531,6 @@ class AnimationDebug extends MusicBeatState
 			camFollow.setPosition(FlxG.width / 2, FlxG.height / 2);
 			camGame.zoom = 1;
 		}));
-
-		tab.add(charDropdown);
 		UI_box.addGroup(tab);
 	}
 

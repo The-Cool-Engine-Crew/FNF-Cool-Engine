@@ -78,11 +78,11 @@ class PathsCache {
 		if (instance != null) {
 			// Mobile tiene RAM más limitada — límites más bajos incluso en modo normal
 			#if (mobileC || android || ios)
-			instance.maxGraphics = v ? 12 : 25;
-			instance.maxSounds = v ? 10 : 20;
+			instance.maxGraphics = v ? 6 : 14;
+			instance.maxSounds = v ? 6 : 12;
 			#else
-			instance.maxGraphics = v ? 25 : 40;
-			instance.maxSounds = v ? 20 : 32;
+			instance.maxGraphics = v ? 12 : 20;
+			instance.maxSounds = v ? 12 : 16;
 			#end
 		}
 		return v;
@@ -98,11 +98,11 @@ class PathsCache {
 		if (instance == null)
 			return;
 		#if (mobileC || android || ios)
-		instance.maxGraphics = enabled ? 20 : (lowMemoryMode ? 12 : 25);
-		instance.maxSounds = enabled ? 12 : (lowMemoryMode ? 10 : 20);
+		instance.maxGraphics = enabled ? 12 : (lowMemoryMode ? 6 : 14);
+		instance.maxSounds = enabled ? 8 : (lowMemoryMode ? 6 : 12);
 		#else
-		instance.maxGraphics = enabled ? 32 : (lowMemoryMode ? 25 : 40);
-		instance.maxSounds = enabled ? 20 : (lowMemoryMode ? 20 : 32);
+		instance.maxGraphics = enabled ? 16 : (lowMemoryMode ? 12 : 20);
+		instance.maxSounds = enabled ? 12 : (lowMemoryMode ? 12 : 16);
 		#end
 	}
 
@@ -126,8 +126,11 @@ class PathsCache {
 	// FIX RAM: desktop bajado de 80→40 texturas y 64→32 sonidos.
 	// Los límites anteriores eran tan altos que el LRU nunca evictaba nada
 	// en gameplay normal, acumulando texturas de sesiones anteriores en RAM.
-	public var maxGraphics:Int = #if (mobileC || android || ios) 25 #else 40 #end;
-	public var maxSounds:Int = #if (mobileC || android || ios) 20 #else 32 #end;
+	// FIX VRAM: bajado a la mitad — 40→20 desktop, 25→14 mobile, 32→16 sounds.
+	// El LRU ahora evicta antes, manteniendo la VRAM activa aproximadamente
+	// a la mitad del pico anterior.
+	public var maxGraphics:Int = #if (mobileC || android || ios) 14 #else 20 #end;
+	public var maxSounds:Int = #if (mobileC || android || ios) 12 #else 16 #end;
 
 	// ── Tricapa de texturas ───────────────────────────────────────────────────
 	final _permanentGraphics:Map<String, FlxGraphic> = [];

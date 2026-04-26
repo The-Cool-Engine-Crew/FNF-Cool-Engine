@@ -49,7 +49,7 @@ class GPURenderer
     private var _camDirty:Bool = true;
 
     // Auto-prune de batches huérfanos cada N renders para liberar VRAM
-    private static inline var PRUNE_INTERVAL:Int = 300;
+    private static inline var PRUNE_INTERVAL:Int = 150;
     private var _pruneCounter:Int = 0;
 
     public function new(?camera:FlxCamera)

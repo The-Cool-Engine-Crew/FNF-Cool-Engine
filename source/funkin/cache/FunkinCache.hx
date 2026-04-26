@@ -70,7 +70,7 @@ class FunkinCache extends AssetCache {
 	// invisibles mientras el overlay de transición cubre la pantalla.
 	var _disposeQueue:Array<BitmapData> = [];
 	var _disposeFrameListener:Null<openfl.events.Event->Void> = null;
-	static inline final _DISPOSE_PER_FRAME:Int = 10; // texturas liberadas por frame
+	static inline final _DISPOSE_PER_FRAME:Int = 20; // texturas liberadas por frame (dobrado para liberar VRAM antes)
 
 	/**
 	 * Callback llamado cuando un asset se destruye.
@@ -518,13 +518,21 @@ class FunkinCache extends AssetCache {
 	 * @param budgetMB   Presupuesto de VRAM en MB (por defecto 512).
 	 * @return           true si se evictó la capa SECOND.
 	 */
-	public function evictSecondLayerIfOverBudget(budgetMB:Int = 512):Bool {
+	public function evictSecondLayerIfOverBudget(budgetMB:Int = 256):Bool {
 		final usedMB = estimateVRAMMB();
 		if (usedMB > budgetMB) {
 			trace('[FunkinCache] VRAM presupuesto excedido ($usedMB MB > $budgetMB MB) — evictando capa SECOND.');
 			clearSecondLayer();
 			try {
 				FlxG.bitmap.clearUnused();
+			} catch (_:Dynamic) {}
+			// Liberar copias CPU de texturas ya subidas a VRAM (desktop)
+			try {
+				funkin.cache.PathsCache.instance.flushGPUCache();
+			} catch (_:Dynamic) {}
+			// Móvil: disposeImage() directo sin context3D
+			try {
+				funkin.cache.PathsCache.instance.flushGPUCacheMobile();
 			} catch (_:Dynamic) {}
 			try {
 				funkin.system.MemoryUtil.collectMinor();

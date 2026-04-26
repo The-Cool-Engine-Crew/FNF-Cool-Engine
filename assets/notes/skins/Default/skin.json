@@ -4,6 +4,7 @@
   "description": "Skin default FNF",
   "folder": "Default",
   "colorAuto": true,
+  "noStaticRGB": true,
   "colorDirections": [
     {
       "r": [0.761, 0.294, 0.600],

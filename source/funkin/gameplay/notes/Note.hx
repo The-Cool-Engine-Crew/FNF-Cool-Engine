@@ -341,11 +341,11 @@ class Note extends FlxSprite
 		{
 			final dir = noteData % 4;
 
-			// PRIORIDAD 1: colorDirections → RGB palette shader (mismo enfoque que NightmareVision).
-			// Reemplaza los canales R/G/B de la textura con colores reales por dirección.
-			if (skinData.colorDirections != null && dir < skinData.colorDirections.length)
+			// PRIORIDAD 1: colorDirections / colorPalette → RGB palette shader.
+			// getColorDirectionEntry resuelve ambos formatos (float arrays y hex strings).
+			final cd = NoteSkinSystem.getColorDirectionEntry(skinData, dir);
+			if (cd != null)
 			{
-				final cd = skinData.colorDirections[dir];
 				// GC FIX: reutilizar shader existente entre recycles.
 				if (_rgbShader == null)
 					_rgbShader = new funkin.shaders.NoteRGBPaletteShader();

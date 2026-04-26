@@ -2,13 +2,11 @@ package funkin.menus.substate;
 
 import flixel.FlxG;
 import flixel.FlxSprite;
+import flixel.graphics.FlxGraphic;
 import flixel.graphics.frames.FlxAtlasFrames;
 import flixel.group.FlxSpriteGroup;
 import flixel.math.FlxMath;
 import flixel.util.FlxColor;
-#if sys
-import sys.FileSystem;
-#end
 
 using StringTools;
 
@@ -39,29 +37,21 @@ class MenuItem extends FlxSpriteGroup
 		else
 			weekPath = 'menu/storymenu/titles/week' + weekNum;
 
-		var imgPath:String = Paths.image(weekPath);
+		// FIX: loadGraphic(String) pasa el path por el sistema de assets embebidos
+		// de OpenFL, que NO puede cargar archivos arbitrarios del disco (ej: mods/).
+		// Paths.getGraphic() usa BitmapData.fromFile() internamente via _loadBitmapFromDisk,
+		// que sí carga cualquier ruta del sistema de archivos en runtime.
 		var loaded:Bool = false;
-
-		#if sys
-		if (FileSystem.exists(imgPath))
-		{
-			try
-			{
-				week.loadGraphic(imgPath);
-				if (week.graphic != null && week.graphic.bitmap != null)
-					loaded = true;
-			}
-			catch (e:Dynamic) { trace('[MenuItem] Error cargando week$weekNum: $e'); }
-		}
-		#else
 		try
 		{
-			week.loadGraphic(imgPath);
-			if (week.graphic != null && week.graphic.bitmap != null)
+			var graphic:Null<FlxGraphic> = Paths.getGraphic(weekPath);
+			if (graphic != null && graphic.bitmap != null)
+			{
+				week.loadGraphic(graphic);
 				loaded = true;
+			}
 		}
 		catch (e:Dynamic) { trace('[MenuItem] Error cargando week$weekNum: $e'); }
-		#end
 
 		if (!loaded || week.graphic == null || week.graphic.bitmap == null)
 			week.makeGraphic(256, 80, 0xFF888888);

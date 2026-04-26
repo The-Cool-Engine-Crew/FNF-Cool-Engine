@@ -259,6 +259,39 @@ typedef NoteSkinData =
 	 *   ]
 	 */
 	var ?colorDirections:Array<{ r:Array<Float>, g:Array<Float>, b:Array<Float> }>;
+
+	/**
+	 * Paleta de colores en formato HEX — alternativa legible a colorDirections.
+	 * Array de 4 entradas (Left, Down, Up, Right), cada una con tres colores hex
+	 * que reemplazan los canales R, G y B del spritesheet respectivamente.
+	 *
+	 * Cómo funciona el spritesheet RGB:
+	 *   El PNG usa rojo, verde y azul como "capas de máscara" independientes.
+	 *   r → color que reemplaza los píxeles ROJOS de la textura  (capa principal, brillo)
+	 *   g → color que reemplaza los píxeles VERDES de la textura (capa secundaria, borde/glow)
+	 *   b → color que reemplaza los píxeles AZULES de la textura (capa de sombra/oscuro)
+	 *
+	 * Ejemplo en skin.json:
+	 *   "colorAuto": true,
+	 *   "colorPalette": [
+	 *     { "r": "#C060FF", "g": "#8833FF", "b": "#1A0A2E" },
+	 *     { "r": "#FF6060", "g": "#FF2020", "b": "#2E0A0A" },
+	 *     { "r": "#60FF60", "g": "#20FF20", "b": "#0A2E0A" },
+	 *     { "r": "#6060FF", "g": "#2020FF", "b": "#0A0A2E" }
+	 *   ]
+	 *
+	 * Si tanto colorPalette como colorDirections están definidos, colorDirections tiene prioridad.
+	 */
+	var ?colorPalette:Array<{ r:String, g:String, b:String }>;
+
+	/**
+	 * Si es true, desactiva el shader RGB en la animación "static" del strum
+	 * (posición de reposo / sin presionar). Útil cuando el static de tu skin ya
+	 * tiene los colores correctos en el PNG y no quieres que el shader los altere.
+	 * Las animaciones "pressed" y "confirm" sí seguirán usando el shader.
+	 */
+	var ?noStaticRGB:Bool;
+
 	/**
 	 * Desplazamientos HSV por dirección (Left, Down, Up, Right).
 	 * Cada entrada: { h: rotación de tono 0–1, s: desplazamiento saturación, b: factor brillo }.
@@ -710,6 +743,37 @@ class NoteSkinSystem
 	// ==================== COLOR / SHADER HELPERS ====================
 	// Estos métodos permiten que los scripts (.lua / .hx) de skins y splashes
 	// apliquen o quiten el shader RGB en runtime sobre cualquier sprite.
+
+	/**
+	 * Resuelve la entrada de paleta para una dirección dada.
+	 * Revisa colorDirections primero (prioridad) y después colorPalette (formato hex legible).
+	 * Retorna null si no hay paleta definida para esa dirección.
+	 */
+	public static function getColorDirectionEntry(skinData:NoteSkinData, dir:Int):Null<{ r:Array<Float>, g:Array<Float>, b:Array<Float> }>
+	{
+		// colorDirections (float arrays) tiene prioridad
+		if (skinData.colorDirections != null && dir < skinData.colorDirections.length)
+			return skinData.colorDirections[dir];
+
+		// colorPalette (hex strings) como alternativa legible
+		if (skinData.colorPalette != null && dir < skinData.colorPalette.length)
+		{
+			final p = skinData.colorPalette[dir];
+			return {
+				r: _hexToVec3(p.r),
+				g: _hexToVec3(p.g),
+				b: _hexToVec3(p.b)
+			};
+		}
+		return null;
+	}
+
+	/** Convierte un color hex (#RRGGBB o #RGB) a un vec3 de floats [0–1]. */
+	static function _hexToVec3(hex:String):Array<Float>
+	{
+		final c = flixel.util.FlxColor.fromString(hex);
+		return [c.redFloat, c.greenFloat, c.blueFloat];
+	}
 
 	/**
 	 * Aplica NoteColorSwapShader a un sprite con los presets estándar o un preset custom.

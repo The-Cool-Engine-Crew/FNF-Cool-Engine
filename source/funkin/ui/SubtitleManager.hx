@@ -654,10 +654,11 @@ class SubtitleManager
 
 	function _resolveCamera():flixel.FlxCamera
 	{
-		// 1. PlayState activo → usar camHUD
 		final ps = funkin.gameplay.PlayState.instance;
 		if (ps != null)
 		{
+			final subtitleCam:Dynamic = Reflect.field(ps, 'camSubtitles');
+			if (subtitleCam != null) return cast subtitleCam;
 			final hudCam:Dynamic = Reflect.field(ps, 'camHUD');
 			if (hudCam != null) return cast hudCam;
 		}

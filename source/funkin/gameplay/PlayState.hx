@@ -148,6 +148,7 @@ class PlayState extends funkin.states.MusicBeatState {
 	public var camGame:FlxCamera;
 	public var camHUD:FlxCamera;
 	public var camCountdown:FlxCamera;
+	public var camSubtitles:FlxCamera;
 
 	// === CHARACTERS ===
 	public var boyfriend:Character;
@@ -378,6 +379,7 @@ class PlayState extends funkin.states.MusicBeatState {
 			ScriptHandler.setOnScripts('camGame', camGame);
 			ScriptHandler.setOnScripts('camHUD', camHUD);
 			ScriptHandler.setOnScripts('camCountdown', camCountdown);
+			ScriptHandler.setOnScripts('camSubtitles', camSubtitles);
 		}
 
 		gameState = GameState.get();
@@ -530,6 +532,8 @@ class PlayState extends funkin.states.MusicBeatState {
 		camHUD.bgColor.alpha = 0;
 		camCountdown = new FlxCamera();
 		camCountdown.bgColor.alpha = 0;
+		camSubtitles = new FlxCamera();
+		camSubtitles.bgColor.alpha = 0;
 
 		final _sd = PlayStateConfig.minimalMode ? null : funkin.gameplay.objects.stages.Stage.getStageData(curStage);
 		final isPixelStage = (_sd != null && _sd.isPixelStage == true);
@@ -542,6 +546,7 @@ class PlayState extends funkin.states.MusicBeatState {
 		FlxG.cameras.reset(camGame);
 		FlxG.cameras.add(camHUD, false);
 		FlxG.cameras.add(camCountdown, false);
+		FlxG.cameras.add(camSubtitles, false);
 	}
 
 	// ──────────────────────────────────────────────────────────────────────

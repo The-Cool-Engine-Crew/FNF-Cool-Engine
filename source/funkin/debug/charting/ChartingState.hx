@@ -244,9 +244,11 @@ class ChartingState extends funkin.states.MusicBeatState
 	// ── DRAG-AND-DROP DE NOTAS (single) ─────────────────────────────────────
 	var _dragNote:Array<Dynamic> = null;
 	var _dragNoteSection:Int = -1;
-	var _dragGhost:FlxSprite = null;
-	var _dragGhostArrow:FlxSprite = null;
+	/** Pool de 4 sprites Note (uno por dirección) usados como ghost de drag Y como hover preview. */
+	var _ghostNotes:Array<Note> = [];
 	var _dragGhostCol:Int = -1;
+	/** Columna visual que se muestra actualmente en el hover preview (-1 = oculto). */
+	var _hoverNoteCol:Int = -1;
 	var _dragActive:Bool = false;
 	var _dragStartX:Float = 0;
 	var _dragStartY:Float = 0;
@@ -254,6 +256,16 @@ class ChartingState extends funkin.states.MusicBeatState
 	var _dragPendingSection:Int = -1;
 	/** true cuando el drag-pending empezó sobre una nota que ya estaba seleccionada (click para deseleccionar). */
 	var _dragPendingWasSelected:Bool = false;
+
+	// ── SUSTAIN RESIZE (drag hacia abajo sobre nota existente) ────────────────
+	/** true mientras el usuario está arrastrando hacia abajo para extender/reducir el sustain. */
+	var _susResizeActive:Bool = false;
+	var _susResizeNote:Array<Dynamic> = null;
+	var _susResizeSection:Int = -1;
+	/** Sustain original antes de empezar el resize (para undo). */
+	var _susResizeOriginalSus:Float = 0;
+	/** Posición Y del mouse al iniciar el resize. */
+	var _susResizeStartY:Float = 0;
 
 	static inline var NOTE_DRAG_THRESHOLD:Float = 6.0;
 
@@ -303,6 +315,9 @@ class ChartingState extends funkin.states.MusicBeatState
 
 	// INDICADORES DE SECCIÓN
 	var sectionIndicators:FlxTypedGroup<FlxSprite>;
+
+	/** Sprites de animación flip cuando una nota cambia de columna. Renderiza encima de todo. */
+	var _noteFlipGroup:FlxTypedGroup<FlxSprite>;
 
 	// ── CHART OVERVIEW PREVIEW (like V-Slice) ────────────────────────────────
 
@@ -418,6 +433,8 @@ class ChartingState extends funkin.states.MusicBeatState
 	// OBJECT POOL para notas y sustains del grid (evita GC spikes al editar)
 	var _notePool:Array<Note> = [];
 	var _susPool:Array<FlxSprite> = [];
+	/** Pool de FlxSprites para los highlights de selección (evita makeGraphic cada frame). */
+	var _hlPool:Array<FlxSprite> = [];
 
 	// BPM DETECTION
 	var _bpmDetecting:Bool = false;
@@ -606,7 +623,7 @@ class ChartingState extends funkin.states.MusicBeatState
 			"💡 Ctrl+Z / Ctrl+Y — undo / redo",
 			"💡 Ctrl+C/V/X to copy/paste/cut section",
 			"💡 N to mirror section",
-			"💡 Q/E to change snap",
+			"💡 Q/E = sustain resize | Shift+Q/E = snap",
 			"💡 T for hitsounds  |  M for metronome",
 			"💡 Settings tab → change difficulty to reload chart + audio",
 			"💡 Click 🌊 Wave button to toggle waveform",
@@ -957,18 +974,24 @@ class ChartingState extends funkin.states.MusicBeatState
 		dummyArrow = new FlxSprite().makeGraphic(GRID_SIZE, GRID_SIZE);
 		add(dummyArrow);
 
-		// Ghost de drag (invisible hasta que se arrastre una nota)
-		_dragGhost = new FlxSprite().makeGraphic(GRID_SIZE, GRID_SIZE, 0xFFFFFFFF);
-		_dragGhost.scrollFactor.set();
-		_dragGhost.cameras = [camGame];
-		_dragGhost.alpha = 0;
-		_dragGhost.visible = false;
-		add(_dragGhost);
-		_dragGhostArrow = new FlxSprite().makeGraphic(GRID_SIZE - 8, GRID_SIZE - 8, 0x88000000);
-		_dragGhostArrow.scrollFactor.set();
-		_dragGhostArrow.cameras = [camGame];
-		_dragGhostArrow.visible = false;
-		add(_dragGhostArrow);
+		// Pool de 4 Notes (una por dirección) para ghost de drag y hover preview.
+		// Se nullea el shader DESPUÉS de construir para que .color funcione siempre
+		// (si noteRGB está activo el constructor aplica un shader que anula el tint).
+		_ghostNotes = [];
+		for (d in 0...4)
+		{
+			var gn = new Note(0, d);
+			gn.setGraphicSize(GRID_SIZE, GRID_SIZE);
+			gn.updateHitbox();
+			// Eliminar shader RGB: los ghost notes usan tint directo (NOTE_COLORS)
+			gn.shader = null;
+			gn.color  = 0xFFFFFFFF;
+			gn.scrollFactor.set();
+			gn.cameras = [camGame];
+			gn.visible = false;
+			add(gn);
+			_ghostNotes.push(gn);
+		}
 
 		// Box de selección (fill + border)
 		_selBox = new FlxSprite().makeGraphic(1, 1, 0xFF00CCFF);
@@ -1142,6 +1165,9 @@ class ChartingState extends funkin.states.MusicBeatState
 		addNoteUI();
 		curRenderedTypeLabels = new FlxTypedGroup<FlxText>();
 		add(curRenderedTypeLabels);
+
+		_noteFlipGroup = new FlxTypedGroup<FlxSprite>();
+		add(_noteFlipGroup); // siempre encima de las notas renderizadas
 		addSettingsUI();
 		// ↑ El tab de Characters fue reemplazado por la fila de iconos encima del grid
 
@@ -2472,19 +2498,55 @@ class ChartingState extends funkin.states.MusicBeatState
 			if (eventsSidebar != null)
 				eventsSidebar.setScrollY(gridScrollY, gridBG.y);
 
-			// ✨ SINCRONIZAR VOCALES cuando haces scroll con la rueda del mouse
+			// ✨ SINCRONIZAR posición de música cuando haces scroll con la rueda (si está pausado).
+			// Esto garantiza que al presionar Space se reproduzca desde donde ves el grid,
+			// no desde donde estaba antes de scrollear.
+			if (FlxG.sound.music != null && !FlxG.sound.music.playing)
+			{
+				var seekMs = _gridScrollToTime(gridScrollY);
+				FlxG.sound.music.time = seekMs;
+			}
 			syncVocals();
 		}
 	}
 
 	function handleMouseInput():Void
 	{
+		var mx = FlxG.mouse.x;
+		var my = FlxG.mouse.y;
+
+		// ── Sustain resize activo: se procesa ANTES del guard de retorno ──────
+		// (si estuviera después del return no se ejecutaría nunca)
+		if (_susResizeActive && _susResizeNote != null)
+		{
+			if (FlxG.mouse.pressed)
+			{
+				var dyPixels = my - _susResizeStartY;
+				var stepsPerSnap = 16.0 / currentSnap;
+				var rawSteps = dyPixels / GRID_SIZE;
+				var snappedSteps = Math.max(0, Math.round(rawSteps / stepsPerSnap) * stepsPerSnap);
+				var newSus = snappedSteps * Conductor.stepCrochet;
+				if (_susResizeNote[2] != newSus)
+				{
+					_susResizeNote[2] = newSus;
+					_notePositionsDirty = true;
+					updateGrid();
+				}
+			}
+			else if (FlxG.mouse.justReleased)
+			{
+				if (_susResizeNote[2] == _susResizeOriginalSus)
+					undoStack.pop();
+				_susResizeNote   = null;
+				_susResizeSection = -1;
+				_susResizeActive  = false;
+			}
+			return; // no procesar ningún otro input mientras se está resizeando
+		}
+
 		// Drag activo (single o multi) o box select: sus propias funciones se encargan
 		if (_dragActive || _multiDragActive || _selBoxActive)
 			return;
-
-		var mx = FlxG.mouse.x;
-		var my = FlxG.mouse.y;
 
 		// ── Bounds check corregido ────────────────────────────────────────────
 		// gridBG.y cambia con el scroll (puede ser negativo), así que NO sirve
@@ -2523,10 +2585,12 @@ class ChartingState extends funkin.states.MusicBeatState
 					}
 					else
 					{
-						// Nota normal → limpiar selección, drag single pending
-						// Guardar si ya estaba seleccionada (para deseleccionar al soltar sin arrastrar)
-						_dragPendingWasSelected = _isSelected(foundNote.note);
-						_clearSelection();
+						// Nota normal → drag single pending.
+						// NO limpiamos la selección aquí; lo haremos al soltar o al iniciar drag.
+						// _dragPendingWasSelected = true si la nota PARECE seleccionada
+						// (está en _selectedNotes O es curSelectedNote — evita el bug de nota
+						// que pulsa pero no está en el array).
+						_dragPendingWasSelected = _isSelected(foundNote.note) || (curSelectedNote == foundNote.note);
 						_dragPending = foundNote.note;
 						_dragPendingSection = foundNote.section;
 						_dragStartX = mx;
@@ -2575,7 +2639,9 @@ class ChartingState extends funkin.states.MusicBeatState
 			var dx = mx - _dragStartX;
 			var dy = my - _dragStartY;
 			if (Math.sqrt(dx * dx + dy * dy) > NOTE_DRAG_THRESHOLD)
+			{
 				_startNoteDrag(_dragPending, _dragPendingSection, mx, my);
+			}
 		}
 		// Single drag pending soltado sin moverse → click normal
 		if (_dragPending != null && !_dragActive && FlxG.mouse.justReleased)
@@ -2588,6 +2654,8 @@ class ChartingState extends funkin.states.MusicBeatState
 			}
 			else
 			{
+				// Click en nota no seleccionada → limpiar selección previa y seleccionar esta
+				_clearSelection();
 				var mouseGridX = mx - gridBG.x;
 				var mouseGridY = my - gridBG.y;
 				var col = Math.floor(mouseGridX / GRID_SIZE);
@@ -2603,23 +2671,72 @@ class ChartingState extends funkin.states.MusicBeatState
 			_dragPendingWasSelected = false;
 		}
 
-		// ── Highlight del cursor ─────────────────────────────────────────────
-		if (mouseOverGrid)
+		// ── Sustain resize activo: actualizar sustain en tiempo real ──────────
+		if (_susResizeActive && _susResizeNote != null)
+		{
+			if (FlxG.mouse.pressed)
+			{
+				// Delta en píxeles → convertir a ms respetando el snap actual
+				var dyPixels = my - _susResizeStartY;
+				var stepsPerSnap = 16.0 / currentSnap; // pasos por subdivisión del snap
+				var rawSteps = dyPixels / GRID_SIZE;    // pasos flotantes
+				// Snap al múltiplo de stepCrochet más cercano (snapeo a la subdivisión)
+				var snappedSteps = Math.max(0, Math.round(rawSteps / stepsPerSnap) * stepsPerSnap);
+				var newSus = snappedSteps * Conductor.stepCrochet;
+				if (_susResizeNote[2] != newSus)
+				{
+					_susResizeNote[2] = newSus;
+					_notePositionsDirty = true;
+					updateGrid();
+				}
+			}
+			else if (FlxG.mouse.justReleased)
+			{
+				// Si el sustain final coincide con el original, descartar el undo
+				if (_susResizeNote[2] == _susResizeOriginalSus)
+					undoStack.pop();
+				_susResizeNote    = null;
+				_susResizeSection = -1;
+				_susResizeActive  = false;
+			}
+		}
+
+		// ── Hover note preview + highlight del cursor ────────────────────────
+		if (mouseOverGrid && !_dragActive && !_susResizeActive && !popupBlocking && !_multiDragActive)
 		{
 			var mouseGridX = mx - gridBG.x;
 			var mouseGridY = my - gridBG.y;
 
-			var gridX = Math.floor(mouseGridX / GRID_SIZE) * GRID_SIZE;
+			var col = Math.floor(mouseGridX / GRID_SIZE);
 			var stepHeight = GRID_SIZE / (currentSnap / 16);
 			var gridY = Math.floor(mouseGridY / stepHeight) * stepHeight;
 
-			highlight.x = gridBG.x + gridX;
+			// Cuadro de highlight sutil de fondo (siempre visible al hacer hover)
+			highlight.x = gridBG.x + col * GRID_SIZE;
 			highlight.y = gridBG.y + gridY;
 			highlight.visible = true;
+
+			// Note preview: mostrar solo en celdas vacías (sin nota existente)
+			if (col >= 0 && col < getGridColumns())
+			{
+				var existingNote = _findNoteAtGrid(mouseGridY, col);
+				if (existingNote == null)
+				{
+					// Celda vacía: mostrar preview semi-transparente de la nota
+					_showGhostNote(col, mouseGridY, 0.42);
+					_hoverNoteCol = col;
+				}
+				else
+				{
+					// Hay nota: ocultar preview
+					_hideAllGhostNotes();
+				}
+			}
 		}
-		else
+		else if (!_dragActive)
 		{
 			highlight.visible = false;
+			_hideAllGhostNotes();
 		}
 
 		// ── Right click: borrar nota ─────────────────────────────────────────
@@ -2679,6 +2796,9 @@ class ChartingState extends funkin.states.MusicBeatState
 		_dragPending = null;
 		_dragPendingSection = -1;
 
+		// Limpiar selección al iniciar el drag (evita highlights fantasma)
+		_clearSelection();
+
 		// Quitar nota del chart (se reinserta en _stopNoteDrag)
 		saveUndoState("delete", {section: section, note: [note[0], note[1], note[2]]});
 		_song.notes[section].sectionNotes.remove(note);
@@ -2692,15 +2812,9 @@ class ChartingState extends funkin.states.MusicBeatState
 		var initCol = dataColToVisualCol(swapped);
 		_dragGhostCol = initCol;
 
-		// Configurar ghost
-		var ghostColor = NOTE_COLORS[initCol % 8];
-		_dragGhost.makeGraphic(GRID_SIZE, GRID_SIZE, ghostColor);
-		_dragGhost.alpha = 0.80;
-		_dragGhost.visible = true;
-		_dragGhostArrow.makeGraphic(GRID_SIZE - 8, GRID_SIZE - 8, 0x88000000);
-		_dragGhostArrow.visible = true;
-
-		_updateGhostPosition(mx, my);
+		// Mostrar Note-ghost en posición inicial
+		var mouseGridY = my - gridBG.y;
+		_showGhostNote(initCol, mouseGridY, 0.78);
 		curSelectedNote = null;
 	}
 
@@ -2713,23 +2827,17 @@ class ChartingState extends funkin.states.MusicBeatState
 		var mx = FlxG.mouse.x;
 		var my = FlxG.mouse.y;
 
-		// Mover ghost a la posición snapeada
-		_updateGhostPosition(mx, my);
-
 		// Columna visual actual bajo el cursor
 		var mouseGridX = mx - gridBG.x;
+		var mouseGridY = my - gridBG.y;
 		var curCol = Math.floor(mouseGridX / GRID_SIZE);
 		var numCols = getGridColumns();
 		curCol = Std.int(Math.max(0, Math.min(numCols - 1, curCol)));
 
-		// Animar color si la columna cambió
+		// Actualizar Note-ghost (cambia dirección si la columna cambió)
 		if (curCol != _dragGhostCol)
-		{
 			_dragGhostCol = curCol;
-			var targetColor = NOTE_COLORS[curCol % 8];
-			FlxTween.cancelTweensOf(_dragGhost);
-			FlxTween.color(_dragGhost, 0.12, _dragGhost.color, targetColor, {ease: FlxEase.quadOut});
-		}
+		_showGhostNote(curCol, mouseGridY, 0.78);
 
 		// Soltar → finalizar drag
 		if (FlxG.mouse.justReleased)
@@ -2746,23 +2854,14 @@ class ChartingState extends funkin.states.MusicBeatState
 		var mouseGridX = mx - gridBG.x;
 		var mouseGridY = my - gridBG.y;
 		var numCols = getGridColumns();
-		var snapSteps = (currentSnap / 16);
-
-		var rawStep = (mouseGridY / GRID_SIZE) + _gridWindowOffset;
-		var snapStep = Math.max(0, Math.floor(rawStep / snapSteps) * snapSteps);
 		var snapCol = Std.int(Math.max(0, Math.min(numCols - 1, Math.floor(mouseGridX / GRID_SIZE))));
-
-		_dragGhost.x = gridBG.x + snapCol * GRID_SIZE;
-		_dragGhost.y = (100 - gridScrollY) + snapStep * GRID_SIZE;
-		_dragGhostArrow.x = _dragGhost.x + 4;
-		_dragGhostArrow.y = _dragGhost.y + 4;
+		_showGhostNote(snapCol, mouseGridY, 0.78);
 	}
 
 	/** Suelta la nota: la inserta en la nueva posición. */
 	function _stopNoteDrag(mx:Float, my:Float):Void
 	{
-		_dragGhost.visible = false;
-		_dragGhostArrow.visible = false;
+		_hideAllGhostNotes();
 
 		var mouseGridX = mx - gridBG.x;
 		var mouseGridY = my - gridBG.y;
@@ -2800,6 +2899,23 @@ class ChartingState extends funkin.states.MusicBeatState
 		if (_dragNote.length > 3 && _dragNote[3] != null)
 			newNote.push(_dragNote[3]);
 
+		// Columna visual original de la nota arrastrada (para la animación)
+		var origDragData:Int = Std.int(_dragNote[1]);
+		var origSwapped = origDragData;
+		if (origDragData < 8 && _song.notes[_dragNoteSection].mustHitSection)
+			origSwapped = (origDragData < 4) ? origDragData + 4 : origDragData - 4;
+		var origVisCol = dataColToVisualCol(origSwapped);
+
+		// ✨ Animar flip si la columna visual cambió
+		if (origVisCol != snapCol)
+		{
+			var srcX  = gridBG.x + origVisCol * GRID_SIZE;
+			var dstX  = gridBG.x + snapCol   * GRID_SIZE;
+			// Calcular Y de la nota desde el snapStep (misma lógica que _showGhostNote)
+			var noteY = (100 - gridScrollY) + snapStep * GRID_SIZE;
+			_spawnNoteFlip(srcX, dstX, noteY, NOTE_COLORS[origVisCol % 8], NOTE_COLORS[snapCol % 8]);
+		}
+
 		saveUndoState("add", {section: targetSection, note: newNote});
 		_song.notes[targetSection].sectionNotes.push(newNote);
 		curSelectedNote = newNote;
@@ -2814,11 +2930,104 @@ class ChartingState extends funkin.states.MusicBeatState
 		showMessage('✔ Nota movida', ACCENT_GREEN);
 	}
 
+	/**
+	 * Lanza una animación de "card-flip" entre dos columnas del grid.
+	 *
+	 * Fase 1 (squeeze):  el sprite viaja de srcX a dstX mientras scaleX va de 1→0
+	 *                    y rota 90° — como una carta girando de canto.
+	 * Fase 2 (expand):   en el lado opuesto el sprite abre scaleX de 0→1 con el
+	 *                    nuevo color y una leve vibración de escala.
+	 * Fase 3 (fade-out): el sprite se desvanece suavemente.
+	 *
+	 * Todo ocurre en ~0.45 s y no bloquea el hilo principal.
+	 */
+	function _spawnNoteFlip(srcX:Float, dstX:Float, noteY:Float, srcColor:Int, dstColor:Int):Void
+	{
+		if (_noteFlipGroup == null) return;
+
+		// ── Crear sprite base ───────────────────────────────────────────────
+		var s = new FlxSprite(srcX, noteY);
+		s.makeGraphic(GRID_SIZE, GRID_SIZE, srcColor);
+		s.scrollFactor.set(0, 0);
+		s.cameras = [camGame];
+		// Punto de origen centrado para que el flip gire alrededor del centro
+		s.origin.set(GRID_SIZE * 0.5, GRID_SIZE * 0.5);
+		_noteFlipGroup.add(s);
+
+		// ── Añadir brillo interior (overlay blanco semitransparente) ────────
+		var glow = new FlxSprite(srcX + 4, noteY + 4);
+		glow.makeGraphic(GRID_SIZE - 8, GRID_SIZE - 8, 0x55FFFFFF);
+		glow.scrollFactor.set(0, 0);
+		glow.cameras = [camGame];
+		_noteFlipGroup.add(glow);
+
+		final HALF  = 0.13; // segundos para la primera mitad (squeeze)
+		final HALF2 = 0.13; // segundos para la segunda mitad (expand)
+		final FADE  = 0.16; // segundos para fade-out final
+
+		// ── FASE 1: squeeze hacia el centro + viaje lateral ─────────────────
+		// NOTE: FlxSprite no expone scaleX/scaleY como propiedades directas.
+		// Se usan FlxTween.num() paralelos para animar scale.x / scale.y.
+		FlxTween.tween(s, {x: dstX, angle: 15}, HALF, {
+			ease: FlxEase.quadIn,
+			onComplete: function(_)
+			{
+				// ── Cambio de cara en el punto de inflexión ──────────────────
+				s.color   = dstColor;
+				s.angle   = -15;
+				s.scale.x = 0.0;
+				s.makeGraphic(GRID_SIZE, GRID_SIZE, dstColor);
+
+				// ── FASE 2: expand con overshoot + glow ─────────────────────
+				FlxTween.num(0.0, 1.1, HALF2 * 0.6, {ease: FlxEase.quadOut,
+					onComplete: function(_)
+					{
+						FlxTween.num(1.1, 1.0, HALF2 * 0.4, {ease: FlxEase.quadInOut,
+							onComplete: function(_)
+							{
+								// ── FASE 3: fade-out ─────────────────────────
+								FlxTween.tween(s,    {alpha: 0.0}, FADE, {ease: FlxEase.quadIn,
+									onComplete: function(_) { _noteFlipGroup.remove(s, true); }});
+								FlxTween.tween(glow, {alpha: 0.0}, FADE, {ease: FlxEase.quadIn,
+									onComplete: function(_) { _noteFlipGroup.remove(glow, true); }});
+							}
+						}, function(v) { s.scale.x = v; });
+					}
+				}, function(v) { s.scale.x = v; });
+				FlxTween.tween(s, {angle: 0}, HALF2 * 0.6, {ease: FlxEase.quadOut});
+
+				// Glow viaja con el sprite
+				FlxTween.tween(glow, {x: dstX + 4, alpha: 0.7}, HALF2, {ease: FlxEase.quadOut});
+			}
+		});
+		// Scale squeeze paralelo a la posición (fase 1)
+		FlxTween.num(1.0, 0.0, HALF, {ease: FlxEase.quadIn}, function(v) { s.scale.x = v; });
+
+		// El glow también viaja durante la fase 1
+		FlxTween.tween(glow, {x: dstX + 4}, HALF, {ease: FlxEase.quadIn});
+		FlxTween.num(1.0, 0.0, HALF, {ease: FlxEase.quadIn}, function(v) { glow.scale.x = v; });
+
+		// ── Partícula de "chispa" en el origen ──────────────────────────────
+		var spark = new FlxSprite(srcX + GRID_SIZE * 0.5 - 4, noteY + GRID_SIZE * 0.5 - 4);
+		spark.makeGraphic(8, 8, srcColor);
+		spark.scrollFactor.set(0, 0);
+		spark.cameras = [camGame];
+		_noteFlipGroup.add(spark);
+
+		FlxTween.tween(spark, {x: srcX - 6, y: noteY - 10, alpha: 0}, HALF + HALF2, {
+			ease: FlxEase.quadOut,
+			onComplete: function(_) { _noteFlipGroup.remove(spark, true); }
+		});
+		FlxTween.num(1.0, 0.3, HALF + HALF2, {ease: FlxEase.quadOut}, function(v) {
+			spark.scale.x = v;
+			spark.scale.y = v;
+		});
+	}
+
 	/** Cancela el drag con ESC: devuelve la nota a su sección original. */
 	function _cancelNoteDrag():Void
 	{
-		_dragGhost.visible = false;
-		_dragGhostArrow.visible = false;
+		_hideAllGhostNotes();
 
 		if (_dragNote != null && _dragNoteSection >= 0)
 		{
@@ -3725,10 +3934,12 @@ class ChartingState extends funkin.states.MusicBeatState
 			}
 			else if (FlxG.sound.music != null)
 			{
-				FlxG.sound.music.time = getSectionStartTime(curSection);
+				// Reproducir desde la posición actual del grid/scroll, no desde el inicio de sección.
+				// music.time ya fue sincronizado con el scroll (por rueda o por teclas W/S/A/D),
+				// así que simplemente hacemos play() sin resetear el tiempo.
 				FlxG.sound.music.play();
 				syncVocals();
-				showMessage('▶ Playing from Section ${curSection + 1}', ACCENT_CYAN);
+				showMessage('▶ Playing from ${formatTime(FlxG.sound.music.time / 1000)}', ACCENT_CYAN);
 			}
 		}
 
@@ -3842,21 +4053,58 @@ class ChartingState extends funkin.states.MusicBeatState
 		if (FlxG.keys.justPressed.N)
 			mirrorSection();
 
-		// SNAP CHANGE
-		if (FlxG.keys.justPressed.Q)
-		{
-			currentSnap -= 16;
-			if (currentSnap < 16)
-				currentSnap = 64;
-			showMessage('⚙️ Snap: ${getSnapName(currentSnap)}', ACCENT_CYAN);
-		}
+		// Q / E — sustain resize si hay nota(s) seleccionada(s).
+		// Shift+Q / Shift+E — cambiar snap (siempre disponible).
+		var _shift = FlxG.keys.pressed.SHIFT;
 
 		if (FlxG.keys.justPressed.E)
 		{
-			currentSnap += 16;
-			if (currentSnap > 64)
-				currentSnap = 16;
-			showMessage('⚙️ Snap: ${getSnapName(currentSnap)}', ACCENT_CYAN);
+			if (!_shift && (curSelectedNote != null || _selectedNotes.length > 0))
+			{
+				var step:Float = Conductor.stepCrochet * (16.0 / currentSnap);
+				var targets:Array<Array<Dynamic>> = [];
+				if (_selectedNotes.length > 0)
+					for (sel in _selectedNotes) targets.push(sel.note);
+				else if (curSelectedNote != null)
+					targets.push(curSelectedNote);
+				saveUndoState("sustain_resize", null);
+				for (n in targets)
+					n[2] = ((n[2] != null) ? n[2] : 0.0) + step;
+				updateGrid();
+				var plural = targets.length > 1 ? '${targets.length} notas' : '1 nota';
+				showMessage('\u2195 Sustain +1 subdiv ($plural)', ACCENT_CYAN);
+			}
+			else if (_shift)
+			{
+				currentSnap -= 16;
+				if (currentSnap < 16) currentSnap = 64;
+				showMessage('\u2699\uFE0F Snap: ${getSnapName(currentSnap)}', ACCENT_CYAN);
+			}
+		}
+
+		if (FlxG.keys.justPressed.Q)
+		{
+			if (!_shift && (curSelectedNote != null || _selectedNotes.length > 0))
+			{
+				var step:Float = Conductor.stepCrochet * (16.0 / currentSnap);
+				var targets:Array<Array<Dynamic>> = [];
+				if (_selectedNotes.length > 0)
+					for (sel in _selectedNotes) targets.push(sel.note);
+				else if (curSelectedNote != null)
+					targets.push(curSelectedNote);
+				saveUndoState("sustain_resize", null);
+				for (n in targets)
+					n[2] = Math.max(0, ((n[2] != null) ? n[2] : 0.0) - step);
+				updateGrid();
+				var plural = targets.length > 1 ? '${targets.length} notas' : '1 nota';
+				showMessage('\u2195 Sustain -1 subdiv ($plural)', ACCENT_CYAN);
+			}
+			else if (_shift)
+			{
+				currentSnap += 16;
+				if (currentSnap > 64) currentSnap = 16;
+				showMessage('\u2699\uFE0F Snap: ${getSnapName(currentSnap)}', ACCENT_CYAN);
+			}
 		}
 
 		// TOGGLE HITSOUNDS
@@ -4057,14 +4305,36 @@ class ChartingState extends funkin.states.MusicBeatState
 		_notePositionsDirty = true;
 		_susHeightCache = new Map();
 
+		// Destruir sprites anteriores antes de vaciar los grupos para evitar memory leaks.
+		// .clear() sólo vacía el array — sin destroy() los Note quedan en heap sin GC.
+		for (n in curRenderedNotes)
+			if (n != null) n.destroy();
 		curRenderedNotes.clear();
+
+		for (s in curRenderedSustains)
+			if (s != null) s.destroy();
 		curRenderedSustains.clear();
+
 		if (_curSusTails != null)
+		{
+			for (t in _curSusTails)
+				if (t != null) t.destroy();
 			_curSusTails.clear();
+		}
+
 		if (_selHighlights != null)
+		{
+			for (h in _selHighlights)
+				if (h != null) h.destroy();
 			_selHighlights.clear();
+		}
+
 		if (curRenderedTypeLabels != null)
+		{
+			for (lbl in curRenderedTypeLabels)
+				if (lbl != null) lbl.destroy();
 			curRenderedTypeLabels.clear();
+		}
 		_prvDirty = true; // chart ha cambiado → redibujar preview
 
 		var currentStep:Float = 0;
@@ -4108,18 +4378,34 @@ class ChartingState extends funkin.states.MusicBeatState
 				// Color base — note.color sobre un gráfico blanco funciona correctamente
 				var baseColor = NOTE_COLORS[visualColumn % 8];
 
+				// FIX noteRGB: si la nota tiene un shader activo (colorAuto / colorDirections /
+				// NoteRGBPaletteShader) NO aplicar el tint de NOTE_COLORS encima — el shader
+				// ya provee el color correcto y multiplicarlo distorsiona el resultado.
+				var hasShader:Bool = (note.shader != null);
+
 				// ✨ Aplicar efecto pulsante si es la nota seleccionada
 				if (curSelectedNote != null && noteData == curSelectedNote)
 				{
 					var pulseAmount = 0.4 + (Math.sin(selectedNotePulse) * 0.5 + 0.5) * 0.6;
-					var r = Std.int((baseColor >> 16 & 0xFF) * pulseAmount);
-					var g = Std.int((baseColor >> 8 & 0xFF) * pulseAmount);
-					var b = Std.int((baseColor & 0xFF) * pulseAmount);
-					note.color = (0xFF << 24) | (r << 16) | (g << 8) | b;
+					if (hasShader)
+					{
+						// Con shader: pulso de alpha para no interferir con el RGB del shader
+						note.color = 0xFFFFFFFF;
+						note.alpha  = pulseAmount;
+					}
+					else
+					{
+						var r = Std.int((baseColor >> 16 & 0xFF) * pulseAmount);
+						var g = Std.int((baseColor >> 8 & 0xFF) * pulseAmount);
+						var b = Std.int((baseColor & 0xFF) * pulseAmount);
+						note.color = (0xFF << 24) | (r << 16) | (g << 8) | b;
+						note.alpha  = 1.0;
+					}
 				}
 				else
 				{
-					note.color = baseColor;
+					note.alpha = 1.0;
+					note.color = hasShader ? 0xFFFFFFFF : baseColor;
 				}
 
 				note.scrollFactor.set();
@@ -4160,32 +4446,34 @@ class ChartingState extends funkin.states.MusicBeatState
 
 					PlayState.SONG = _prevSong;
 
-					// Escalar body al alto del grid (override del scale de gameplay)
+					// Sustain fino: 28% del ancho de celda, arranca desde el centro de la nota.
+					var SUS_W:Float = GRID_SIZE * 0.28;
+					var susStartY:Float = note.y + GRID_SIZE * 0.5;
+
 					if (_susBody.frameHeight > 0)
 					{
 						_susBody.scale.y = susHeight / _susBody.frameHeight;
 						if (_susBody.frameWidth > 0)
-							_susBody.scale.x = (GRID_SIZE * 0.55) / _susBody.frameWidth;
+							_susBody.scale.x = SUS_W / _susBody.frameWidth;
 						_susBody.updateHitbox();
 						_susBody.offset.x += _susBody.noteOffsetX;
 						_susBody.offset.y += _susBody.noteOffsetY;
 					}
-					_susBody.x = note.x + (GRID_SIZE - _susBody.width) / 2 + 27;
-					_susBody.y = note.y + GRID_SIZE;
+					_susBody.x = note.x + (GRID_SIZE - _susBody.width) / 2;
+					_susBody.y = susStartY;
 					_susBody.scrollFactor.set();
 					_susBody.cameras = [camGame];
 					curRenderedSustains.add(_susBody);
 
-					// Escalar tail (holdend) en ancho para que quepa en la columna
 					if (_susTail.frameWidth > 0)
 					{
-						_susTail.scale.x = (GRID_SIZE * 0.55) / _susTail.frameWidth;
+						_susTail.scale.x = SUS_W / _susTail.frameWidth;
 						_susTail.updateHitbox();
 						_susTail.offset.x += _susTail.noteOffsetX;
 						_susTail.offset.y += _susTail.noteOffsetY;
 					}
-					_susTail.x = note.x + (GRID_SIZE - _susTail.width) / 2 + 27;
-					_susTail.y = note.y + GRID_SIZE + susHeight;
+					_susTail.x = note.x + (GRID_SIZE - _susTail.width) / 2;
+					_susTail.y = susStartY + susHeight;
 					_susTail.scrollFactor.set();
 					_susTail.cameras = [camGame];
 					_curSusTails.add(_susTail);
@@ -4235,12 +4523,13 @@ class ChartingState extends funkin.states.MusicBeatState
 		_notePositionsDirty = false;
 		_lastGridY = gridBG.y;
 
-		// BUGFIX: limpiar highlights ANTES de reconstruirlos.
-		// Sin este clear, cada llamada a updateNotePositions() (que ocurre cada frame)
-		// acumula nuevos FlxSprite en _selHighlights sin eliminar los anteriores,
-		// dejando los amarillos permanentemente aunque la selección ya no exista.
+		// Devolver highlights al pool antes de reconstruir (evita destroy + realloc).
 		if (_selHighlights != null)
+		{
+			for (h in _selHighlights)
+				if (h != null) _hlPool.push(h);
 			_selHighlights.clear();
+		}
 
 		var currentStep:Float = 0;
 		var noteIndex = 0;
@@ -4285,27 +4574,56 @@ class ChartingState extends funkin.states.MusicBeatState
 
 				// Efecto visual: color normal siempre. El highlight se hace con _selHighlights.
 				var baseColor = NOTE_COLORS[visualColumn % 8];
+				// FIX noteRGB: si la nota tiene shader activo, no aplicar tint de NOTE_COLORS.
+				var hasShader:Bool = (note.shader != null);
 				if (curSelectedNote != null && noteData == curSelectedNote)
 				{
 					// Nota primaria seleccionada: pulso de brillo
 					var pulseAmount = 0.4 + (Math.sin(selectedNotePulse) * 0.5 + 0.5) * 0.6;
-					var r = Std.int((baseColor >> 16 & 0xFF) * pulseAmount);
-					var g = Std.int((baseColor >> 8 & 0xFF) * pulseAmount);
-					var b = Std.int((baseColor & 0xFF) * pulseAmount);
-					note.color = (0xFF << 24) | (r << 16) | (g << 8) | b;
+					if (hasShader)
+					{
+						note.color = 0xFFFFFFFF;
+						note.alpha  = pulseAmount;
+					}
+					else
+					{
+						var r = Std.int((baseColor >> 16 & 0xFF) * pulseAmount);
+						var g = Std.int((baseColor >> 8 & 0xFF) * pulseAmount);
+						var b = Std.int((baseColor & 0xFF) * pulseAmount);
+						note.color = (0xFF << 24) | (r << 16) | (g << 8) | b;
+						note.alpha  = 1.0;
+					}
 				}
 				else
 				{
-					note.color = baseColor;
+					note.alpha = 1.0;
+					note.color = hasShader ? 0xFFFFFFFF : baseColor;
 				}
 
-				// Rectángulo amarillo detrás de notas seleccionadas (visible independientemente del skin)
+				// Rectángulo amarillo detrás de notas seleccionadas.
+				// FIX: se reutilizan sprites del pool _hlPool para evitar makeGraphic()
+				// (nueva BitmapData en heap) en cada frame por cada nota seleccionada.
 				if (_selHighlights != null && (_isSelected(noteData) || (curSelectedNote != null && noteData == curSelectedNote)))
 				{
-					var hl = new FlxSprite(note.x, note.y);
-					hl.makeGraphic(GRID_SIZE, GRID_SIZE, noteData == curSelectedNote ? 0xCCFFFFFF : 0x99FFEE00);
-					hl.scrollFactor.set();
-					hl.cameras = [camGame];
+					var hlColor = (noteData == curSelectedNote) ? 0xCCFFFFFF : 0x99FFEE00;
+					var hl:FlxSprite;
+					if (_hlPool.length > 0)
+					{
+						hl = _hlPool.pop();
+						// Solo redibujar si el color cambió (evita BitmapData innecesaria)
+						if (hl.color != hlColor)
+							hl.makeGraphic(GRID_SIZE, GRID_SIZE, hlColor);
+					}
+					else
+					{
+						hl = new FlxSprite();
+						hl.makeGraphic(GRID_SIZE, GRID_SIZE, hlColor);
+						hl.scrollFactor.set();
+						hl.cameras = [camGame];
+					}
+					hl.x = note.x;
+					hl.y = note.y;
+					hl.visible = true;
 					_selHighlights.add(hl);
 				}
 
@@ -4334,14 +4652,16 @@ class ChartingState extends funkin.states.MusicBeatState
 							}
 							_susHeightCache.set(susIndex, susHeight);
 						}
-						// Actualizar posición (cambia con el scroll)
-						sus.x = note.x + (GRID_SIZE - sus.width) / 2 + 27;
-						sus.y = note.y + GRID_SIZE;
+						// Posición: misma lógica que updateGrid (centro de nota, ancho fino)
+						var susStartY:Float = note.y + GRID_SIZE * 0.5;
+						sus.x = note.x + (GRID_SIZE - sus.width) / 2;
+						sus.y = susStartY;
 					}
 					if (tail != null)
 					{
-						tail.x = note.x + (GRID_SIZE - tail.width) / 2 + 27;
-						tail.y = note.y + GRID_SIZE + susHeight;
+						var susStartY:Float = note.y + GRID_SIZE * 0.5;
+						tail.x = note.x + (GRID_SIZE - tail.width) / 2;
+						tail.y = susStartY + susHeight;
 					}
 					susIndex++;
 				}
@@ -4355,23 +4675,32 @@ class ChartingState extends funkin.states.MusicBeatState
 
 	function cullNotes():Void
 	{
-		// Mostrar notas que están cerca de la pantalla visible
 		var minY = 0;
 		var maxY = FlxG.height;
+		var margin = 200;
 
 		for (note in curRenderedNotes)
 		{
-			if (note == null)
-				continue;
-			// Mostrar si está en la ventana visible (con margen generoso)
-			note.visible = (note.y >= minY - 200 && note.y <= maxY + 200);
+			if (note == null) continue;
+			note.visible = (note.y + note.height >= minY - margin && note.y <= maxY + margin);
 		}
 
+		// FIX: usar note.y + note.height para sustains altos que empiezan fuera
+		// pero llegan a la pantalla (body puede ser muy alto).
 		for (sus in curRenderedSustains)
 		{
-			if (sus == null)
-				continue;
-			sus.visible = (sus.y >= minY - 200 && sus.y <= maxY + 200);
+			if (sus == null) continue;
+			sus.visible = (sus.y + sus.height >= minY - margin && sus.y <= maxY + margin);
+		}
+
+		// FIX: _curSusTails no se culleaba nunca — misma lógica que sustain body.
+		if (_curSusTails != null)
+		{
+			for (tail in _curSusTails)
+			{
+				if (tail == null) continue;
+				tail.visible = (tail.y + tail.height >= minY - margin && tail.y <= maxY + margin);
+			}
 		}
 	}
 
@@ -4577,9 +4906,16 @@ class ChartingState extends funkin.states.MusicBeatState
 		if (undoStack.length >= MAX_UNDO_STEPS)
 			undoStack.shift();
 
+		// BUG FIX: usar data.section si está disponible.
+		// Antes siempre se guardaba curSection, por lo que notas añadidas/borradas en
+		// secciones distintas a la visible se restauraban en la sección equivocada al deshacer.
+		var sec:Int = (data != null && Reflect.hasField(data, 'section') && data.section != null)
+			? Std.int(data.section)
+			: curSection;
+
 		undoStack.push({
 			type: actionType,
-			section: curSection,
+			section: sec,
 			data: data
 		});
 
@@ -5225,6 +5561,8 @@ class ChartingState extends funkin.states.MusicBeatState
 		// ── Object pools ──────────────────────────────────────────────────
 		_notePool = [];
 		_susPool = [];
+		for (h in _hlPool) if (h != null) h.destroy();
+		_hlPool = [];
 
 		// ── Notes groups ──────────────────────────────────────────────────
 		if (curRenderedNotes != null)
@@ -5443,6 +5781,61 @@ class ChartingState extends funkin.states.MusicBeatState
 		gridBlackWhite.y = gridBG.y;
 		strumLine.y = 100;
 		// Strums fijos en y=100 (camHUD — no necesitan reposicionarse con el scroll)
+	}
+
+	/**
+	 * Muestra la Note-ghost en la columna y posición world indicadas.
+	 * alpha: 0.75 para drag, 0.45 para hover preview.
+	 */
+	function _showGhostNote(visualCol:Int, worldY:Float, alpha:Float):Void
+	{
+		var dir = visualCol % 4;
+		var stepHeight = GRID_SIZE / (currentSnap / 16);
+		var snapLocalY = Math.floor(worldY / stepHeight) * stepHeight;
+		var screenY = gridBG.y + snapLocalY;
+
+		for (i in 0...4)
+		{
+			var gn = _ghostNotes[i];
+			if (gn == null) continue;
+			if (i == dir)
+			{
+				gn.x = gridBG.x + visualCol * GRID_SIZE;
+				gn.y = screenY;
+				gn.alpha = alpha;
+				gn.color = NOTE_COLORS[visualCol % 8];
+				gn.visible = true;
+			}
+			else
+			{
+				gn.visible = false;
+			}
+		}
+	}
+
+	/** Oculta todos los ghost Notes (drag y hover). */
+	function _hideAllGhostNotes():Void
+	{
+		for (gn in _ghostNotes)
+			if (gn != null) gn.visible = false;
+		_hoverNoteCol = -1;
+	}
+
+	function _gridScrollToTime(scrollY:Float):Float
+	{
+		var accumulatedSteps:Float = 0;
+		for (i in 0..._song.notes.length)
+		{
+			var sectionHeight:Float = _song.notes[i].lengthInSteps * GRID_SIZE;
+			if (scrollY < accumulatedSteps + sectionHeight)
+			{
+				var progressInSection = (scrollY - accumulatedSteps) / sectionHeight;
+				return getSectionStartTime(i) + progressInSection * getSectionDuration(i);
+			}
+			accumulatedSteps += sectionHeight;
+		}
+		// Pasó del final → devolver tiempo del último frame
+		return getSectionStartTime(_song.notes.length - 1) + getSectionDuration(_song.notes.length - 1);
 	}
 
 	function clamp(value:Float, min:Float, max:Float):Float

@@ -76,6 +76,12 @@ class StrumNote extends FlxSprite
 	/** Shader RGB por paleta (colorAuto + colorDirections). Mismo enfoque que NightmareVision. Mutex con _colorSwapShader. */
 	private var _rgbShader:funkin.shaders.NoteRGBPaletteShader = null;
 
+	/** Cuando true, el shader RGB se desactiva en la animación "static" (strum en reposo). */
+	private var _noStaticRGB:Bool = false;
+
+	/** Referencia al shader activo (guardada para restaurarlo al salir de "static"). */
+	private var _activeShader:flixel.system.FlxAssets.FlxShader = null;
+
 	public function new(x:Float, y:Float, noteID:Int = 0)
 	{
 		super(x, y);
@@ -218,31 +224,35 @@ class StrumNote extends FlxSprite
 	 * Aplica el shader correcto al strum según la skin activa.
 	 *
 	 * Prioridad (mismo orden que Note.hx para consistencia visual):
-	 *   1. colorAuto + colorDirections → NoteRGBPaletteShader (enfoque NightmareVision)
-	 *   2. colorAuto + colorHSV        → NoteColorSwapShader  (HSV shift, fallback)
-	 *   3. sin colorAuto               → sin shader
+	 *   1. colorAuto + colorDirections/colorPalette → NoteRGBPaletteShader (enfoque NightmareVision)
+	 *   2. colorAuto + colorHSV                     → NoteColorSwapShader  (HSV shift, fallback)
+	 *   3. sin colorAuto                            → sin shader
 	 */
 	function _applyShaderForSkin(skinData:NoteSkinSystem.NoteSkinData):Void
 	{
+		// Leer noStaticRGB desde la skin
+		_noStaticRGB = (skinData != null && skinData.noStaticRGB == true);
+
 		if (skinData != null && skinData.colorAuto == true)
 		{
 			final dir = noteID % 4;
 
-			// PRIORIDAD 1: colorDirections → RGB palette shader (igual que NightmareVision).
-			// Reemplaza canales R/G/B de la textura con colores reales por dirección.
-			if (skinData.colorDirections != null && dir < skinData.colorDirections.length)
+			// PRIORIDAD 1: colorDirections / colorPalette → RGB palette shader.
+			// getColorDirectionEntry resuelve ambos formatos (float arrays y hex strings).
+			final cd = NoteSkinSystem.getColorDirectionEntry(skinData, dir);
+			if (cd != null)
 			{
-				final cd = skinData.colorDirections[dir];
 				// GC FIX: reutilizar shader entre recargas de skin.
 				if (_rgbShader == null)
 					_rgbShader = new funkin.shaders.NoteRGBPaletteShader();
 				_rgbShader.setColors(cd.r, cd.g, cd.b);
 				_colorSwapShader = null;
-				shader = _rgbShader;
+				_activeShader = _rgbShader;
+				shader = _noStaticRGB ? null : _rgbShader;
 				return;
 			}
 
-			// PRIORIDAD 2: colorHSV → HSV shift (fallback cuando no hay colorDirections).
+			// PRIORIDAD 2: colorHSV → HSV shift (fallback cuando no hay paleta).
 			final mult = (skinData.colorMult != null) ? skinData.colorMult : 1.0;
 			if (_colorSwapShader == null)
 				_colorSwapShader = new funkin.shaders.NoteColorSwapShader(dir, mult, null);
@@ -252,12 +262,14 @@ class StrumNote extends FlxSprite
 				_colorSwapShader.intensity = mult;
 			}
 			_rgbShader = null;
-			shader = _colorSwapShader;
+			_activeShader = _colorSwapShader;
+			shader = _noStaticRGB ? null : _colorSwapShader;
 		}
 		else
 		{
 			_colorSwapShader = null;
 			_rgbShader = null;
+			_activeShader = null;
 			shader = null;
 		}
 	}
@@ -293,6 +305,10 @@ class StrumNote extends FlxSprite
 
 		animation.play(animName, force);
 		centerOffsets();
+
+		// noStaticRGB: ocultar shader en "static", restaurarlo en "pressed"/"confirm"
+		if (_noStaticRGB)
+			shader = (animName == 'static') ? null : _activeShader;
 
 		// ── animList: offsets + flipX al estilo personaje ─────────────────
 		if (_animListData != null)

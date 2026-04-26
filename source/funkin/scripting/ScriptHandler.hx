@@ -1328,11 +1328,12 @@ class ScriptHandler
 	//   1. _processConditionals  — #if / #elseif / #else / #end  (NEW)
 	//   2. _packageReg           — strip `package foo.bar;`
 	//   3. _usingReg             — strip `using foo.Bar;`
-	//   4. _importReg            — resolve `import a.b.C;` into interp variables
+	//   4. _importReg            — resolve `import a.b.C;` and `import a.b.*;` into interp variables
 	//
 	// FIX: declarar las EReg como static final para compilar el patrón una sola vez.
 	#if HSCRIPT_ALLOWED
-	static final _importReg :EReg = ~/^[ \t]*import\s+([\w.]+)(?:\s+as\s+(\w+))?\s*;/gm;
+	// Matches both `import a.b.C;` and `import a.b.*;` (with optional `as alias`)
+	static final _importReg :EReg = ~/^[ \t]*import\s+([\w.*]+)(?:\s+as\s+(\w+))?\s*;/gm;
 	static final _packageReg:EReg = ~/^[ \t]*package\s+[\w.]*\s*;/gm;
 	static final _usingReg  :EReg = ~/^[ \t]*using\s+([\w.]+)\s*;/gm;
 
@@ -1342,6 +1343,80 @@ class ScriptHandler
 	static final _condElseReg  :EReg = ~/^[ \t]*#else\b/;
 	static final _condEndReg   :EReg = ~/^[ \t]*#end\b/;
 	#end
+
+	// ── Wildcard import registry ──────────────────────────────────────────────
+	//
+	// Populated once by ScriptAPI.expose() → ScriptHandler.buildRegistryFromInterp().
+	// Maps full class name (e.g. "flixel.FlxSprite") → the class object.
+	// A parallel map stores the short name used in scripts (e.g. "FlxSprite").
+	//
+	// This allows `import flixel.*;` to inject every known flixel class at once.
+
+	/** full class name → class object (populated lazily from interp variables). */
+	static var _classRegistry  : Map<String, Dynamic> = new Map();
+
+	/** full class name → short script name (e.g. "flixel.FlxSprite" → "FlxSprite"). */
+	static var _classShortNames: Map<String, String>  = new Map();
+
+	/** Set to true once the registry has been seeded to avoid redundant scans. */
+	static var _registryBuilt  : Bool = false;
+
+	/**
+	 * Scans all variables currently in `interp` and registers any that are
+	 * real Haxe classes (i.e. `Type.getClassName` returns a non-null string).
+	 *
+	 * Call this ONCE at the end of `ScriptAPI.expose()` so that wildcard
+	 * imports (`import flixel.*;`) can later resolve from the registry.
+	 *
+	 * Re-calling after the first build is a no-op: the flag `_registryBuilt`
+	 * gates the scan so it only runs once per game session.
+	 */
+	public static function buildRegistryFromInterp(interp:Interp):Void
+	{
+		if (_registryBuilt) return;
+		_registryBuilt = true;
+
+		for (shortName => value in interp.variables)
+		{
+			if (value == null) continue;
+			var fullName:String = null;
+			try { fullName = Type.getClassName(value); } catch (_:Dynamic) {}
+			if (fullName == null || fullName == '') continue;
+
+			if (!_classRegistry.exists(fullName))
+			{
+				_classRegistry.set(fullName, value);
+				_classShortNames.set(fullName, shortName);
+			}
+		}
+		trace('[ScriptHandler] wildcard registry built — ${Lambda.count(_classRegistry)} classes indexed');
+	}
+
+	/**
+	 * Injects all classes whose full name starts with `pkg.` into `interp`.
+	 * Called internally when processing `import foo.bar.*;`.
+	 */
+	static function _resolveWildcardImport(pkg:String, interp:Interp):Void
+	{
+		final prefix = pkg + '.';
+		var found = 0;
+		for (fullName => cls in _classRegistry)
+		{
+			if (!StringTools.startsWith(fullName, prefix)) continue;
+			var shortName = _classShortNames.get(fullName);
+			if (shortName == null) shortName = fullName.split('.').pop();
+			// Never overwrite a pre-existing proxy (same rule as regular imports)
+			if (!interp.variables.exists(shortName))
+			{
+				interp.variables.set(shortName, cls);
+				found++;
+			}
+		}
+		if (found > 0)
+			trace('[ScriptHandler] import $pkg.* → $found classes injected');
+		else
+			trace('[ScriptHandler] import $pkg.* → no classes found (package not in registry)');
+	}
 
 	// ── Runtime defines ───────────────────────────────────────────────────────
 
@@ -1605,14 +1680,26 @@ class ScriptHandler
 			return '// [using] ${r.matched(1)}';
 		});
 
-		// ── Step 4: resolve `import a.b.C;` ──────────────────────────────────
+		// ── Step 4: resolve `import a.b.C;` and `import a.b.*;` ─────────────
 		// Each import is resolved via Type.resolveClass / Type.resolveEnum and
 		// injected into interp.variables under the short name (or alias).
+		// Wildcard imports (`import a.b.*;`) inject all indexed classes whose
+		// full name starts with the given package prefix.
 		// The import line is replaced with a comment so hscript doesn't see it.
 		return _importReg.map(result, function(r:EReg):String
 		{
 			final fullName  = r.matched(1);
 			final alias     = r.matched(2);
+
+			// ── Wildcard: `import a.b.*;` ─────────────────────────────────
+			if (StringTools.endsWith(fullName, '.*'))
+			{
+				final pkg = fullName.substr(0, fullName.length - 2);
+				_resolveWildcardImport(pkg, interp);
+				return '// [import] $fullName';
+			}
+
+			// ── Regular import: `import a.b.C;` (optionally `as alias`) ──
 			final shortName = (alias != null && alias != '') ? alias : fullName.split('.').pop();
 
 			// If ScriptAPI.expose() already registered a hand-crafted proxy for

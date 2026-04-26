@@ -97,6 +97,28 @@ class CharacterSelectorState extends MusicBeatState
 	private var delHint:FlxText;
 	private var pendingDelete:String = null;
 
+	// ── Deferred wizard transitions ───────────────────────────────────────────
+	//
+	// CoolInputText fires onEnterPressed / onEscapePressed via a native OpenFL
+	// KeyboardEvent listener.  That event runs synchronously inside (or just
+	// before) the Flixel update loop, which means FlxG.keys.justPressed can
+	// ALSO be true for the same key on the same frame — even after
+	// FlxG.keys.reset() — because FlxKeyboard.update() re-detects a key that
+	// is still physically held.
+	//
+	// Consequence without this fix:
+	//   • Enter in step 1 → confirmName() sets wizardStep=2, then the step-2
+	//     code sees justPressed.ENTER and calls finishWizard() immediately.
+	//   • Escape in step 1 → closeWizard() sets wizardStep=0, then
+	//     controls.BACK sees the Escape key and switches to MainMenuState.
+	//
+	// Fix: callbacks set a one-frame flag instead of calling the transition
+	// directly.  The flags are consumed at the very top of update(), before
+	// any key checks, and a `return` prevents the rest of update() from
+	// running that frame.
+	private var _step2Pending:Bool    = false;  // step 1 → 2 (Enter confirmed)
+	private var _wizClosePending:Bool = false;  // wizard close (Escape pressed)
+
 	// ── Constantes ────────────────────────────────────────────────────────────
 	static inline var PW:Int = 520;       // panel width
 	static inline var DAD_PATH:String = "DADDY_DEAREST";
@@ -391,7 +413,11 @@ class CharacterSelectorState extends MusicBeatState
 		// Handle ENTER/ESC via native callbacks (FlxG.keys is disabled while the
 		// native TextField has focus; _onFocusIn sets keys.enabled = false).
 		nameInput.onEnterPressed  = function() { confirmName(); };
-		nameInput.onEscapePressed = function() { closeWizard(); };
+		// FIX: set flag instead of calling closeWizard() directly.  The native
+		// KeyboardEvent fires before (or during) FlxG.keys.update(), so calling
+		// closeWizard() here sets wizardStep=0 and re-enables FlxG.keys, which
+		// lets controls.BACK fire on the same frame and switch to MainMenuState.
+		nameInput.onEscapePressed = function() { _wizClosePending = true; };
 		// Auto re-focus if the user clicks outside the input while still on step 1.
 		nameInput.onFocusLost = function() { if (wizardStep == 1) nameInput.hasFocus = true; };
 
@@ -473,7 +499,12 @@ class CharacterSelectorState extends MusicBeatState
 
 		wizardCharName = name;
 		FlxG.sound.play(Paths.sound('menus/confirmMenu'), 0.6);
-		goToStep2();
+		// FIX: set flag instead of calling goToStep2() directly.  Calling it
+		// here (inside the onEnterPressed native callback) sets wizardStep=2
+		// before FlxG.keys.justPressed is cleared, so the step-2 block would
+		// see justPressed.ENTER=true on the same frame and call finishWizard()
+		// immediately.  The flag is consumed at the top of the next update().
+		_step2Pending = true;
 	}
 
 	// ── Lógica paso 2 – importar ──────────────────────────────────────────────
@@ -869,6 +900,15 @@ class CharacterSelectorState extends MusicBeatState
 		updateVisualBars(elapsed);
 		FlxG.camera.zoom = FlxMath.lerp(FlxG.camera.zoom, 1, elapsed * 3);
 
+		// ── Consume deferred wizard transitions ───────────────────────────────
+		// These flags are set by CoolInputText native-event callbacks (onEnterPressed
+		// / onEscapePressed) instead of calling the transitions directly, so that
+		// FlxG.keys.justPressed does not fire the state's own handlers on the same
+		// frame.  Process them before any key check and return immediately to keep
+		// the navigation code from running on the transition frame.
+		if (_wizClosePending) { _wizClosePending = false; closeWizard(); return; }
+		if (_step2Pending)    { _step2Pending    = false; goToStep2();   return; }
+
 		// ── Delete confirm abierto ────────────────────────────────────────────
 		if (pendingDelete != null)
 		{
@@ -882,8 +922,11 @@ class CharacterSelectorState extends MusicBeatState
 		{
 			if (wizardStep == 1)
 			{
-				if (FlxG.keys.justPressed.ENTER)  confirmName();
-				if (FlxG.keys.justPressed.ESCAPE) closeWizard();
+				// ENTER → confirmName()  handled via nameInput.onEnterPressed → _step2Pending
+				// ESC   → closeWizard()  handled via nameInput.onEscapePressed → _wizClosePending
+				// Both callbacks are deferred so they don't double-fire here.
+				// FlxG.keys.enabled is false while nameInput has focus anyway,
+				// so these keys cannot be read from FlxG.keys during normal input.
 			}
 			else // paso 2
 			{
@@ -891,7 +934,7 @@ class CharacterSelectorState extends MusicBeatState
 				if (FlxG.keys.justPressed.BACKSPACE) {
 					wizardStep = 1;
 					nameInput.onEnterPressed  = function() { confirmName(); };
-					nameInput.onEscapePressed = function() { closeWizard(); };
+					nameInput.onEscapePressed = function() { _wizClosePending = true; };
 					nameInput.onFocusLost     = function() { if (wizardStep == 1) nameInput.hasFocus = true; };
 					setWizVisible(true);
 					nameInput.hasFocus = true;

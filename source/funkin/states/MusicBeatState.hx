@@ -55,6 +55,10 @@ class MusicBeatState extends CoolUIState
 
 	// ─── Dev-mode pitch/speed control (teclas 4 / 5) ─────────────────────────
 	private var _devPitch:Float        = 1.0;
+
+	// Contador para evicción proactiva de VRAM cada ~3 segundos (180 frames a 60fps)
+	private var _vramEvictCounter:Int  = 0;
+	private static inline final _VRAM_EVICT_INTERVAL:Int = 180;
 	private var _devToastText:flixel.text.FlxText  = null;
 	private var _devToastTween:flixel.tweens.FlxTween = null;
 	private var _devToastCam:flixel.FlxCamera      = null;
@@ -299,6 +303,15 @@ class MusicBeatState extends CoolUIState
 
 		updateCurStep();
 		updateBeat();
+
+		// Evicción proactiva de VRAM: si la estimación supera 256 MB, limpia la
+		// capa SECOND inmediatamente sin esperar al próximo cambio de state.
+		// Se ejecuta cada _VRAM_EVICT_INTERVAL frames (~3 s a 60 fps) para no
+		// añadir overhead perceptible al update loop.
+		if (++_vramEvictCounter >= _VRAM_EVICT_INTERVAL) {
+			_vramEvictCounter = 0;
+			try { funkin.cache.FunkinCache.instance.evictSecondLayerIfOverBudget(256); } catch (_:Dynamic) {}
+		}
 
 		if (oldStep != curStep && curStep > 0)
 			stepHit();

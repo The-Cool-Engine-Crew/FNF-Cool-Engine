@@ -121,6 +121,11 @@ class ScriptAPI
 		exposeAddonManager(interp);   // AddonManager + sistemas registrados por addons
 		// ── v10: Subtítulos ────────────────────────────────────────────────────
 		exposeSubtitles(interp);      // subtitle.show(), subtitle.hide(), etc.
+
+		// ── Wildcard import registry ──────────────────────────────────────────
+		// Index all class references now in interp so that scripts can use
+		// `import flixel.*;` or `import funkin.gameplay.*;` etc.
+		ScriptHandler.buildRegistryFromInterp(interp);
 	}
 
 	// ─── Flixel core ──────────────────────────────────────────────────────────
