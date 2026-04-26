@@ -229,6 +229,12 @@ typedef StageAnimation =
 	@:optional var framerate:Int;
 	@:optional var looped:Bool;
 	@:optional var indices:Array<Int>;
+	/**
+	 * Controls when this animation is triggered at runtime.
+	 *  - "default"    → plays once on load (normal behaviour, fallback).
+	 *  - "each_beat"  → replayed automatically on every beat hit.
+	 */
+	@:optional var animType:String;
 }
 
 typedef StageMember =
@@ -322,6 +328,13 @@ class Stage extends FlxTypedGroup<FlxBasic>
 	public var customClasses:Map<String, FlxSprite> = new Map<String, FlxSprite>();
 	public var customClassGroups:Map<String, FlxTypedGroup<FlxSprite>> = new Map<String, FlxTypedGroup<FlxSprite>>();
 	public var sounds:Map<String, FlxSound> = new Map<String, FlxSound>();
+
+	/**
+	 * Sprites registered to have a specific animation played on every beat hit.
+	 * Populated during buildStage() for any animation with animType:"each_beat".
+	 * Each entry holds a reference to the sprite and the animation name to trigger.
+	 */
+	private var _beatAnimSprites:Array<{sprite:FunkinSprite, animName:String}> = [];
 
 	/**
 	 * Elements with aboveChars:true are placed here.
@@ -880,6 +893,10 @@ class Stage extends FlxTypedGroup<FlxBasic>
 					anim.looped    != null ? anim.looped    : false,
 					(anim.indices != null && anim.indices.length > 0) ? anim.indices : null
 				);
+
+				// Register beat-driven animations so beatHit() can fire them automatically.
+				if (anim.animType == 'each_beat')
+					_beatAnimSprites.push({sprite: sprite, animName: anim.name});
 			}
 
 			if (element.firstAnimation != null)
@@ -948,6 +965,10 @@ class Stage extends FlxTypedGroup<FlxBasic>
 			{
 				sprite.addAnim(anim.name, anim.prefix, anim.framerate != null ? anim.framerate : 24, anim.looped != null ? anim.looped : false,
 					(anim.indices != null && anim.indices.length > 0) ? anim.indices : null);
+
+				// Register beat-driven animations so beatHit() can fire them automatically.
+				if (anim.animType == 'each_beat')
+					_beatAnimSprites.push({sprite: sprite, animName: anim.name});
 			}
 
 			// Reproducir la primera animación
@@ -1671,6 +1692,13 @@ class Stage extends FlxTypedGroup<FlxBasic>
 		if (onBeatHit != null)
 			onBeatHit();
 
+		// Play animations marked as animType:"each_beat" on every beat.
+		for (entry in _beatAnimSprites)
+		{
+			if (entry.sprite != null && entry.sprite.alive)
+				entry.sprite.playAnim(entry.animName, true);
+		}
+
 		for (name => sprite in customClasses)
 		{
 			if (Reflect.hasField(sprite, "dance"))
@@ -1742,6 +1770,7 @@ class Stage extends FlxTypedGroup<FlxBasic>
 		groups.clear();
 		customClasses.clear();
 		customClassGroups.clear();
+		_beatAnimSprites = [];
 
 		// Destroy the above-characters group (PlayState adds it separately,
 		// but Stage is responsible for cleaning it up).

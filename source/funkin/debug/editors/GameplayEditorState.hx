@@ -3600,15 +3600,18 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 			autoSeekTime = FlxMath.bound(mx / SW, 0, 1) * songLength;
 
 		// Ruler click/drag → seek
-		var inRuler = my >= tlY && my <= tlY + TL_RULER_H && mx >= TL_LABEL_W && mx <= TL_LABEL_W + areaW;
+		// Exclude the inspector panel area so clicks on inspector controls don't seek
+		var _inspRight = (_inspVisible) ? (SW - INSP_W) : SW;
+		var inRuler = my >= tlY && my <= tlY + TL_RULER_H && mx >= TL_LABEL_W && mx < _inspRight;
 		if (FlxG.mouse.pressed && inRuler) {
 			var ms = (mx - TL_LABEL_W) / tlZoom + tlScrollX;
 			autoSeekTime = Math.max(0, ms);
 		}
 
 		// Double-click on track area → create event
+		// Exclude the inspector panel area so clicks on inspector controls don't deselect/create
 		var tracksAreaY = tlY + TL_RULER_H;
-		var inTracks = my >= tracksAreaY && my <= tracksAreaY + trackN * TL_TRACK_H && mx >= TL_LABEL_W && mx <= TL_LABEL_W + areaW;
+		var inTracks = my >= tracksAreaY && my <= tracksAreaY + trackN * TL_TRACK_H && mx >= TL_LABEL_W && mx < _inspRight;
 		if (FlxG.mouse.justPressedRight && inTracks) {
 			// Right-click → context menu
 			_openContextMenu(mx, my);
@@ -3819,6 +3822,14 @@ class GameplayEditorState extends funkin.states.MusicBeatState {
 			_dragEvtOffMs = (mx - TL_LABEL_W) / tlZoom + tlScrollX - evtMs;
 			return;
 		}
+		// Don't deselect when clicking inside the inspector panel —
+		// inspector controls (dropdowns, inputs, steppers) live on camUI and are
+		// not in the eventBlocks list, so without this guard every click on the
+		// inspector falls through here and calls _refreshInspector(), destroying
+		// and recreating all elements and removing their focus.
+		if (_inspVisible && mx >= SW - INSP_W)
+			return;
+
 		// Clicked empty → deselect
 		selectedEventId = '';
 		_refreshInspector();

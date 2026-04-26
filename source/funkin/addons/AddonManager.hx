@@ -6,6 +6,7 @@ import sys.io.File;
 #end
 import haxe.Json;
 import funkin.scripting.HScriptInstance;
+import funkin.scripting.ScriptLibrary;
 import mods.ModManager;
 
 using StringTools;
@@ -143,6 +144,10 @@ class AddonManager
 			//    re-registrar sistemas o simplemente ignorarlo si no les afecta.
 			broadcastHook('onModSwitch', [newMod]);
 			trace('[AddonManager] onModSwitch broadcast → ${loadedAddons.length} addons (mod="${newMod ?? "base"}")');
+
+			// 3. Limpiar caché de librerías del mod anterior.
+			//    Las libs del mod nuevo se cargarán frescos al primer require().
+			funkin.scripting.ScriptLibrary.clearCacheForDir(mods.ModManager.MODS_FOLDER);
 		};
 	}
 
@@ -226,6 +231,20 @@ class AddonManager
 			ae.callHook('exposeAPI', [interp]);
 	}
 	#end
+
+// ── Gestión de librerías de addons (API estática) ─────────────────────────
+
+	/**
+	 * Devuelve todos los directorios `libs/` de los addons cargados.
+	 * Usado por ScriptAPI para construir el search path global de require().
+	 */
+	public static function getLibSearchDirs():Array<String>
+	{
+		// Incluye tanto libs/ locales como .deps/ descargadas de cada addon
+		final dirs:Array<String> = [];
+		for (ae in loadedAddons) { dirs.push(ae.libsPath); dirs.push(ae.depsPath); }
+		return dirs;
+	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -238,20 +257,104 @@ class AddonEntry
 	public var path  (default, null):String;
 	public var info  (default, null):AddonInfo;
 
+	/** Ruta a la carpeta libs/ de este addon. */
+	public var libsPath(default, null):String;
+
+	/** Ruta a la carpeta .deps/ donde se cachean las dependencias descargadas. */
+	public var depsPath(default, null):String;
+
 	// Scripts compilados por hook name
 	var _scripts:Map<String, HScriptInstance> = new Map();
 
+	// Librerías pre-cargadas: nombre (sin extensión) → exports Dynamic
+	var _libs:Map<String, Dynamic> = new Map();
+
+	// Nombres de lib → ruta absoluta (para require() por nombre)
+	var _libPaths:Map<String, String> = new Map();
+
 	public function new(id:String, path:String, info:AddonInfo)
 	{
-		this.id   = id;
-		this.path = path;
-		this.info = info;
+		this.id      = id;
+		this.path    = path;
+		this.info    = info;
+		this.libsPath = '$path/libs';
+		this.depsPath  = '$path/${funkin.addons.ScriptDependency.DEPS_FOLDER}';
 	}
+
+	// ── Carga de librerías ─────────────────────────────────────────────────
+
+	/**
+	 * Escanea la carpeta `libs/` del addon y registra todas las librerías.
+	 * Si `info.libs` está definido, usa esa lista explícita en su lugar.
+	 * Las libs NO se ejecutan aquí — se cargan bajo demanda al primer require().
+	 */
+	public function discoverLibs():Void
+	{
+		#if (sys && HSCRIPT_ALLOWED)
+		if (info.libs != null)
+		{
+			// Lista explícita en addon.json → ["MiLib", "utils/Math2"]
+			for (libName in info.libs)
+			{
+				for (ext in ['.hx', '.hscript', ''])
+				{
+					final candidate = '$libsPath/$libName$ext';
+					if (FileSystem.exists(candidate) && !FileSystem.isDirectory(candidate))
+					{
+						_libPaths.set(libName, candidate);
+						trace('[AddonManager] Lib registrada: ${id}::$libName');
+						break;
+					}
+				}
+			}
+		}
+		else if (FileSystem.exists(libsPath) && FileSystem.isDirectory(libsPath))
+		{
+			// Auto-scan: registra todos los .hx/.hscript de libs/ (recursivo)
+			_scanLibDir(libsPath, '');
+		}
+		#end
+	}
+
+	#if (sys && HSCRIPT_ALLOWED)
+	/** Recorre `dir` recursivamente registrando archivos .hx/.hscript. */
+	function _scanLibDir(dir:String, prefix:String):Void
+	{
+		for (entry in FileSystem.readDirectory(dir))
+		{
+			final fullPath = '$dir/$entry';
+			final nameWithPrefix = prefix == '' ? entry : '$prefix/$entry';
+
+			if (FileSystem.isDirectory(fullPath))
+			{
+				_scanLibDir(fullPath, nameWithPrefix);
+			}
+			else if (entry.endsWith('.hx') || entry.endsWith('.hscript'))
+			{
+				// Nombre sin extensión: "MiLib", "utils/Math2"
+				final libName = nameWithPrefix.substr(0,
+					nameWithPrefix.lastIndexOf('.'));
+				_libPaths.set(libName, fullPath);
+				trace('[AddonManager] Lib descubierta: ${id}::$libName → $fullPath');
+			}
+		}
+	}
+	#end
 
 	// ── Carga de scripts ───────────────────────────────────────────────────
 
 	public function loadScripts():Void
 	{
+		// ── Paso 0: descargar dependencias externas (GitHub / URL) ──────────────
+		// Se hace ANTES de discoverLibs() para que los .hx descargados en
+		// .deps/ queden disponibles junto con las libs locales.
+		if (info.dependencies != null && info.dependencies.length > 0)
+			funkin.addons.ScriptDependency.resolveAll(id, path, info.dependencies);
+
+		// Primero descubrir las libs para que estén disponibles
+		// en el require() que inyectamos a los scripts.
+		discoverLibs();
+
 		#if (sys && HSCRIPT_ALLOWED)
 		if (info.hooks == null) return;
 
@@ -304,16 +407,71 @@ class AddonEntry
 		inst.set('addonId',   id);
 		inst.set('addonPath', path);
 		inst.set('registerSystem', AddonManager.registerSystem);
+
+		// ── require() para scripts del addon ──────────────────────────────
+		// Busca en orden: libs/ del addon → libs/ de otros addons → base.
+		_injectRequire(inst);
 		#end
 	}
 
+	#if HSCRIPT_ALLOWED
+	/**
+	 * Inyecta la función require(name) en el intérprete del script.
+	 * Orden de búsqueda:
+	 *   1. Libs registradas de ESTE addon (ya en _libPaths)
+	 *   2. ScriptLibrary con search path: [libsPath del addon, libs de otros addons, base]
+	 */
+	function _injectRequire(inst:HScriptInstance):Void
+	{
+		// Construir search path dinámico al momento de la llamada:
+		//   propio addon primero, luego el resto de addons, luego base.
+		inst.set('require', function(name:String, ?forceReload:Bool):Dynamic {
+			// 1. Lib propia registrada (ruta exacta conocida)
+			if (_libPaths.exists(name))
+			{
+				final absPath = _libPaths.get(name);
+				return funkin.scripting.ScriptLibrary.loadAbsolute(
+					absPath, inst.interp, forceReload ?? false);
+			}
+
+			// 2. Búsqueda en todos los search dirs
+			final dirs = _buildSearchDirs();
+			return funkin.scripting.ScriptLibrary.require(
+				name, dirs, inst.interp, forceReload ?? false);
+		});
+
+		// requireLib(name) — alias que devuelve null en vez de trazar error
+		// si la lib no existe, útil para comprobaciones opcionales.
+		inst.set('hasLib', function(name:String):Bool {
+			if (_libPaths.exists(name)) return true;
+			#if sys
+			final dirs = _buildSearchDirs();
+			for (dir in dirs)
+				for (ext in ['.hx', '.hscript', ''])
+					if (sys.FileSystem.exists('$dir/$name$ext')
+						&& !sys.FileSystem.isDirectory('$dir/$name$ext'))
+						return true;
+			#end
+			return false;
+		});
+	}
+
+	function _buildSearchDirs():Array<String>
+	{
+		// Propio addon: libs/ primero, luego .deps/ (dependencias descargadas)
+		final dirs:Array<String> = [libsPath, depsPath];
+		// Libs y deps de todos los addons cargados (excepto el propio)
+		for (ae in AddonManager.loadedAddons)
+			if (ae.id != id) { dirs.push(ae.libsPath); dirs.push(ae.depsPath); }
+		// Base engine
+		dirs.push(funkin.scripting.ScriptLibrary.BASE_LIBS);
+		return dirs;
+	}
+	#end
+
+	// ── Destroy ────────────────────────────────────────────────────────────
+
 	// FIX Bug 8: AddonEntry had no destroy() method.
-	// HScriptInstance objects stored in _scripts were never destroyed, leaving
-	// their hscript Interps (with ScriptAPI closures and variable bindings)
-	// alive for the entire game session — one interpreter per addon hook, per
-	// mod load. On mod switch/reload, init() replaced loadedAddons = [] without
-	// destroying the old AddonEntry objects, so every previous generation of
-	// scripts accumulated in memory indefinitely.
 	public function destroy():Void
 	{
 		#if HSCRIPT_ALLOWED
@@ -321,5 +479,10 @@ class AddonEntry
 			if (inst != null) try inst.destroy() catch (_:Dynamic) {}
 		#end
 		_scripts.clear();
+		_libs.clear();
+		_libPaths.clear();
+		// Limpiar caché de ScriptLibrary para la carpeta libs/ de este addon
+		funkin.scripting.ScriptLibrary.clearCacheForDir(libsPath);
+		funkin.scripting.ScriptLibrary.clearCacheForDir(depsPath);
 	}
 }

@@ -133,7 +133,10 @@ class LevelFile
 			final path = _targetPath(key);
 			_ensureDir(path);
 
-			// Si el .level no existe aún, migrar los archivos legacy primero
+			// Si el .level ya existe, leerlo (para sumar la nueva dificultad a las
+			// que ya están guardadas). Si no existe, migrar los archivos legacy para
+			// que el .level arranque con TODAS las dificultades disponibles y no solo
+			// la que se está guardando en este momento.
 			var level:LevelData;
 			if (FileSystem.exists(path))
 			{
@@ -606,12 +609,21 @@ class LevelFile
 		{
 			for (sub in ['songs/$key', 'assets/songs/$key'])
 			{
+				// charts/ subfolder (nueva estructura, prioridad sobre raíz)
+				final pc = '$root/$sub/charts/$key.$EXTENSION';
+				if (FileSystem.exists(pc))
+					return pc;
+				// raíz (compatibilidad con .level legacy)
 				final p = '$root/$sub/$key.$EXTENSION';
 				if (FileSystem.exists(p))
 					return p;
 			}
 		}
 
+		// assets base — charts/ primero, luego raíz
+		final baseCharts = 'assets/songs/$key/charts/$key.$EXTENSION';
+		if (FileSystem.exists(baseCharts))
+			return baseCharts;
 		final base = 'assets/songs/$key/$key.$EXTENSION';
 		if (FileSystem.exists(base))
 			return base;
@@ -623,13 +635,36 @@ class LevelFile
 	//  PRIVATE
 	// ──────────────────────────────────────────────────────────────────────────
 
+	/**
+	 * Determina dónde guardar el .level de una canción.
+	 *
+	 * Política:
+	 *   • Si ya existe un .level en la raíz de la carpeta de la canción
+	 *     (ubicación legacy), se usa esa ruta para no mover el archivo sin querer.
+	 *   • Si no existe ninguno aún, el archivo nuevo se crea en la subcarpeta
+	 *     charts/ (nueva estructura organizada).
+	 *
+	 * Esto garantiza compatibilidad total con mods ya publicados y que los
+	 * proyectos nuevos usen la organización correcta desde el principio.
+	 */
 	static function _targetPath(key:String):String
 	{
 		#if sys
 		if (ModManager.isActive())
-			return '${ModManager.modRoot()}/songs/$key/$key.$EXTENSION';
+		{
+			// ¿Existe ya en la raíz (legacy)? → respetar esa ubicación
+			final legacyPath = '${ModManager.modRoot()}/songs/$key/$key.$EXTENSION';
+			if (FileSystem.exists(legacyPath))
+				return legacyPath;
+			// Nueva canción → guardar en charts/
+			return '${ModManager.modRoot()}/songs/$key/charts/$key.$EXTENSION';
+		}
 		#end
-		return 'assets/songs/$key/$key.$EXTENSION';
+		// Assets base: mismo criterio
+		final legacyBase = 'assets/songs/$key/$key.$EXTENSION';
+		if (FileSystem.exists(legacyBase))
+			return legacyBase;
+		return 'assets/songs/$key/charts/$key.$EXTENSION';
 	}
 
 	/** Returns all roots to search (active mod first, then all enabled mods). */

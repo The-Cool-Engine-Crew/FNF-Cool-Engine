@@ -601,7 +601,10 @@ class Project extends HXProject
     // Android 16 (API 36) lo enforcea también para distribución directa.
     // Subir de 33 → 35 es necesario para que los flags de 16 KB tengan efecto
     // completo y para evitar restricciones de compatibilidad del SO.
-    config.set("android.target-sdk-version",  35);
+    // Android 16 (API 36) enforcea la alineacion de 16 KB en .so y es la version
+    // del dispositivo que produce el crash del crash report adjunto (onyx:16).
+    // Subir a 36 evita el modo de compatibilidad y activa la ruta de carga nativa optima.
+    config.set("android.target-sdk-version",  36);
     config.set("android.minimum-sdk-version", 21);
     config.set("android.install-location",    "auto");
 
@@ -631,7 +634,22 @@ class Project extends HXProject
     // HXProject no expone linkerFlags directamente — se pasan como define de hxcpp.
     // HXCPP_LINK_FLAGS es leído por hxcpp/build/BuildCommon.xml y se inyecta en
     // la invocación del linker del NDK al compilar libApplicationMain.so.
-    setHaxedef("HXCPP_LINK_FLAGS", "-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384");
+    // HXCPP_LINK_FLAGS se pasa de dos formas:
+    //   1. Como haxedef (-D)  → Lime lo escribe en el .hxml que lee hxcpp para libApplicationMain.so
+    //   2. Como variable de entorno → hxcpp también la lee directamente al invocar el linker del NDK
+    // Ambas son necesarias: la experiencia muestra que en algunos entornos de CI
+    // el -D no llega al link step de Android si Lime lo filtra como "unknown define".
+    final PAGE_FLAGS = "-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384";
+    setHaxedef("HXCPP_LINK_FLAGS", PAGE_FLAGS);
+    Sys.putEnv("HXCPP_LINK_FLAGS", PAGE_FLAGS);  // belt-and-suspenders
+
+    // liblime.so es un .so PRECOMPILADO que viene con la librería Lime.
+    // HXCPP_LINK_FLAGS NO lo afecta porque no forma parte del build de hxcpp.
+    // Si liblime.so tiene alineación de 4 KB, Android 16 (con kernel de 16 KB)
+    // carga sus segmentos ELF desalineados → LSDA corrompida → cualquier excepción
+    // de Haxe que se propague por sus frames llama a un puntero basura (PC=0x1).
+    // Fix: rebuild Lime desde fuente con los mismos flags de alineación.
+    _ensureLimeAndroid16KB(PAGE_FLAGS);
 
     // Permisos Android: se añaden via config (HXProject no tiene androidPermissions)
     var perms = [
@@ -643,6 +661,66 @@ class Project extends HXProject
     ];
     for (p in perms)
       config.push("android.permission", p);
+  }
+
+  // ── Android 16 KB page-size: rebuild liblime.so ─────────────────────────────
+
+  /**
+   * Garantiza que liblime.so esté alineado a 16 KB (requisito de Android 15+,
+   * obligatorio en Android 16 / API 36 y en dispositivos con kernel de 16 KB).
+   *
+   * Problema:  liblime.so viene PRECOMPILADO con la librería Lime (no lo genera
+   *            HXCPP_LINK_FLAGS).  Si tiene alineación de 4 KB, Android 16 carga
+   *            sus segmentos ELF desalineados → las tablas LSDA de C++ quedan
+   *            corrompidas → cualquier excepción de Haxe que atraviese frames de
+   *            liblime.so llama a un puntero nulo/basura (PC=0x1) → SIGSEGV en
+   *            startup (frame hxcpp_main → __gxx_personality_v0 → 0x1).
+   *
+   * Solución:  Recompilar Lime desde fuente con los mismos flags de alineación,
+   *            de modo que el liblime.so resultante tenga segmentos LOAD alineados
+   *            a 16 KB y las tablas LSDA sean legibles independientemente del
+   *            tamaño de página del kernel.
+   *
+   * Coste:    El rebuild solo corre UNA VEZ por instalación de Lime: si el archivo
+   *            stamp ".lime-android-16kb" existe, se salta.  Bórralo manualmente
+   *            para forzar un rebuild (p. ej. después de actualizar la versión de Lime).
+   *
+   * @param flags  Los flags de linker ya calculados (reutiliza PAGE_FLAGS).
+   */
+  function _ensureLimeAndroid16KB(flags:String):Void
+  {
+    final STAMP = ".lime-android-16kb";
+
+    if (sys.FileSystem.exists(STAMP))
+    {
+      Sys.println("[project.hxp] liblime.so 16 KB stamp found — skipping lime rebuild.");
+      return;
+    }
+
+    Sys.println("[project.hxp] ── Android 16 KB page-size fix ──────────────────────");
+    Sys.println("[project.hxp] Rebuilding lime from source so liblime.so gets");
+    Sys.println("[project.hxp] ELF segments aligned to 16 KB (Android 16 requirement).");
+    Sys.println("[project.hxp] This runs ONCE; subsequent builds will be skipped.");
+
+    // Pasar los flags al entorno para que el sub-proceso de lime rebuild los herede.
+    Sys.putEnv("HXCPP_LINK_FLAGS", flags);
+
+    var ret = Sys.command("lime", ["rebuild", "android"]);
+
+    if (ret == 0)
+    {
+      // Escribir stamp para que el próximo build no repita el rebuild.
+      sys.io.File.saveContent(STAMP, "rebuilt=" + Date.now().toString() + "
+flags=" + flags);
+      Sys.println("[project.hxp] lime rebuild android OK — liblime.so is 16 KB-aligned.");
+    }
+    else
+    {
+      Sys.println("[project.hxp] !! WARNING: lime rebuild android failed (exit " + ret + ").");
+      Sys.println("[project.hxp]    liblime.so may still have 4 KB alignment.");
+      Sys.println("[project.hxp]    Run manually before deploying to Android 16 devices:");
+      Sys.println('             HXCPP_LINK_FLAGS="" lime rebuild android');
+    }
   }
 
   // ── Iconos ───────────────────────────────────────────────────────────────────

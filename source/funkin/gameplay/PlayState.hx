@@ -468,7 +468,7 @@ class PlayState extends funkin.states.MusicBeatState {
 			} catch (_:Dynamic) {}
 			#end
 			#if hl hl.Gc.major(); #end
-			trace('[PlayState] GPU flush + GC completado tras ${_flushFramesNeeded} frame(s)');
+			trace('[PlayState] GPU flush + GC completed after ${_flushFramesNeeded} frame(s)');
 		});
 		#end
 	}
@@ -1059,11 +1059,9 @@ class PlayState extends funkin.states.MusicBeatState {
 			trace('[PlayState] WARNING: Paths.loadInst returned null for "${SONG.song}" — audio will be silent.');
 
 		funkin.audio.CoreAudio.setInst(_rawInst);
-		if (_rawInst != null)
-			FlxG.sound.music = _rawInst;
-
 		if (_rawInst != null) {
-			_rawInst.volume = 0;
+			FlxG.sound.music = _rawInst;
+			funkin.audio.CoreAudio.setInstVolume(0); // FIX: usar CoreAudio para mantener el registry en sync (evita que _applyAll restaure vol=1.0 durante el cutscene)
 			_rawInst.pause();
 		}
 
@@ -1105,7 +1103,7 @@ class PlayState extends funkin.states.MusicBeatState {
 			} catch (_:Dynamic) {}
 			#end
 			#if hl hl.Gc.major(); #end
-			trace('[PlayState] GPU flush post-prewarm completado');
+			trace('[PlayState] GPU flush post-prewarm completed');
 		});
 		#end
 	}
@@ -1137,9 +1135,9 @@ class PlayState extends funkin.states.MusicBeatState {
 		if (!_usingPerCharVocals) {
 			if (vocals == null)
 				vocals = new FlxSound();
-			vocals.pause();
 			FlxG.sound.list.add(vocals);
 			funkin.audio.CoreAudio.addVocal('vocals', vocals);
+			vocals.pause(); // FIX: pausar DESPUÉS de addVocal para que _applyTo no reactive el buffer
 		}
 	}
 
@@ -1340,15 +1338,16 @@ class PlayState extends funkin.states.MusicBeatState {
 		if (FlxG.sound.music == null || !FlxG.sound.music.active) {
 			final _reloadedInst = Paths.loadInst(SONG.song, _diffSuffix);
 			funkin.audio.CoreAudio.setInst(_reloadedInst);
-			if (_reloadedInst != null)
-				FlxG.sound.music = _reloadedInst;
-			// FIX: mismo bug que generateSong -- silenciar DESPUES de setInst
 			if (_reloadedInst != null) {
-				_reloadedInst.volume = 0;
+				FlxG.sound.music = _reloadedInst;
+				funkin.audio.CoreAudio.setInstVolume(0); // FIX: usar CoreAudio para mantener el registry en sync (evita que _applyAll restaure vol=1.0 durante el cutscene)
 				_reloadedInst.pause();
 			}
 		} else if (funkin.audio.CoreAudio.inst == null) {
 			funkin.audio.CoreAudio.setInst(FlxG.sound.music);
+		} else {
+			// FIX: inst existe pero puede tener vol>0 del estado anterior — asegurarse de que esté en 0 antes del countdown
+			funkin.audio.CoreAudio.setInstVolume(0);
 		}
 
 		_clearVocals();
@@ -2881,10 +2880,10 @@ class PlayState extends funkin.states.MusicBeatState {
 			if (snd == null)
 				continue;
 
-			snd.pause();
 			FlxG.sound.list.add(snd);
 			vocalsPerChar.set(cand.name, snd);
 			funkin.audio.CoreAudio.addVocal(cand.name, snd);
+			snd.pause(); // FIX: pausar DESPUÉS de addVocal para que _applyTo no reactive el buffer
 
 			if (cand.type == 'Player' || cand.type == 'Boyfriend')
 				_vocalsPlayerKeys.push(cand.name);

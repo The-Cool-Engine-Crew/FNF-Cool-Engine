@@ -174,6 +174,7 @@ class ChartingState extends funkin.states.MusicBeatState
 	var UI_box:CoolTabMenu;
 	var camGame:FlxCamera;
 	var camHUD:FlxCamera;
+	var camPopUp:FlxCamera;
 
 	// TABS
 	var tab_group_song:coolui.CoolUIGroup;
@@ -562,8 +563,11 @@ class ChartingState extends funkin.states.MusicBeatState
 		camGame = new FlxCamera();
 		camHUD = new FlxCamera();
 		camHUD.bgColor.alpha = 0;
+		camPopUp = new FlxCamera();
+		camPopUp.bgColor.alpha = 0;
 		FlxG.cameras.reset(camGame);
 		FlxG.cameras.add(camHUD);
+		FlxG.cameras.add(camPopUp);
 		@:privateAccess FlxCamera._defaultCameras = [camGame];
 
 		// Setup UI
@@ -949,7 +953,7 @@ class ChartingState extends funkin.states.MusicBeatState
 			strum.setGraphicSize(GRID_SIZE + 1, GRID_SIZE + 1);
 			strum.updateHitbox();
 			strum.scrollFactor.set();
-			strum.cameras = [camHUD]; // FIX: camHUD para que quede encima de todo
+			strum.cameras = [camHUD]; // FIX
 			_editorStrums.add(strum);
 			add(strum);
 		}
@@ -1605,7 +1609,7 @@ class ChartingState extends funkin.states.MusicBeatState
 	{
 		if (FlxG.sound.music == null)
 		{
-			showMessage('❌ No audio loaded for waveform', ACCENT_ERROR);
+			showMessage('X No audio loaded for waveform', ACCENT_ERROR);
 			return;
 		}
 
@@ -1624,7 +1628,7 @@ class ChartingState extends funkin.states.MusicBeatState
 
 		if (sound == null)
 		{
-			showMessage('❌ Cannot access audio data for waveform', ACCENT_ERROR);
+			showMessage('X Cannot access audio data for waveform', ACCENT_ERROR);
 			return;
 		}
 
@@ -1687,7 +1691,7 @@ class ChartingState extends funkin.states.MusicBeatState
 
 		if (FlxG.sound.music == null)
 		{
-			showMessage('❌ No audio loaded for BPM detection', ACCENT_ERROR);
+			showMessage('X No audio loaded for BPM detection', ACCENT_ERROR);
 			return;
 		}
 
@@ -1702,7 +1706,7 @@ class ChartingState extends funkin.states.MusicBeatState
 
 		if (sound == null)
 		{
-			showMessage('❌ Cannot access audio for BPM detection', ACCENT_ERROR);
+			showMessage('X Cannot access audio for BPM detection', ACCENT_ERROR);
 			return;
 		}
 
@@ -1717,7 +1721,7 @@ class ChartingState extends funkin.states.MusicBeatState
 
 		if (detected <= 0)
 		{
-			showMessage('❌ Could not detect BPM from audio', ACCENT_ERROR);
+			showMessage('X Could not detect BPM from audio', ACCENT_ERROR);
 			trace('[ChartingState] BPM detection failed');
 			return;
 		}
@@ -1741,24 +1745,24 @@ class ChartingState extends funkin.states.MusicBeatState
 	function setupNewExtensions():Void
 	{
 		// 1. Meta popup (Stage y Speed)
-		metaPopup = new MetaPopup(this, _song, camHUD);
+		metaPopup = new MetaPopup(this, _song, camPopUp);
 		add(metaPopup);
 
 		// 2. Preview panel (izquierdo, colapsable) — con Character.hx real
-		previewPanel = new PreviewPanel(this, _song, camGame, camHUD);
+		previewPanel = new PreviewPanel(this, _song, camGame, camPopUp);
 		add(previewPanel);
 
 		// 3. Events sidebar (izquierdo, encima del grid)
-		eventsSidebar = new EventsSidebar(this, _song, camGame, camHUD, gridBG.x, gridBG.y);
+		eventsSidebar = new EventsSidebar(this, _song, camGame, camPopUp, gridBG.x, gridBG.y);
 		add(eventsSidebar);
 
 		// 4. Character icon row (encima del grid)
-		charIconRow = new CharacterIconRow(this, _song, camHUD, gridBG.x);
+		charIconRow = new CharacterIconRow(this, _song, camPopUp, gridBG.x);
 		add(charIconRow);
 
 		// 5. Tools panel — panel lateral con controles de preview y herramientas
 		//    Se abre/cierra desde la toolbar sin interactuar con el grid
-		toolsPanel = new ToolsPanel(this, _song, previewPanel, camHUD);
+		toolsPanel = new ToolsPanel(this, _song, previewPanel, camPopUp);
 		add(toolsPanel);
 
 		// Asegurar que los eventos estén inicializados en la canción
@@ -1908,7 +1912,7 @@ class ChartingState extends funkin.states.MusicBeatState
 		catch (e:Dynamic)
 		{
 			trace('Error loading song: $e');
-			showMessage("❌ Error loading song!", ACCENT_ERROR);
+			showMessage("X Error loading song!", ACCENT_ERROR);
 		}
 
 		// Vocals
@@ -4071,7 +4075,7 @@ class ChartingState extends funkin.states.MusicBeatState
 				for (n in targets)
 					n[2] = ((n[2] != null) ? n[2] : 0.0) + step;
 				updateGrid();
-				var plural = targets.length > 1 ? '${targets.length} notas' : '1 nota';
+				var plural = targets.length > 1 ? '${targets.length} notes' : '1 note';
 				showMessage('\u2195 Sustain +1 subdiv ($plural)', ACCENT_CYAN);
 			}
 			else if (_shift)
@@ -4096,7 +4100,7 @@ class ChartingState extends funkin.states.MusicBeatState
 				for (n in targets)
 					n[2] = Math.max(0, ((n[2] != null) ? n[2] : 0.0) - step);
 				updateGrid();
-				var plural = targets.length > 1 ? '${targets.length} notas' : '1 nota';
+				var plural = targets.length > 1 ? '${targets.length} notes' : '1 note';
 				showMessage('\u2195 Sustain -1 subdiv ($plural)', ACCENT_CYAN);
 			}
 			else if (_shift)
@@ -4459,7 +4463,7 @@ class ChartingState extends funkin.states.MusicBeatState
 						_susBody.offset.x += _susBody.noteOffsetX;
 						_susBody.offset.y += _susBody.noteOffsetY;
 					}
-					_susBody.x = note.x + (GRID_SIZE - _susBody.width) / 2;
+					_susBody.x = note.x + (GRID_SIZE - _susBody.width) / 2 + 4;
 					_susBody.y = susStartY;
 					_susBody.scrollFactor.set();
 					_susBody.cameras = [camGame];
@@ -4472,7 +4476,7 @@ class ChartingState extends funkin.states.MusicBeatState
 						_susTail.offset.x += _susTail.noteOffsetX;
 						_susTail.offset.y += _susTail.noteOffsetY;
 					}
-					_susTail.x = note.x + (GRID_SIZE - _susTail.width) / 2;
+					_susTail.x = note.x + (GRID_SIZE - _susTail.width) / 2 + 4;
 					_susTail.y = susStartY + susHeight;
 					_susTail.scrollFactor.set();
 					_susTail.cameras = [camGame];
@@ -4654,13 +4658,13 @@ class ChartingState extends funkin.states.MusicBeatState
 						}
 						// Posición: misma lógica que updateGrid (centro de nota, ancho fino)
 						var susStartY:Float = note.y + GRID_SIZE * 0.5;
-						sus.x = note.x + (GRID_SIZE - sus.width) / 2;
+						sus.x = note.x + (GRID_SIZE - sus.width) / 2 + 4;
 						sus.y = susStartY;
 					}
 					if (tail != null)
 					{
 						var susStartY:Float = note.y + GRID_SIZE * 0.5;
-						tail.x = note.x + (GRID_SIZE - tail.width) / 2;
+						tail.x = note.x + (GRID_SIZE - tail.width) / 2 + 4;
 						tail.y = susStartY + susHeight;
 					}
 					susIndex++;
@@ -4824,7 +4828,7 @@ class ChartingState extends funkin.states.MusicBeatState
 	{
 		if (clipboard.length == 0)
 		{
-			showMessage('❌ Clipboard is empty!', ACCENT_ERROR);
+			showMessage('X Clipboard is empty!', ACCENT_ERROR);
 			return;
 		}
 
@@ -4927,7 +4931,7 @@ class ChartingState extends funkin.states.MusicBeatState
 	{
 		if (undoStack.length == 0)
 		{
-			showMessage('❌ Nothing to undo!', ACCENT_WARNING);
+			showMessage('X Nothing to undo!', ACCENT_WARNING);
 			return;
 		}
 
@@ -4957,7 +4961,7 @@ class ChartingState extends funkin.states.MusicBeatState
 	{
 		if (redoStack.length == 0)
 		{
-			showMessage('❌ Nothing to redo!', ACCENT_WARNING);
+			showMessage('X Nothing to redo!', ACCENT_WARNING);
 			return;
 		}
 
@@ -5032,7 +5036,7 @@ class ChartingState extends funkin.states.MusicBeatState
 		}
 		else
 		{
-			showMessage('❌ Error saving chart!', ACCENT_ERROR);
+			showMessage('X Error saving chart!', ACCENT_ERROR);
 		}
 		#else
 		// Web / non-sys: exportar JSON legacy mediante FileReference (igual que antes)
@@ -5070,7 +5074,7 @@ class ChartingState extends funkin.states.MusicBeatState
 		_file.removeEventListener(IOErrorEvent.IO_ERROR, onSaveError);
 		_file = null;
 
-		showMessage('❌ Save cancelled', ACCENT_WARNING);
+		showMessage('X Save cancelled', ACCENT_WARNING);
 	}
 
 	function onSaveError(_):Void
@@ -5080,7 +5084,7 @@ class ChartingState extends funkin.states.MusicBeatState
 		_file.removeEventListener(IOErrorEvent.IO_ERROR, onSaveError);
 		_file = null;
 
-		showMessage('❌ Error saving chart!', ACCENT_ERROR);
+		showMessage('X Error saving chart!', ACCENT_ERROR);
 	}
 
 	/** Devuelve strumsGroups en el orden visual (igual que los iconos de personajes). */
@@ -5165,7 +5169,7 @@ class ChartingState extends funkin.states.MusicBeatState
 	{
 		if (!validateChart())
 		{
-			showMessage('❌ Chart has errors! Fix them before testing.', ACCENT_ERROR);
+			showMessage('X Chart has errors! Fix them before testing.', ACCENT_ERROR);
 			return;
 		}
 
@@ -5187,6 +5191,19 @@ class ChartingState extends funkin.states.MusicBeatState
 		{
 			funkin.system.CursorManager.hide();
 			LoadingState.loadAndSwitchState(new PlayState());
+			#if (!flash && !html5)
+			new flixel.util.FlxTimer().start(0, function(_) {
+				funkin.cache.PathsCache.instance.flushGPUCache();
+				#if cpp
+				cpp.vm.Gc.run(true);
+				try {
+					cpp.vm.Gc.compact();
+				} catch (_:Dynamic) {}
+				#end
+				#if hl hl.Gc.major(); #end
+				trace('[ChartingState] GPU flush post-prewarm completed');
+			});
+			#end
 		});
 	}
 
@@ -5195,7 +5212,7 @@ class ChartingState extends funkin.states.MusicBeatState
 	{
 		if (!validateChart())
 		{
-			showMessage('❌ Chart has errors! Fix them before testing.', ACCENT_ERROR);
+			showMessage('X Chart has errors! Fix them before testing.', ACCENT_ERROR);
 			return;
 		}
 
@@ -5221,6 +5238,19 @@ class ChartingState extends funkin.states.MusicBeatState
 		{
 			funkin.system.CursorManager.hide();
 			LoadingState.loadAndSwitchState(new PlayState());
+			#if (!flash && !html5)
+			new flixel.util.FlxTimer().start(0, function(_) {
+				funkin.cache.PathsCache.instance.flushGPUCache();
+				#if cpp
+				cpp.vm.Gc.run(true);
+				try {
+					cpp.vm.Gc.compact();
+				} catch (_:Dynamic) {}
+				#end
+				#if hl hl.Gc.major(); #end
+				trace('[ChartingState] GPU flush post-prewarm completed');
+			});
+			#end
 		});
 	}
 
@@ -5346,7 +5376,7 @@ class ChartingState extends funkin.states.MusicBeatState
 		}
 		catch (e:Dynamic)
 		{
-			showMessage('❌ Error parsing JSON: $e', ACCENT_ERROR);
+			showMessage('X Error parsing JSON: $e', ACCENT_ERROR);
 			trace('Load error: $e');
 		}
 
@@ -5364,7 +5394,7 @@ class ChartingState extends funkin.states.MusicBeatState
 		_file.removeEventListener(IOErrorEvent.IO_ERROR, onLoadError);
 		_file = null;
 
-		showMessage('❌ Load cancelled', ACCENT_WARNING);
+		showMessage('X Load cancelled', ACCENT_WARNING);
 	}
 
 	function onLoadError(_):Void
@@ -5374,7 +5404,7 @@ class ChartingState extends funkin.states.MusicBeatState
 		_file.removeEventListener(IOErrorEvent.IO_ERROR, onLoadError);
 		_file = null;
 
-		showMessage('❌ Error loading chart!', ACCENT_ERROR);
+		showMessage('X Error loading chart!', ACCENT_ERROR);
 	}
 
 	function exportChart():Void

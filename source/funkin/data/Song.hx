@@ -175,6 +175,15 @@ class Song
 			for (fv in folderVars)
 				for (dv in diffVars)
 				{
+					for (songsBase in ['$modRoot/songs', '$modRoot/assets/songs'])
+					{
+						final cd = '$songsBase/$fv/charts';
+						// Name flat:   charts/hard.json
+						if (FileSystem.exists('$cd/$dv.json')) return '$cd/$dv.json';
+						// Name complete: charts/name-hard.json
+						if (FileSystem.exists('$cd/$fv-$dv.json')) return '$cd/$fv-$dv.json';
+					}
+
 					// Cool / Psych flat: songs/name/hard.json
 					for (base in ['$modRoot/songs', '$modRoot/assets/songs'])
 					{
@@ -191,17 +200,25 @@ class Song
 						if (lastDash > 0)
 						{
 							final variation = dvLow.substr(lastDash + 1); // "bf"
-							for (base in ['$modRoot/songs', '$modRoot/assets/songs'])
+							for (songsBase in ['$modRoot/songs', '$modRoot/assets/songs'])
 							{
-								final p = '$base/$fv/$fv-$variation.json';
+								// charts/ subfolder for variations
+								final cd = '$songsBase/$fv/charts';
+								if (FileSystem.exists('$cd/$fv-$variation.json')) return '$cd/$fv-$variation.json';
+								// root of the song
+								final p = '$songsBase/$fv/$fv-$variation.json';
 								if (FileSystem.exists(p)) return p;
 							}
 						}
 					}
-					// V-Slice: songs/name/name-chart.json  (todos los diffs en un archivo)
-					for (base in ['$modRoot/songs', '$modRoot/assets/songs'])
+					// V-Slice: songs/name/name-chart.json  (all the diffs in one file)
+					for (songsBase in ['$modRoot/songs', '$modRoot/assets/songs'])
 					{
-						final p = '$base/$fv/$fv-chart.json';
+						// charts/ subfolder
+						final cd = '$songsBase/$fv/charts';
+						if (FileSystem.exists('$cd/$fv-chart.json')) return '$cd/$fv-chart.json';
+						// raíz
+						final p = '$songsBase/$fv/$fv-chart.json';
 						if (FileSystem.exists(p)) return p;
 					}
 					// Psych: data/name/name-diff.json  o  data/name/diff.json
@@ -211,11 +228,16 @@ class Song
 							if (FileSystem.exists(p)) return p;
 					}
 					// ── Formatos externos: osu!mania (.osu), StepMania (.sm / .ssc) ──
-					for (base in ['$modRoot/songs', '$modRoot/assets/songs'])
+					for (songsBase in ['$modRoot/songs', '$modRoot/assets/songs'])
 					{
+						final cd = '$songsBase/$fv/charts';
 						for (ext in ['osu', 'sm', 'ssc'])
 						{
-							for (p in ['$base/$fv/$dv.$ext', '$base/$fv/$fv.$ext'])
+							// charts/ first subfolder
+							for (p in ['$cd/$dv.$ext', '$cd/$fv.$ext'])
+								if (FileSystem.exists(p)) return p;
+							// root
+							for (p in ['$songsBase/$fv/$dv.$ext', '$songsBase/$fv/$fv.$ext'])
 								if (FileSystem.exists(p)) return p;
 						}
 					}
@@ -225,6 +247,11 @@ class Song
 		for (fv in folderVars)
 			for (dv in diffVars)
 			{
+				// charts/ subfolder in assets/ (flat or full name)
+				final cd = 'assets/songs/$fv/charts';
+				if (FileSystem.exists('$cd/$dv.json')) return '$cd/$dv.json';
+				if (FileSystem.exists('$cd/$fv-$dv.json')) return '$cd/$fv-$dv.json';
+				// root of the song (compatibility)
 				final p = 'assets/songs/$fv/$dv.json';
 				if (FileSystem.exists(p)) return p;
 			}
@@ -238,6 +265,10 @@ class Song
 				if (lastDash > 0)
 				{
 					final variation = dvLow.substr(lastDash + 1);
+					// charts/ subfolder
+					final cd = 'assets/songs/$fv/charts';
+					if (FileSystem.exists('$cd/$fv-$variation.json')) return '$cd/$fv-$variation.json';
+					// root
 					final p = 'assets/songs/$fv/$fv-$variation.json';
 					if (FileSystem.exists(p)) return p;
 				}
@@ -246,16 +277,25 @@ class Song
 		// V-Slice: assets/songs/name/name-chart.json  (todos los diffs en un archivo)
 		for (fv in folderVars)
 		{
+			final cd = 'assets/songs/$fv/charts';
+			if (FileSystem.exists('$cd/$fv-chart.json')) return '$cd/$fv-chart.json';
 			final p = 'assets/songs/$fv/$fv-chart.json';
 			if (FileSystem.exists(p)) return p;
 		}
 
-		// Formatos externos en assets/
+		// External formats in assets/ (charts/ first, then root)
 		for (fv in folderVars)
 			for (dv in diffVars)
+			{
+				final cd = 'assets/songs/$fv/charts';
 				for (ext in ['osu', 'sm', 'ssc'])
+				{
+					for (p in ['$cd/$dv.$ext', '$cd/$fv.$ext'])
+						if (FileSystem.exists(p)) return p;
 					for (p in ['assets/songs/$fv/$dv.$ext', 'assets/songs/$fv/$fv.$ext'])
 						if (FileSystem.exists(p)) return p;
+				}
+			}
 
 		return null;
 		#else
@@ -607,10 +647,19 @@ class Song
 		// recibía el nombre del folder como difficulty → ninguna clave matchaba →
 		// siempre cargaba la primera dificultad disponible (easy) en vez de normal/hard.
 		final searchDirs:Array<String> = [];
+		// chartsSubdirs: dirs which are charts/ subfolder → accept flat diff names
+		final chartsSubdirs = new haxe.ds.StringMap<Bool>();
 		// Mod activo primero (mayor prioridad)
 		if (mods.ModManager.isActive())
 		{
 			final mr = mods.ModManager.modRoot();
+			// charts/ first subfolder (new structure)
+			for (sd in ['$mr/songs/$folderLow/charts', '$mr/assets/songs/$folderLow/charts'])
+			{
+				searchDirs.push(sd);
+				chartsSubdirs.set(sd, true);
+			}
+			// Song root (compatibility with existing mods)
 			searchDirs.push('$mr/songs/$folderLow');
 			searchDirs.push('$mr/assets/songs/$folderLow');
 			searchDirs.push('$mr/data/$folderLow');
@@ -622,17 +671,25 @@ class Song
 			if (!mods.ModManager.isEnabled(mod.id)) continue;
 			final root = '${mods.ModManager.MODS_FOLDER}/${mod.id}';
 			final mr = root;
+			for (sd in ['$mr/songs/$folderLow/charts', '$mr/assets/songs/$folderLow/charts'])
+			{
+				if (!searchDirs.contains(sd)) { searchDirs.push(sd); chartsSubdirs.set(sd, true); }
+			}
 			for (d in ['$mr/songs/$folderLow', '$mr/assets/songs/$folderLow',
 			           '$mr/data/$folderLow',  '$mr/assets/data/$folderLow'])
 				if (!searchDirs.contains(d)) searchDirs.push(d);
 		}
-		// Assets base (menor prioridad)
+		// Base assets (lowest priority) — charts/ first
+		final baseCd = 'assets/songs/$folderLow/charts';
+		searchDirs.push(baseCd);
+		chartsSubdirs.set(baseCd, true);
 		searchDirs.push('assets/songs/$folderLow');
 		searchDirs.push('assets/data/$folderLow');
 
 		for (dir in searchDirs)
 		{
 			if (!FileSystem.exists(dir) || !FileSystem.isDirectory(dir)) continue;
+			final isChartsDir = chartsSubdirs.exists(dir);
 			for (entry in FileSystem.readDirectory(dir))
 			{
 				final entryLow = entry.toLowerCase();

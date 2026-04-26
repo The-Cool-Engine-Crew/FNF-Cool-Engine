@@ -105,7 +105,7 @@ class VSliceConverter
 		// Esto ocurre porque Song.loadFromJson pasa el filename como diff ("ugh-erect").
 		if (chartFilePath != null && chartFilePath != '')
 		{
-			final folderName = _folderName(_parentDir(chartFilePath)).toLowerCase();
+			final folderName = _songFolderFromPath(chartFilePath).name;
 			final prefix = folderName + '-';
 			if (difficulty.toLowerCase().startsWith(prefix))
 				difficulty = difficulty.substr(prefix.length);
@@ -159,7 +159,7 @@ class VSliceConverter
 		// Si tenemos el path del chart, derivamos el folder name desde ahí.
 		// Si no, usamos el songName en lowercase como fallback.
 		final songFolder:String = (chartFilePath != null && chartFilePath != '')
-			? _folderName(_parentDir(chartFilePath)).toLowerCase()
+			? _songFolderFromPath(chartFilePath).name
 			: meta.songName.toLowerCase();
 
 		final song:SwagSong = {
@@ -622,12 +622,19 @@ class VSliceConverter
 		};
 
 		#if sys
-		// Determinar la carpeta del chart
+		// Determinar la carpeta del chart.
+		// FIX: usar _songFolderFromPath() en lugar de _parentDir() crudo.
+		// Cuando el chart está en un subdirectorio charts/ (estructura V-Slice estándar):
+		//   songs/bopeebo/charts/bopeebo-erect.json
+		//   → _parentDir() daba dir="songs/bopeebo/charts", folderName="charts"  ← INCORRECTO
+		//   → _songFolderFromPath() da  dir="songs/bopeebo",        name="bopeebo" ← CORRECTO
+		// Sin este fix, genericCandidates buscaba "charts/charts-metadata.json" y
+		// specificCandidates buscaba "charts/charts-metadata-erect.json", ninguno existe.
 		if (chartFilePath != null && chartFilePath != '')
 		{
-			final dir = _parentDir(chartFilePath);
-			// Inferir nombre de canción del nombre de carpeta o del archivo
-			final folderName = _folderName(dir);
+			final songInfo = _songFolderFromPath(chartFilePath);
+			final dir = songInfo.dir;         // raíz real de la canción (ej: songs/bopeebo)
+			final folderName = songInfo.name; // nombre real del folder  (ej: bopeebo)
 			result.songName = _capitalize(folderName);
 
 			// Si la dificultad viene como "ugh-erect" (nombre de archivo completo),
@@ -653,25 +660,20 @@ class VSliceConverter
 
 			// ── Carga en dos pasos ────────────────────────────────────────────────────
 			// Paso 1: metadata genérica (valores base: stage, BPM, personajes, artist)
-			// Paso 2: metadata específica de dificultad (override, incluyendo artist)
+			// Paso 2: metadata específica de dificultad (override: instrumental, artist…)
 			//
-			// Así, si senpai-metadata-erect.json tiene un "artist" distinto, tiene
-			// prioridad. Si no tiene "artist", se conserva el del metadata base.
-			// La carga genérica también busca en carpeta padre para variaciones.
-			final parentDir = _parentDir(dir);
-			final parentFolder = _folderName(parentDir);
-
+			// Así, si senpai-metadata-erect.json tiene un "artist" distinto o un
+			// "instrumental" diferente, tiene prioridad sobre el metadata base.
+			// Si el campo no aparece en el metadata específico, se conserva el del base.
 			final genericCandidates:Array<String> = [
 				'$dir/${folderName}-metadata-default.json',
 				'$dir/$folderName-metadata.json',
 				'$dir/metadata.json',
 			];
-			if (parentFolder != '' && parentFolder != folderName)
-			{
-				genericCandidates.push('$parentDir/$parentFolder-metadata.json');
-				genericCandidates.push('$parentDir/metadata.json');
-			}
 
+			// specificCandidates: busca bopeebo-metadata-erect.json en la raíz de la
+			// canción (dir). Antes se buscaba en _parentDir() que podía ser charts/,
+			// por lo que este archivo nunca se encontraba.
 			final specificCandidates:Array<String> = [];
 			for (_dv in _diffVarsFile)
 				specificCandidates.push('$dir/${folderName}-metadata-${_dv}.json');
@@ -871,6 +873,30 @@ class VSliceConverter
 		final sep2 = dir.lastIndexOf('\\');
 		final sep = Std.int(Math.max(sep1, sep2));
 		return sep >= 0 ? dir.substr(sep + 1) : dir;
+	}
+
+	/**
+	 * Devuelve el nombre real de la carpeta de la canción a partir del path del chart,
+	 * resolviendo correctamente el caso en que el archivo esté dentro de charts/:
+	 *
+	 *   songs/bopeebo/bopeebo-chart.json  → "bopeebo"
+	 *   songs/bopeebo/charts/bopeebo-chart.json → "bopeebo"  ← FIX: antes devolvía "charts"
+	 *
+	 * También devuelve el directorio raíz de la canción (parent de charts/ o del propio archivo).
+	 */
+	static function _songFolderFromPath(chartFilePath:String):{name:String, dir:String}
+	{
+		final immediateDir = _parentDir(chartFilePath);
+		final immediateName = _folderName(immediateDir).toLowerCase();
+
+		// Si el archivo vive dentro de charts/, el nombre real es el de su carpeta padre
+		if (immediateName == 'charts')
+		{
+			final songDir = _parentDir(immediateDir);
+			return { name: _folderName(songDir).toLowerCase(), dir: songDir };
+		}
+
+		return { name: immediateName, dir: immediateDir };
 	}
 
 	static function _capitalize(s:String):String

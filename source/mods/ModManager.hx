@@ -6,6 +6,7 @@ import sys.io.File;
 #end
 import haxe.Json;
 import mods.ModEngineOverride;
+import ui.Alphabet.AlphabetConfig;
 
 using StringTools;
 
@@ -169,6 +170,7 @@ class ModManager
 			activeMod = null;
 			trace('[ModManager] Mod desactivado — modo base.');
 			ModEngineOverride.clear();
+			AlphabetConfig.reload();
 			_saveActiveState();
 			if (onModChanged != null) onModChanged(null);
 			return;
@@ -184,6 +186,7 @@ class ModManager
 		ModEngineOverride.loadFromModJson('$MODS_FOLDER/$modId/mod.json', modId);
 		#end
 
+		AlphabetConfig.reload();
 		_saveActiveState();
 		if (onModChanged != null) onModChanged(activeMod);
 	}

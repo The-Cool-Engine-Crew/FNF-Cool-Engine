@@ -1342,6 +1342,10 @@ class ScriptHandler
 	static final _condElseifReg:EReg = ~/^[ \t]*#elseif\b(.*)/;
 	static final _condElseReg  :EReg = ~/^[ \t]*#else\b/;
 	static final _condEndReg   :EReg = ~/^[ \t]*#end\b/;
+
+	// Strips `@:privateAccess` tokens — HScript has no private-access enforcement;
+	// leaving the token causes parse errors when it precedes an expression block.
+	static final _privateAccessReg:EReg = ~/@:privateAccess[ \t]*/g;
 	#end
 
 	// ── Wildcard import registry ──────────────────────────────────────────────
@@ -1465,10 +1469,58 @@ class ScriptHandler
 		#if LUA_ALLOWED        _scriptDefines["LUA_ALLOWED"]        = true; #end
 		#if (LUA_ALLOWED && linc_luajit) _scriptDefines["linc_luajit"] = true; #end
 
+		// hscript is always true when HSCRIPT_ALLOWED is set (the library is present).
+		// Mod scripts that gate code behind `#if hscript` expect this to be true.
+		#if HSCRIPT_ALLOWED    _scriptDefines["hscript"]            = true; #end
+
 		// Sentinel so the defines lazy-init doesn't re-run if all are absent
 		_scriptDefines["__initialized"] = true;
 
 		return _scriptDefines;
+	}
+
+	// ── Runtime version-string defines ───────────────────────────────────────
+	//
+	// Stores the *string value* of versioned library defines so that conditions
+	// like `#if (flixel >= "5.3.0")` or `#if ("flixel-addons" >= "3.0.0")` can
+	// be evaluated correctly at script-load time.
+	//
+	// Only Haxe-library versions known at compile time are pre-seeded here.
+	// Unknown defines (PSYCHVERSION, LEATHER, PSYCH, polymod, etc.) are absent
+	// from this map and therefore evaluate to `false` in any comparison — which
+	// is the correct behaviour because those engines are not active at runtime.
+	//
+	// Mods can register custom version strings at boot:
+	//   ScriptHandler.scriptDefineVersions.set("myEngine", "1.2.0");
+
+	public static var scriptDefineVersions(get, null):Map<String, String>;
+	static var _scriptDefineVersions:Map<String, String> = null;
+
+	static function get_scriptDefineVersions():Map<String, String>
+	{
+		if (_scriptDefineVersions != null) return _scriptDefineVersions;
+		_scriptDefineVersions = new Map();
+
+		// ── flixel version (compile-time ladder) ──────────────────────────────
+		#if (flixel >= "5.9.0")      _scriptDefineVersions["flixel"] = "5.9.0";
+		#elseif (flixel >= "5.8.0")  _scriptDefineVersions["flixel"] = "5.8.0";
+		#elseif (flixel >= "5.7.0")  _scriptDefineVersions["flixel"] = "5.7.0";
+		#elseif (flixel >= "5.6.0")  _scriptDefineVersions["flixel"] = "5.6.0";
+		#elseif (flixel >= "5.5.0")  _scriptDefineVersions["flixel"] = "5.5.0";
+		#elseif (flixel >= "5.4.0")  _scriptDefineVersions["flixel"] = "5.4.0";
+		#elseif (flixel >= "5.3.0")  _scriptDefineVersions["flixel"] = "5.3.0";
+		#elseif (flixel >= "5.0.0")  _scriptDefineVersions["flixel"] = "5.0.0";
+		#else                         _scriptDefineVersions["flixel"] = "4.11.0";
+		#end
+
+		// ── flixel-addons version ─────────────────────────────────────────────
+		#if (flixel_addons >= "3.1.0")      _scriptDefineVersions["flixel-addons"] = "3.1.0";
+		#elseif (flixel_addons >= "3.0.0")  _scriptDefineVersions["flixel-addons"] = "3.0.0";
+		#elseif (flixel_addons >= "2.11.0") _scriptDefineVersions["flixel-addons"] = "2.11.0";
+		#else                                _scriptDefineVersions["flixel-addons"] = "2.9.0";
+		#end
+
+		return _scriptDefineVersions;
 	}
 
 	// ── Condition evaluator ───────────────────────────────────────────────────
@@ -1536,10 +1588,70 @@ class ScriptHandler
 		if (cond.charAt(0) == '!')
 			return !evalScriptCond(cond.substring(1).ltrim());
 
+		// ── Version / value comparison: lhs op "rhs" ─────────────────────────
+		// Handles conditions like:
+		//   #if (flixel >= "5.3.0")        #if (PSYCHVERSION >= "0.7")
+		//   #if ("flixel-addons" >= "3.0.0")   #if (flixel < "5.3.0")
+		//
+		// Operators are tried longest-first to avoid `>` matching `>=`.
+		// If the left-hand side is not in scriptDefineVersions the condition
+		// evaluates to false — unknown defines (PSYCH, LEATHER, PSYCHVERSION…)
+		// are not present at runtime and must never silently activate code.
+		for (op in [">=", "<=", "!=", "==", ">", "<"])
+		{
+			final idx = cond.indexOf(op);
+			if (idx <= 0) continue;
+
+			var lhs = cond.substring(0, idx).trim();
+			var rhs = cond.substring(idx + op.length).trim();
+
+			// strip surrounding string-literal quotes from both sides
+			// e.g. `"flixel-addons"` → `flixel-addons`,  `"3.0.0"` → `3.0.0`
+			if (lhs.length >= 2 && (lhs.charAt(0) == '"' || lhs.charAt(0) == "'")
+			    && lhs.charAt(lhs.length - 1) == lhs.charAt(0))
+				lhs = lhs.substring(1, lhs.length - 1);
+			if (rhs.length >= 2 && (rhs.charAt(0) == '"' || rhs.charAt(0) == "'")
+			    && rhs.charAt(rhs.length - 1) == rhs.charAt(0))
+				rhs = rhs.substring(1, rhs.length - 1);
+
+			final lhsVersion = scriptDefineVersions.get(lhs);
+			if (lhsVersion == null) return false; // unknown define → false
+
+			return _compareVersionStr(lhsVersion, rhs, op);
+		}
+
 		// ── Simple identifier ─────────────────────────────────────────────────
 		// Strip any remaining whitespace / trailing comment and look up
 		final ident = cond.split(' ')[0].split('\t')[0];
 		return scriptDefines.exists(ident) && scriptDefines[ident] == true;
+	}
+
+	/**
+	 * Compares two dot-separated version strings (e.g. "5.3.0" vs "5.9.0")
+	 * using the given relational operator.
+	 * Segments are compared numerically, left-to-right; missing segments are 0.
+	 */
+	static function _compareVersionStr(a:String, b:String, op:String):Bool
+	{
+		final ap = a.split('.');
+		final bp = b.split('.');
+		final len = Std.int(Math.max(ap.length, bp.length));
+		var cmp = 0;
+		for (i in 0...len)
+		{
+			final ai = (i < ap.length) ? (Std.parseInt(ap[i]) != null ? Std.parseInt(ap[i]) : 0) : 0;
+			final bi = (i < bp.length) ? (Std.parseInt(bp[i]) != null ? Std.parseInt(bp[i]) : 0) : 0;
+			if (ai != bi) { cmp = ai > bi ? 1 : -1; break; }
+		}
+		return switch (op) {
+			case ">":  cmp >  0;
+			case "<":  cmp <  0;
+			case ">=": cmp >= 0;
+			case "<=": cmp <= 0;
+			case "==": cmp == 0;
+			case "!=": cmp != 0;
+			default:   false;
+		};
 	}
 
 	// ── Conditional compilation preprocessor ─────────────────────────────────
@@ -1632,7 +1744,12 @@ class ScriptHandler
 			{
 				// Regular line: emit only if we're inside an active branch (or no branch at all).
 				// Inactive lines become `// ` to preserve line numbers for error reporting.
-				out.push(isActive() ? (rawLine.endsWith('\r') ? line : rawLine) : '// ');
+				// For active lines, also resolve any inline `#if COND X #else Y #end` tokens
+				// that appear mid-expression (e.g. inside function-call arguments).
+				if (isActive())
+					out.push(_processInlineIf(rawLine.endsWith('\r') ? line : rawLine));
+				else
+					out.push('// ');
 			}
 		}
 
@@ -1640,6 +1757,124 @@ class ScriptHandler
 			trace('[ScriptHandler] ${stack.length} unclosed #if block(s) detected.');
 
 		return out.join('\n');
+	}
+
+	// ── Inline conditional processor ─────────────────────────────────────────
+	//
+	// `_processConditionals` handles #if blocks that start on their own line.
+	// Some scripts also use inline conditionals within expressions, e.g.:
+	//
+	//   var f:String = Paths.json(#if PSYCH foo() #else bar() #end + "/x");
+	//
+	// `_processInlineIf` iterates over a single (already-active) line and
+	// collapses every such token into its active branch, repeating until none
+	// remain (handles nesting).
+
+	/**
+	 * Replaces all inline `#if … #else … #end` tokens within a single line.
+	 * Only called for lines that are already in an active `#if` block (or at
+	 * the top level), so the outer condition has already been resolved.
+	 */
+	static function _processInlineIf(s:String):String
+	{
+		if (s.indexOf('#if') < 0) return s;
+		var result = s;
+		var guard = 20; // prevent pathological infinite loops
+		while (guard-- > 0)
+		{
+			final next = _replaceOneInlineIf(result);
+			if (next == result) break; // no token found / unbalanced — stop
+			result = next;
+		}
+		return result;
+	}
+
+	/**
+	 * Finds the first inline `#if` token that is NOT inside a string literal
+	 * or a `//` comment, then replaces the entire `#if … #end` span with the
+	 * active branch.  Returns the original string unchanged if no replaceable
+	 * token is found (unbalanced or no `#if` at all).
+	 */
+	static function _replaceOneInlineIf(s:String):String
+	{
+		// ── Locate the first #if outside strings / line comments ─────────────
+		var start = -1;
+		var inStr  = false;
+		var strCh  = '"';
+		var i = 0;
+		while (i < s.length - 2)
+		{
+			final c = s.charAt(i);
+			if (!inStr && (c == '"' || c == "'")) { inStr = true; strCh = c; i++; continue; }
+			if (inStr  && c == strCh && (i == 0 || s.charAt(i - 1) != '\\')) { inStr = false; i++; continue; }
+			if (inStr) { i++; continue; }
+			// stop at line comments — nothing after // can be an active #if
+			if (c == '/' && s.charAt(i + 1) == '/') break;
+			if (s.substr(i, 3) == '#if') { start = i; break; }
+			i++;
+		}
+		if (start < 0) return s;
+
+		// ── Read past '#if' and skip whitespace ───────────────────────────────
+		var pos = start + 3;
+		while (pos < s.length && (s.charAt(pos) == ' ' || s.charAt(pos) == '\t')) pos++;
+
+		// ── Read the condition (parenthesised or plain word) ──────────────────
+		final condStart = pos;
+		if (pos < s.length && s.charAt(pos) == '(')
+		{
+			var d = 0;
+			while (pos < s.length) {
+				if      (s.charAt(pos) == '(') d++;
+				else if (s.charAt(pos) == ')') { d--; if (d == 0) { pos++; break; } }
+				pos++;
+			}
+		}
+		else
+		{
+			while (pos < s.length && s.charAt(pos) != ' ' && s.charAt(pos) != '\t' && s.charAt(pos) != '#')
+				pos++;
+		}
+		final cond = s.substring(condStart, pos).trim();
+
+		// ── Scan for matching #else / #end (depth-tracked) ───────────────────
+		var nest = 1;
+		var elseStart = -1; var elseEnd = -1;
+		var endStart  = -1; var endEnd  = -1;
+		i = pos;
+		while (i < s.length)
+		{
+			if (s.substr(i, 3) == '#if') { nest++; i += 3; continue; }
+
+			if (nest == 1 && s.substr(i, 5) == '#else' && elseStart < 0)
+			{
+				// Distinguish `#else` from `#elseif`
+				final nc = (i + 5 < s.length) ? s.charAt(i + 5) : ' ';
+				if (nc == ' ' || nc == '\t' || nc == '#' || nc == '\n' || nc == '\r' || nc == '/')
+				{
+					elseStart = i; elseEnd = i + 5;
+				}
+			}
+
+			if (s.substr(i, 4) == '#end')
+			{
+				nest--;
+				if (nest == 0) { endStart = i; endEnd = i + 4; break; }
+				i += 4; continue;
+			}
+			i++;
+		}
+		if (endStart < 0) return s; // unbalanced — leave untouched
+
+		// ── Extract branches and substitute ──────────────────────────────────
+		final trueBranch  = (elseStart >= 0
+			? s.substring(pos, elseStart)
+			: s.substring(pos, endStart)).trim();
+		final falseBranch = elseStart >= 0 ? s.substring(elseEnd, endStart).trim() : '';
+
+		final chosen = evalScriptCond(cond) ? trueBranch : falseBranch;
+		// Re-join with a single space separator so the surrounding tokens stay valid.
+		return s.substring(0, start) + (chosen.length > 0 ? chosen + ' ' : '') + s.substring(endEnd);
 	}
 	#end
 
@@ -1663,6 +1898,13 @@ class ScriptHandler
 	{
 		// ── Step 1: #if / #elseif / #else / #end ─────────────────────────────
 		var result = _processConditionals(source);
+
+		// ── Step 1.5: strip @:privateAccess ──────────────────────────────────
+		// HScript has no private-access enforcement; leaving the token causes
+		// parse failures when it appears before an expression block at runtime.
+		// allowMetadata = true handles it on class/function declarations, but
+		// NOT when used as an expression prefix (e.g. `@:privateAccess { … }`).
+		result = _privateAccessReg.map(result, function(_) return '');
 
 		// ── Step 2: strip `package foo.bar;` ─────────────────────────────────
 		result = _packageReg.map(result, function(r:EReg):String

@@ -609,6 +609,63 @@ class ScriptAPI
 
 		interp.variables.set('hasClass', function(name:String):Bool
 			return _scriptClasses.exists(name) || interp.variables.exists(name));
+
+		// ─── Sistema de librerías HScript ────────────────────────────────────────
+		// require(name) carga y devuelve los exports de una librería .hx sin compilar.
+		//
+		// Orden de búsqueda:
+		//   1. mods/<activeMod>/libs/   ← librería del mod activo
+		//   2. libs/ de cada addon cargado  ← librerías de addons
+		//   3. assets/data/libs/         ← librerías base del engine
+		//
+		// Ejemplo de uso desde cualquier script de mod:
+		//   var Utils = require('Utils');
+		//   Utils.miFuncion(arg1, arg2);
+		//
+		// Ejemplo con subcarpeta:
+		//   var MathExtra = require('math/Lerp');
+		//
+		// forceReload: si true, re-ejecuta el archivo ignorando caché.
+		#if sys
+		interp.variables.set('require', function(name:String, ?forceReload:Bool):Dynamic {
+			final searchDirs:Array<String> = [];
+
+			// 1. Libs del mod activo
+			final modRoot = mods.ModManager.modRoot();
+			if (modRoot != null)
+				searchDirs.push('$modRoot/libs');
+
+			// 2. Libs de todos los addons cargados
+			for (dir in funkin.addons.AddonManager.getLibSearchDirs())
+				searchDirs.push(dir);
+
+			// BASE_LIBS se añade automáticamente dentro de ScriptLibrary.require()
+			return funkin.scripting.ScriptLibrary.require(
+				name, searchDirs,
+				#if HSCRIPT_ALLOWED cast interp #else null #end,
+				forceReload ?? false
+			);
+		});
+
+		// hasLib(name) — comprueba si una librería existe sin cargarla.
+		interp.variables.set('hasLib', function(name:String):Bool {
+			final dirs:Array<String> = [];
+			final modRoot = mods.ModManager.modRoot();
+			if (modRoot != null) dirs.push('$modRoot/libs');
+			for (dir in funkin.addons.AddonManager.getLibSearchDirs())
+				dirs.push(dir);
+			dirs.push(funkin.scripting.ScriptLibrary.BASE_LIBS);
+
+			for (dir in dirs)
+				for (ext in ['.hx', '.hscript', ''])
+				{
+					final p = '$dir/$name$ext';
+					if (sys.FileSystem.exists(p) && !sys.FileSystem.isDirectory(p))
+						return true;
+				}
+			return false;
+		});
+		#end
 	}
 
 	// ─── Math extendido ───────────────────────────────────────────────────────

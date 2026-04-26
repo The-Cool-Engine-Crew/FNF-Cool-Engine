@@ -65,6 +65,19 @@ typedef AddonInfo = {
 	var ?hooks: Dynamic;
 
 	/**
+	 * Lista explícita de librerías HScript que este addon provee.
+	 * Cada entrada es una ruta relativa a la carpeta del addon, sin extensión.
+	 * Ejemplo: ["MiLib", "utils/StringUtils"]
+	 *
+	 * Si se omite, AddonManager auto-escanea la carpeta `libs/` del addon
+	 * y registra todos los .hx que encuentre.
+	 *
+	 * Las libs quedan disponibles via require() tanto para scripts del addon
+	 * como para scripts de mods activos (fallback de búsqueda global).
+	 */
+	var ?libs: Array<String>;
+
+	/**
 	 * IDs de mods con los que este addon es compatible/diseñado.
 	 * Si es null/vacío = compatible con todos.
 	 */
@@ -75,4 +88,29 @@ typedef AddonInfo = {
 	 * Ejemplo: ["base-addon >= 1.0.0"]
 	 */
 	var ?requires: Array<String>;
+
+	/**
+	 * Dependencias externas de librerías HScript.
+	 * Se descargan desde GitHub u otras URLs en tiempo de ejecución
+	 * y se cachean en `addons/<id>/.deps/`.
+	 * Quedan disponibles vía require() exactamente igual que las libs locales.
+	 *
+	 * Ejemplos:
+	 *
+	 *   // URL directa a un .hx crudo
+	 *   { "name": "EaseLib", "url": "https://raw.githubusercontent.com/user/repo/main/Ease.hx" }
+	 *
+	 *   // Shorthand GitHub con un único archivo
+	 *   { "name": "ArrayUtils", "github": "user/repo", "branch": "main", "path": "src/ArrayUtils.hx" }
+	 *
+	 *   // Múltiples archivos del mismo repo
+	 *   { "github": "user/repo", "paths": [
+	 *       { "name": "Foo", "path": "src/Foo.hx" },
+	 *       { "name": "Bar", "path": "src/Bar.hx" }
+	 *   ]}
+	 *
+	 * IMPORTANTE: sólo funcionan librerías Haxe puras sin macros, externs
+	 * ni bindings nativos — HScript es un intérprete, no un compilador.
+	 */
+	var ?dependencies: Array<funkin.addons.ScriptDependency.ScriptDepInfo>;
 }
