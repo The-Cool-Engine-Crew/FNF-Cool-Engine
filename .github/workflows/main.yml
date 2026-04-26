@@ -309,3 +309,91 @@ jobs:
           name: CoolEngine-Android
           path: export/release/android/bin/app/build/outputs/apk/
           if-no-files-found: error
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # HASHLINK (HL bytecode — desktop, sin hxcpp)
+  #
+  # Diferencias clave respecto a los jobs C++:
+  #   • NO se instala hxcpp                 (no se genera código C++)
+  #   • NO se instala linc_luajit           (extensión nativa C++ pura)
+  #   • NO se instala discord_rpc           (wrapper nativo C++ puro)
+  #   • NO se instala hxvlc                 (project.hxp ya lo filtra con isCPP())
+  #   • NO se instala extension-haptics     (solo mobile)
+  #   • SÍ se instala el runtime HL         (para poder ejecutar el .hl resultante)
+  # ══════════════════════════════════════════════════════════════════════════
+  build-hashlink:
+    name: "Build — HashLink"
+    runs-on: ubuntu-22.04
+    env:
+      HL_VERSION: "1.14"
+    steps:
+      - *checkout
+      - *setup-haxe
+
+      - name: Install system dependencies (SDL2, OpenAL, OpenGL, HL runtime deps)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            libsdl2-dev \
+            libopenal-dev \
+            libpng-dev \
+            libturbojpeg0-dev \
+            libvorbis-dev \
+            libogg-dev \
+            libuv1-dev \
+            libmbedtls-dev \
+            libsqlite3-dev \
+            libgl1-mesa-dev \
+            libglu1-mesa-dev \
+            libx11-dev libxext-dev \
+            g++ gcc make
+          sudo ldconfig
+
+      - name: Install HashLink ${{ env.HL_VERSION }} VM
+        run: |
+          wget -q \
+            "https://github.com/HaxeFoundation/hashlink/releases/download/${{ env.HL_VERSION }}/hashlink-${{ env.HL_VERSION }}-linux-amd64.tar.gz" \
+            -O hashlink.tar.gz
+          tar xzf hashlink.tar.gz
+          HL_DIR="hashlink-${{ env.HL_VERSION }}-linux-amd64"
+          sudo cp "$HL_DIR/hl"      /usr/local/bin/hl
+          # Copiar libhl.so + libs auxiliares de HL al linker path
+          sudo cp "$HL_DIR/"*.so    /usr/local/lib/ 2>/dev/null || true
+          sudo ldconfig
+          hl --version
+
+      - name: Install haxelibs (solo las compatibles con HL)
+        run: |
+          haxelib setup ~/haxelib
+          # Orden: lime primero para fijar versión antes de que openfl la negocie
+          haxelib install lime          ${{ env.LIME_VERSION }}   --never
+          haxelib install openfl        ${{ env.OPENFL_VERSION }} --never
+          haxelib install flixel        6.1.2                     --never
+          haxelib install flixel-addons 4.0.1                     --never
+          haxelib git    coolui    https://github.com/The-Cool-Engine-Crew/coolui --never
+          haxelib install flixel-tools  1.5.1  --quiet --never
+          haxelib install actuate               --quiet --never
+          haxelib install hscript               --quiet --never
+          haxelib install format                --quiet --never
+          haxelib install hxp                   --quiet --never
+          haxelib install tink_core             --quiet --never
+          haxelib git flixel-animate https://github.com/MaybeMaru/flixel-animate  main --never
+          haxelib git funkin.vis     https://github.com/FunkinCrew/funkVis             --never
+          haxelib git grig.audio     https://github.com/FunkinCrew/grig.audio          --never
+          # linc_luajit  → nativa C++, project.hxp la omite en !isCPP()
+          # discord_rpc  → nativa C++, project.hxp la omite en !isCPP()
+          # hxvlc        → nativa C++, project.hxp ya la filtra con isCPP()
+          # extension-haptics → solo mobile, no aplica en desktop HL
+
+      - *lock-versions
+      - *setup-lime
+
+      - name: Build (HashLink release)
+        run: haxelib run lime build hl -final
+
+      - name: Upload HashLink build
+        uses: actions/upload-artifact@v4
+        with:
+          name: CoolEngine-HashLink
+          path: export/release/hl/bin/
+          if-no-files-found: error

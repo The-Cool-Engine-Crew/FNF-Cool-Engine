@@ -411,7 +411,7 @@ class Project extends HXProject
     haxelibs.push(new Haxelib("openfl", "9.5.1"));
     addLib("flixel");
     addLib("flixel-addons");
-    addLib("linc_luajit");
+    if (isCPP()) addLib("linc_luajit");
     addLib("coolui");
     addLib("hscript");
     addLib("flixel-animate");
@@ -429,7 +429,7 @@ class Project extends HXProject
     if (isCPP() && (isDesktop() || isMobile()))
       addLib("hxvlc");
 
-    if (isDesktop())
+    if (isDesktop() && isCPP())
       addLib("discord_rpc");
 
     if (isSwitch())
@@ -451,8 +451,12 @@ class Project extends HXProject
     setHaxedef("HSCRIPT_ALLOWED");
     setHaxedef("LUA_ALLOWED");
     setHaxedef("FLX_NO_FOCUS_LOST_SCREEN");
-    setHaxedef("HXCPP_LARGE_BLOCKS");
-    setHaxedef("HXCPP_CHECK_POINTER");
+    // HXCPP_LARGE_BLOCKS y HXCPP_CHECK_POINTER son defines de hxcpp — ignorados en HL
+    if (isCPP())
+    {
+      setHaxedef("HXCPP_LARGE_BLOCKS");
+      setHaxedef("HXCPP_CHECK_POINTER");
+    }
 
     if (isMac())
     {

@@ -413,7 +413,7 @@ class RuleScriptInstance implements IScript
 
 	public function hotReload():Bool
 	{
-		#if (LUA_ALLOWED && sys)
+		#if (LUA_ALLOWED && linc_luajit)
 		if (_lua == null || filePath == null)
 			return false;
 		if (!FileSystem.exists(filePath))
@@ -447,7 +447,7 @@ class RuleScriptInstance implements IScript
 	}
 
 	// ── Static registry helpers ───────────────────────────────────────────────
-
+	#if (LUA_ALLOWED && linc_luajit)
 	/** Register a Haxe object and return its integer handle. */
 	public static function register(obj:Dynamic):Int
 	{
@@ -476,6 +476,7 @@ class RuleScriptInstance implements IScript
 	/** Register a named factory for newObject(). */
 	public static function registerClass(name:String, factory:Array<Dynamic>->Dynamic):Void
 		_factories.set(name, factory);
+	#end
 
 	// ── Private: bridge C functions (OOP) ────────────────────────────────────
 	#if (LUA_ALLOWED && linc_luajit)

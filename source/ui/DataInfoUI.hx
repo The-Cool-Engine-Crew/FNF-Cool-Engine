@@ -587,11 +587,14 @@ class GameplayDebugOverlay extends Sprite
 				hxCount++;
 			for (_ in sh.charScripts)
 				hxCount++;
+			luaCount = 0;
+			#if (LUA_ALLOWED && linc_luajit)
 			luaCount = sh.globalLuaScripts.length
 				+ sh.stageLuaScripts.length
 				+ sh.songLuaScripts.length
 				+ sh.uiLuaScripts.length
 				+ sh.charLuaScripts.length;
+			#end
 		}
 		catch (_:Dynamic)
 		{

@@ -210,15 +210,20 @@ class ScoreManager
 		// así que this.fullCombo / this.sickCombo siempre serían `true`.
 		var fcText = gameState.isFullCombo() ? ' [FC]' : '';
 		var scText = gameState.isSickMode()  ? ' [SC]' : '';
-		
-		return 'Score: ${gameState.score} - Misses: ${gameState.misses}$fcText$scText - Accuracy: ${gameState.accuracy}%';
+
+		// Fix accuracy N/A: comparar gameState.totalNotesPlayed, NO this.totalNotesPlayed.
+		// this.totalNotesPlayed es siempre 0 en el ScoreManager de display porque
+		// los hits los registra GameState.processNoteHit(), no ScoreManager.processNoteHit().
+		final accText = gameState.totalNotesPlayed > 0 ? '${gameState.accuracy}%' : 'N/A';
+		return 'Score: ${gameState.score} - Misses: ${gameState.misses}$fcText$scText - Accuracy: $accText';
 	}
 
 	/** Resumen de estadísticas para debug. */
 	public function getSummary():String
 	{
+		final accText = totalNotesPlayed > 0 ? '${accuracy}%' : 'N/A';
 		return 'Score=$score  Combo=$combo  MaxCombo=$maxCombo  '
-		     + 'Misses=$misses  Acc=$accuracy%  '
+		     + 'Misses=$misses  Acc=$accText  '
 		     + 'Sicks=$sicks  Goods=$goods  Bads=$bads  Shits=$shits';
 	}
 }

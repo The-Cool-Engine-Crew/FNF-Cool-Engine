@@ -47,7 +47,10 @@ class GameState
 
 	// === INTERNAL ===
 	private var totalNotesHit:Float = 0;
-	private var totalNotesPlayed:Int = 0;
+	// public(default,null): los sistemas externos (ScoreManager.getHUDText, HUD)
+	// necesitan saber si hay notas jugadas para mostrar "N/A" o un porcentaje real.
+	// Solo GameState escribe este valor — de ahí el null setter.
+	public var totalNotesPlayed(default, null):Int = 0;
 
 	// === CONSTANTS ===
 	private static inline var MAX_HEALTH:Float = 2.0;
@@ -176,7 +179,7 @@ class GameState
 	}
 
 	public function getAccuracyString():String
-		return Std.string(accuracy) + '%';
+		return totalNotesPlayed > 0 ? Std.string(accuracy) + '%' : 'N/A';
 
 	// ─── FC / Sick detection ─────────────────────────────────────────────────
 

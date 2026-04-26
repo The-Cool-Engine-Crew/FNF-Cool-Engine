@@ -44,6 +44,9 @@ class DialogueEditor extends FlxState
 	// === LABELS Y TÍTULOS (para ocultar/mostrar) ===
 	// Conversation tab
 	var convPanelTitle:FlxText;
+	var convFilesTitle:FlxText;
+	var convFileList:FlxTypedGroup<FlxText>;
+	var convFileButtons:FlxTypedGroup<CoolButton>;
 	var convNameLabel:FlxText;
 	var convSkinLabel:FlxText;
 	var convMessagesPanelTitle:FlxText;
@@ -329,6 +332,9 @@ class DialogueEditor extends FlxState
 	{
 		// === CONVERSATION TAB ===
 		if (convPanelTitle != null) convPanelTitle.visible = false;
+		if (convFilesTitle != null) convFilesTitle.visible = false;
+		if (convFileList != null) convFileList.visible = false;
+		if (convFileButtons != null) convFileButtons.visible = false;
 		if (convNameLabel != null) convNameLabel.visible = false;
 		if (conversationNameInput != null) conversationNameInput.visible = false;
 		if (convSkinLabel != null) convSkinLabel.visible = false;
@@ -499,6 +505,18 @@ class DialogueEditor extends FlxState
 		add(testBtn);
 		startY += 40;
 
+		// === LISTA DE DIÁLOGOS DISPONIBLES EN LA CANCIÓN ===
+		convFilesTitle = new FlxText(leftX, startY, PANEL_WIDTH, "DIALOGUES IN SONG:", 14);
+		convFilesTitle.setBorderStyle(OUTLINE, FlxColor.BLACK, 1);
+		add(convFilesTitle);
+		startY += 20;
+
+		convFileList = new FlxTypedGroup<FlxText>();
+		add(convFileList);
+
+		convFileButtons = new FlxTypedGroup<CoolButton>();
+		add(convFileButtons);
+
 		// === PANEL MEDIO: LISTA DE MENSAJES ===
 		startY = 100;
 		var midX = PANEL_WIDTH + PADDING * 2;
@@ -624,6 +642,9 @@ class DialogueEditor extends FlxState
 	function showConversationTab():Void
 	{
 		if (convPanelTitle != null) convPanelTitle.visible = true;
+		if (convFilesTitle != null) convFilesTitle.visible = true;
+		if (convFileList != null) convFileList.visible = true;
+		if (convFileButtons != null) convFileButtons.visible = true;
 		if (convNameLabel != null) convNameLabel.visible = true;
 		if (conversationNameInput != null) conversationNameInput.visible = true;
 		if (convSkinLabel != null) convSkinLabel.visible = true;
@@ -653,6 +674,8 @@ class DialogueEditor extends FlxState
 		if (musicInput != null) musicInput.visible = true;
 		if (convUpdateBtn != null) convUpdateBtn.visible = true;
 		if (removeMessageBtn != null) removeMessageBtn.visible = true;
+
+		refreshConversationList();
 	}
 
 	// ========================================
@@ -1237,6 +1260,7 @@ class DialogueEditor extends FlxState
 		if (DialogueData.saveConversation(PlayState.SONG.song, conversation))
 		{
 			_isDirty = false;
+			refreshConversationList();
 			showMessage("Conversation saved!", FlxColor.GREEN);
 		}
 		else
@@ -1246,17 +1270,25 @@ class DialogueEditor extends FlxState
 	}
 
 	/**
-	 * Cargar conversación
+	 * Cargar conversación — usa el nombre del input como nombre de archivo.
+	 * Ej: input "intro" → carga songs/<canción>/intro.json
 	 */
 	function loadConversation():Void
 	{
-		var loaded = DialogueData.loadConversation(PlayState.SONG.song);
+		var convName = conversationNameInput.text.trim();
+		if (convName == '')
+		{
+			showMessage("Enter a conversation name first!", FlxColor.ORANGE);
+			return;
+		}
+
+		var loaded = DialogueData.loadConversation(PlayState.SONG.song, convName);
 
 		if (loaded != null)
 		{
 			conversation = loaded;
 			conversationNameInput.text = conversation.name;
-			
+
 			// Cargar la skin asociada
 			if (conversation.skinName != null)
 			{
@@ -1265,11 +1297,47 @@ class DialogueEditor extends FlxState
 
 			selectedMessageIndex = -1;
 			refreshMessageList();
-			showMessage("Conversation loaded!", FlxColor.GREEN);
+			showMessage("Loaded: " + convName + ".json", FlxColor.GREEN);
 		}
 		else
 		{
-			showMessage("Load failed!", FlxColor.RED);
+			showMessage("Not found: " + convName + ".json", FlxColor.RED);
+		}
+	}
+
+	/**
+	 * Refrescar la lista de archivos de diálogo disponibles para la canción actual.
+	 */
+	function refreshConversationList():Void
+	{
+		if (convFileList == null || convFileButtons == null)
+			return;
+
+		convFileList.clear();
+		convFileButtons.clear();
+
+		var files = DialogueData.listConversations(song);
+		var startY = 290; // debajo del botón TEST + título
+		var x = PADDING;
+
+		for (convName in files)
+		{
+			var nameText = new FlxText(x, startY, PANEL_WIDTH - 80, convName + ".json", 12);
+			nameText.color = (convName == conversation.name) ? FlxColor.YELLOW : FlxColor.WHITE;
+			convFileList.add(nameText);
+
+			var loadBtn = new CoolButton(x + PANEL_WIDTH - 70, startY - 2, "LOAD", function()
+			{
+				conversationNameInput.text = convName;
+				loadConversation();
+			});
+			loadBtn.resize(70, 20);
+			loadBtn.setLabelFormat(null, 10, 0xFFFFFFFF);
+			convFileButtons.add(loadBtn);
+
+			startY += 20;
+			if (startY > FlxG.height - 100)
+				break;
 		}
 	}
 
@@ -1293,7 +1361,7 @@ class DialogueEditor extends FlxState
 			previewBox.destroy();
 		}
 
-		previewBox = new DialogueBoxImproved(PlayState.SONG.song);
+		previewBox = new DialogueBoxImproved(PlayState.SONG.song, conversation.name);
 		previewBox.finishThing = function()
 		{
 			remove(previewBox);

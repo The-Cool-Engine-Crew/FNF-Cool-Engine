@@ -7,7 +7,7 @@ package data;
 // Android is also cpp but does NOT have discord_rpc — use #if desktop.
 // ────────────────────────────────────────────────────────────────────────────
 
-#if desktop
+#if (desktop && cpp) // discord_rpc es nativa C++ — no disponible en HL
 
 import Sys.sleep;
 import discord_rpc.DiscordRpc;

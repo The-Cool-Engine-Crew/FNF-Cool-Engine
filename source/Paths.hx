@@ -276,7 +276,7 @@ class Paths
 	}
 
 	public static inline function imageCutscene(key:String):String
-		return '$key.png';
+		return resolve('$key.png', IMAGE);
 
 	public static inline function characterimage(key:String):String
 		return resolve('characters/images/$key.png', IMAGE);
@@ -911,7 +911,11 @@ class Paths
 		return _cachedAtlas('splash_$key', () -> _sparrow(resolve('notes/splashes/$key.png', IMAGE), resolve('notes/splashes/$key.xml', TEXT)));
 
 	public static function getSparrowAtlasCutscene(key:String):FlxAtlasFrames
-		return _cachedAtlas('cutscene_$key', () -> _sparrowFromPath('$key.png', '$key.xml'));
+	{
+		final pngPath = resolve('$key.png', IMAGE);
+		final xmlPath = resolve('$key.xml', TEXT);
+		return _cachedAtlas('cutscene_$key', () -> _sparrowFromPath(pngPath, xmlPath));
+	}
 
 	// ── Atlas Packer con caché ────────────────────────────────────────────────
 

@@ -783,6 +783,14 @@ class Main extends Sprite
 	{
 		#if cpp
 		VSyncAPI.setVSync(SaveData.data.vsync != false);
+		#elseif hl
+		// HashLink: VSync via lime.ui.Window.vsync (SDL swap interval)
+		var win = lime.app.Application.current?.window;
+		if (win != null)
+			// lime.ui.Window may not expose `vsync` as a typed field in this Lime
+			// version — use Reflect to avoid a compile-time "no field" error while
+			// still setting the SDL swap-interval at runtime.
+			Reflect.setField(win, 'vsync', SaveData.data.vsync != false);
 		#end
 	}
 

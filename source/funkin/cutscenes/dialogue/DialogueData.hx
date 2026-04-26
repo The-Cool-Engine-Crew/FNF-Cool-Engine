@@ -5,6 +5,8 @@ import sys.io.File;
 import sys.FileSystem;
 import Paths;
 
+using StringTools;
+
 /**
  * Tipos de estilos de diálogo
  */
@@ -67,13 +69,33 @@ typedef TextConfig = {
 }
 
 /**
- * Configuración completa de una skin de diálogo
+ * Configuración completa de una skin de diálogo.
+ *
+ * ─── scriptFile ───────────────────────────────────────────────────────────────
+ *
+ *  Si se define, `DialogueBoxImproved` cargará ese archivo HScript y lo
+ *  ejecutará. El script recibe la variable `ctx` (DialogueScriptContext) y
+ *  puede definir las funciones:
+ *
+ *    onCreate()               — una vez al crear el diálogo
+ *    onUpdate(elapsed:Float)  — cada frame
+ *    onInput(action:String)   — al pulsar 'accept' o 'skip'; devolver true consume el input
+ *    onMessageStart(msg)      — al iniciar cada mensaje
+ *    onMessageEnd(msg)        — cuando el texto termina de escribirse
+ *    onEnd()                  — antes del cierre del diálogo
+ *
+ *  La ruta es relativa a la carpeta de la skin:
+ *    assets/cutscenes/dialogue/<skinName>/<scriptFile>
+ *
+ *  Ejemplo en config.json:
+ *    { "scriptFile": "myFormat.hx", ... }
  */
 typedef DialogueSkin = {
     var name:String;                              // Nombre de la skin
     var style:String;                             // 'pixel' o 'normal' o 'custom'
     var ?backgroundColor:String;                  // Color de fondo (hex)
     var ?fadeTime:Float;                          // Tiempo de fade (default: 0.83)
+    var ?scriptFile:String;                       // Archivo HScript opcional (relativo a la skin)
     var portraits:Map<String, PortraitConfig>;    // Portraits de la skin
     var boxes:Map<String, BoxConfig>;             // Cajas de la skin
     var ?textConfig:TextConfig;                   // Configuración del texto
@@ -118,137 +140,111 @@ class DialogueData {
     /**
      * Ruta base de las skins para ESCRITURA.
      * Escribe en el mod activo si hay uno activo, o en assets/.
-     * Equivale a Paths.resolveWrite('cutscenes/dialogue/').
      */
-    public static function getSkinsBaseWritePath():String {
+    public static function getSkinsWritePath():String {
         return Paths.resolveWrite('cutscenes/dialogue/');
     }
-    
+
     /**
-     * Ruta de una skin para LECTURA (busca en mods → assets).
+     * Ruta al asset de un portrait dentro de una skin.
      */
-    public static function getSkinPath(skinName:String):String {
-        return getSkinsBasePath() + skinName + '/';
+    public static function getPortraitAssetPath(skinName:String, fileName:String):String {
+        return 'cutscenes/dialogue/$skinName/portraits/$fileName';
     }
 
     /**
-     * Ruta de una skin para ESCRITURA (escribe en mod activo o assets/).
+     * Ruta al asset de una caja dentro de una skin.
      */
-    public static function getSkinWritePath(skinName:String):String {
-        return getSkinsBaseWritePath() + skinName + '/';
-    }
-    
-    /**
-     * Ruta del config.json de una skin (para lectura).
-     */
-    public static function getSkinConfigPath(skinName:String):String {
-        return getSkinPath(skinName) + 'config.json';
+    public static function getBoxAssetPath(skinName:String, fileName:String):String {
+        return 'cutscenes/dialogue/$skinName/boxes/$fileName';
     }
 
     /**
-     * Ruta del config.json de una skin (para escritura).
+     * Ruta al script HScript de una skin.
+     * Devuelve null si la skin no tiene scriptFile.
      */
-    public static function getSkinConfigWritePath(skinName:String):String {
-        return getSkinWritePath(skinName) + 'config.json';
-    }
-
-    /**
-     * Ruta de la carpeta de portraits (para lectura).
-     */
-    public static function getSkinPortraitsPath(skinName:String):String {
-        return getSkinPath(skinName) + 'portraits/';
-    }
-
-    /**
-     * Ruta de la carpeta de portraits (para escritura).
-     */
-    public static function getSkinPortraitsWritePath(skinName:String):String {
-        return getSkinWritePath(skinName) + 'portraits/';
-    }
-
-    /**
-     * Ruta de la carpeta de cajas (para lectura).
-     */
-    public static function getSkinBoxesPath(skinName:String):String {
-        return getSkinPath(skinName) + 'boxes/';
-    }
-
-    /**
-     * Ruta de la carpeta de cajas (para escritura).
-     */
-    public static function getSkinBoxesWritePath(skinName:String):String {
-        return getSkinWritePath(skinName) + 'boxes/';
-    }
-    
-    /**
-     * Obtener ruta de un diálogo de una canción
-     * @param songName Nombre de la canción
-     * @param dialogueType Tipo de diálogo: 'intro' o 'outro' (default: 'intro')
-     */
-    public static function getSongDialoguePath(songName:String, ?dialogueType:String = 'intro'):String {
-        return Paths.resolve('songs/${songName.toLowerCase()}/${dialogueType}.json');
-    }
-    
-    /**
-     * Crear directorios para una nueva skin
-     */
-    public static function createSkinDirectories(skinName:String):Bool {
+    public static function getScriptPath(skin:DialogueSkin):Null<String> {
+        if (skin == null || skin.scriptFile == null || skin.scriptFile == '')
+            return null;
+        // Buscar en el mod activo primero, luego en assets/
+        var candidate = Paths.resolve('cutscenes/dialogue/${skin.name}/${skin.scriptFile}');
         #if sys
-        try {
-            // Escritura → usar paths de escritura (mod activo o assets/)
-            var skinPath = getSkinWritePath(skinName);
-            var portraitsPath = getSkinPortraitsWritePath(skinName);
-            var boxesPath = getSkinBoxesWritePath(skinName);
-            
-            if (!FileSystem.exists(skinPath))
-                FileSystem.createDirectory(skinPath);
-            if (!FileSystem.exists(portraitsPath))
-                FileSystem.createDirectory(portraitsPath);
-            if (!FileSystem.exists(boxesPath))
-                FileSystem.createDirectory(boxesPath);
-            
-            return true;
-        } catch(e:Dynamic) {
-            trace('Error creating skin directories: $e');
-            return false;
+        if (FileSystem.exists(candidate))
+            return candidate;
+        // Fallback: buscar con extensión .hx si no la tiene
+        if (!skin.scriptFile.endsWith('.hx')) {
+            var withExt = Paths.resolve('cutscenes/dialogue/${skin.name}/${skin.scriptFile}.hx');
+            if (FileSystem.exists(withExt))
+                return withExt;
         }
-        #else
-        return false;
         #end
+        return candidate; // devolver de todos modos (el intérprete logrará un error descriptivo)
     }
-    
+
     /**
-     * Cargar configuración de una skin
+     * Listar todas las conversaciones disponibles para una canción.
+     * Devuelve los nombres (sin extensión) de todos los .json en assets/songs/<songName>/.
      */
-    public static function loadSkin(skinName:String):DialogueSkin {
-        var path = getSkinConfigPath(skinName);
-        var jsonContent:String = '';
-        
+    public static function listConversations(songName:String):Array<String> {
+        var result:Array<String> = [];
         #if sys
+        var dir = Paths.resolve('songs/${songName.toLowerCase()}/');
+        if (!FileSystem.exists(dir))
+            return result;
+        for (entry in FileSystem.readDirectory(dir)) {
+            if (entry.endsWith('.json'))
+                result.push(entry.substr(0, entry.length - 5));
+        }
+        #end
+        return result;
+    }
+
+    /**
+     * Cargar conversación desde JSON.
+     * Busca en assets/songs/<songName>/<conversationName>.json.
+     */
+    public static function loadConversation(songName:String, conversationName:String):DialogueConversation {
         try {
+            var path = Paths.resolve('songs/${songName.toLowerCase()}/${conversationName}.json');
+            #if sys
             if (!FileSystem.exists(path)) {
-                trace('Skin config not found: $path');
+                trace('Dialogue file not found: $path');
                 return null;
             }
-            jsonContent = File.getContent(path);
+            var content = File.getContent(path);
+            #else
+            var content = Assets.getText(path);
+            if (content == null) return null;
+            #end
+            var data:DialogueConversation = Json.parse(content);
+            return data;
         } catch(e:Dynamic) {
-            trace('Error loading skin: $e');
+            trace('Error loading conversation for $songName: $e');
             return null;
         }
-        #else
-        jsonContent = openfl.Assets.getText(path);
-        #end
-        
-        if (jsonContent == null || jsonContent == '') {
-            trace('Skin config is empty: $path');
-            return null;
-        }
-        
+    }
+
+    /**
+     * Cargar skin desde JSON.
+     * Busca en assets/cutscenes/dialogue/<skinName>/config.json.
+     */
+    public static function loadSkin(skinName:String):DialogueSkin {
         try {
-            // Parsear JSON a objeto dinámico primero
-            var jsonData:Dynamic = Json.parse(jsonContent);
-            
-            // Convertir objetos JSON a Maps
+            var path = Paths.resolve('cutscenes/dialogue/$skinName/config.json');
+            #if sys
+            if (!FileSystem.exists(path)) {
+                trace('Skin file not found: $path');
+                return null;
+            }
+            var content = File.getContent(path);
+            #else
+            var content = Assets.getText(path);
+            if (content == null) return null;
+            #end
+
+            var jsonData:Dynamic = Json.parse(content);
+
+            // Convertir portraits de Dynamic a Map
             var portraitsMap = new Map<String, PortraitConfig>();
             if (jsonData.portraits != null) {
                 var portraitsObj:Dynamic = jsonData.portraits;
@@ -257,7 +253,7 @@ class DialogueData {
                     portraitsMap.set(key, config);
                 }
             }
-            
+
             var boxesMap = new Map<String, BoxConfig>();
             if (jsonData.boxes != null) {
                 var boxesObj:Dynamic = jsonData.boxes;
@@ -266,259 +262,126 @@ class DialogueData {
                     boxesMap.set(key, config);
                 }
             }
-            
+
             // Construir DialogueSkin con Maps convertidos
             var data:DialogueSkin = {
                 name: jsonData.name,
                 style: jsonData.style,
                 backgroundColor: jsonData.backgroundColor,
                 fadeTime: jsonData.fadeTime,
+                scriptFile: jsonData.scriptFile,   // ← nuevo campo
                 portraits: portraitsMap,
                 boxes: boxesMap,
                 textConfig: jsonData.textConfig
             };
-            
+
             return data;
         } catch(e:Dynamic) {
             trace('Error parsing skin JSON: $e');
             return null;
         }
     }
-    
+
     /**
      * Guardar configuración de una skin
      */
     public static function saveSkin(skinName:String, skin:DialogueSkin):Bool {
         #if sys
         try {
-            // Crear directorios si no existen
             createSkinDirectories(skinName);
-            
+            var path = getSkinsWritePath() + '$skinName/config.json';
+
             // Convertir Maps a objetos para JSON
             var portraitsObj:Dynamic = {};
-            if (skin.portraits != null) {
-                for (key in skin.portraits.keys()) {
-                    Reflect.setField(portraitsObj, key, skin.portraits.get(key));
-                }
-            }
-            
+            for (key => val in skin.portraits)
+                Reflect.setField(portraitsObj, key, val);
+
             var boxesObj:Dynamic = {};
-            if (skin.boxes != null) {
-                for (key in skin.boxes.keys()) {
-                    Reflect.setField(boxesObj, key, skin.boxes.get(key));
-                }
-            }
-            
-            // Crear objeto serializable
-            var skinObj:Dynamic = {
+            for (key => val in skin.boxes)
+                Reflect.setField(boxesObj, key, val);
+
+            var jsonData:Dynamic = {
                 name: skin.name,
                 style: skin.style,
                 backgroundColor: skin.backgroundColor,
                 fadeTime: skin.fadeTime,
+                scriptFile: skin.scriptFile,        // ← serializar scriptFile
                 portraits: portraitsObj,
                 boxes: boxesObj,
                 textConfig: skin.textConfig
             };
-            
-            var path = getSkinConfigWritePath(skinName);
-            var jsonString = Json.stringify(skinObj, null, '  ');
-            File.saveContent(path, jsonString);
+
+            File.saveContent(path, Json.stringify(jsonData, null, '  '));
             return true;
         } catch(e:Dynamic) {
             trace('Error saving skin: $e');
             return false;
         }
         #else
-        trace('Save not supported on this platform');
         return false;
         #end
     }
-    
-    /**
-     * Cargar conversación de diálogo
-     * @param songName Nombre de la canción
-     * @param dialogueType Tipo de diálogo: 'intro' o 'outro' (default: 'intro')
-     */
-    public static function loadConversation(songName:String, ?dialogueType:String = 'intro'):DialogueConversation {
-        var path = getSongDialoguePath(songName, dialogueType);
-        var jsonContent:String = '';
-        
-        #if sys
-        try {
-            if (!FileSystem.exists(path)) {
-                trace('Dialogue not found: $path');
-                return null;
-            }
-            jsonContent = File.getContent(path);
-        } catch(e:Dynamic) {
-            trace('Error loading dialogue: $e');
-            return null;
-        }
-        #else
-        jsonContent = openfl.Assets.getText(path);
-        #end
-        
-        if (jsonContent == null || jsonContent == '') {
-            trace('Dialogue file is empty: $path');
-            return null;
-        }
-        
-        try {
-            var data:DialogueConversation = Json.parse(jsonContent);
-            
-            // Validar mensajes
-            if (data.messages == null || data.messages.length == 0) {
-                trace('No messages found in dialogue');
-                return null;
-            }
-            
-            // Aplicar defaults
-            for (msg in data.messages) {
-                if (msg.bubbleType == null)
-                    msg.bubbleType = 'normal';
-                if (msg.speed == null)
-                    msg.speed = 0.04;
-            }
-            
-            return data;
-        } catch(e:Dynamic) {
-            trace('Error parsing dialogue JSON: $e');
-            return null;
-        }
-    }
-    
-    /**
-     * Guardar conversación de diálogo
-     * @param songName Nombre de la canción
-     * @param conversation Datos de la conversación
-     * @param dialogueType Tipo de diálogo: 'intro' o 'outro' (default: 'intro')
-     */
-    public static function saveConversation(songName:String, conversation:DialogueConversation, ?dialogueType:String = 'intro'):Bool {
-        #if sys
-        try {
-            // Escritura → resolveWrite para guardar en mod activo o assets/
-            var songDir = Paths.resolveWrite('songs/${songName.toLowerCase()}/');
-            if (!FileSystem.exists(songDir))
-                FileSystem.createDirectory(songDir);
 
-            var path = songDir + '${dialogueType}.json';
-            var jsonString = Json.stringify(conversation, null, '  ');
-            File.saveContent(path, jsonString);
-            return true;
-        } catch(e:Dynamic) {
-            trace('Error saving dialogue: $e');
-            return false;
+    /**
+     * Crear directorios de una skin si no existen.
+     */
+    public static function createSkinDirectories(skinName:String):Void {
+        #if sys
+        var base = getSkinsWritePath() + '$skinName/';
+        for (sub in ['', 'portraits/', 'boxes/']) {
+            var dir = base + sub;
+            if (!FileSystem.exists(dir))
+                FileSystem.createDirectory(dir);
         }
-        #else
-        trace('Save not supported on this platform');
-        return false;
         #end
     }
-    
-    /**
-     * Copiar archivo a la carpeta de portraits de una skin
-     */
-    public static function copyPortraitToSkin(sourcePath:String, skinName:String, fileName:String):Bool {
-        #if sys
-        try {
-            createSkinDirectories(skinName);
-            var destPath = getSkinPortraitsWritePath(skinName) + fileName;
-            File.copy(sourcePath, destPath);
-            trace('Portrait copied to: $destPath');
-            return true;
-        } catch(e:Dynamic) {
-            trace('Error copying portrait: $e');
-            return false;
-        }
-        #else
-        return false;
-        #end
-    }
-    
-    /**
-     * Copiar archivo a la carpeta de cajas de una skin
-     */
-    public static function copyBoxToSkin(sourcePath:String, skinName:String, fileName:String):Bool {
-        #if sys
-        try {
-            createSkinDirectories(skinName);
-            var destPath = getSkinBoxesWritePath(skinName) + fileName;
-            File.copy(sourcePath, destPath);
-            trace('Box copied to: $destPath');
-            return true;
-        } catch(e:Dynamic) {
-            trace('Error copying box: $e');
-            return false;
-        }
-        #else
-        return false;
-        #end
-    }
-    
-    /**
-     * Listar todas las skins disponibles.
-     * Busca en el mod activo Y en assets/, combinando resultados sin duplicados.
-     */
-    public static function listSkins():Array<String> {
-        #if sys
-        try {
-            var skins:Array<String> = [];
 
-            // Función interna: escanear una carpeta base y añadir skins al array
-            function scanBase(basePath:String):Void {
-                if (basePath == null || !FileSystem.exists(basePath)) return;
-                for (item in FileSystem.readDirectory(basePath)) {
-                    var itemPath = basePath + item;
-                    if (FileSystem.isDirectory(itemPath)) {
-                        var configPath = itemPath + '/config.json';
-                        if (FileSystem.exists(configPath) && skins.indexOf(item) == -1)
-                            skins.push(item);
-                    }
-                }
-            }
-
-            // 1. Skins del mod activo (tienen prioridad)
-            var modBase = mods.ModManager.modRoot();
-            if (modBase != null)
-                scanBase(modBase + '/cutscenes/dialogue/');
-
-            // 2. Skins de assets/ (base)
-            scanBase('assets/cutscenes/dialogue/');
-
-            return skins;
-        } catch(e:Dynamic) {
-            trace('Error listing skins: $e');
-            return [];
-        }
-        #else
-        return [];
-        #end
-    }
-    
     /**
-     * Crear una skin vacía
+     * Crear una skin vacía con valores por defecto.
      */
     public static function createEmptySkin(skinName:String, style:String = 'pixel'):DialogueSkin {
         return {
             name: skinName,
             style: style,
-            backgroundColor: getDefaultBackgroundColor(style),
+            backgroundColor: '#000000',
             fadeTime: 0.83,
+            scriptFile: null,                        // sin script por defecto
             portraits: new Map<String, PortraitConfig>(),
             boxes: new Map<String, BoxConfig>(),
-            textConfig: {
-                x: 240,
-                y: 500,
-                width: 800,
-                size: 32,
-                font: "Pixel Arial 11 Bold",
-                color: "#3F2021"
-            }
+            textConfig: null
         };
     }
-    
+
     /**
-     * Crear conversación vacía
+     * Obtener todos los nombres de skins disponibles.
+     */
+    public static function getAvailableSkins():Array<String> {
+        var skins:Array<String> = [];
+        #if sys
+        var basePath = getSkinsBasePath();
+        if (!FileSystem.exists(basePath))
+            return skins;
+        for (entry in FileSystem.readDirectory(basePath)) {
+            var fullPath = basePath + entry;
+            if (FileSystem.isDirectory(fullPath)) {
+                var configPath = fullPath + '/config.json';
+                if (FileSystem.exists(configPath))
+                    skins.push(entry);
+            }
+        }
+        #end
+        return skins;
+    }
+
+    /**
+     * Alias de getAvailableSkins() para uso desde el editor.
+     */
+    public static function listSkins():Array<String> {
+        return getAvailableSkins();
+    }
+
+    /**
+     * Crear una conversación vacía con valores por defecto.
      */
     public static function createEmptyConversation(name:String, skinName:String):DialogueConversation {
         return {
@@ -527,62 +390,111 @@ class DialogueData {
             messages: []
         };
     }
-    
+
     /**
-     * Obtener color de fondo por defecto según el estilo
+     * Guardar conversación en assets/songs/<songName>/<conversation.name>.json.
+     * El nombre del archivo es el campo `name` de la conversación (ej: "intro" → intro.json).
+     */
+    public static function saveConversation(songName:String, conversation:DialogueConversation):Bool {
+        #if sys
+        try {
+            var dir = Paths.resolveWrite('songs/${songName.toLowerCase()}/');
+            if (!FileSystem.exists(dir))
+                FileSystem.createDirectory(dir);
+            var path = dir + '${conversation.name}.json';
+            File.saveContent(path, Json.stringify(conversation, null, '  '));
+            return true;
+        } catch(e:Dynamic) {
+            trace('Error saving conversation for $songName: $e');
+            return false;
+        }
+        #else
+        return false;
+        #end
+    }
+
+    /**
+     * Devuelve el color de fondo por defecto según el estilo.
      */
     public static function getDefaultBackgroundColor(style:String):String {
-        return switch(style.toLowerCase()) {
-            case 'pixel': '#B3DFD8';
-            case 'normal': '#2C1B3D';
-            default: '#000000';
-        }
+        return switch (style) {
+            case 'normal': '#B3DFD8';
+            default:       '#000000'; // pixel y cualquier otro
+        };
     }
-    
+
     /**
-     * Crear configuración de portrait
+     * Copiar un archivo de imagen al directorio portraits/ de una skin.
+     * Devuelve true si tuvo éxito.
+     */
+    public static function copyPortraitToSkin(sourcePath:String, skinName:String, fileName:String):Bool {
+        #if sys
+        try {
+            createSkinDirectories(skinName);
+            var destPath = getSkinsWritePath() + '$skinName/portraits/$fileName';
+            var bytes = sys.io.File.getBytes(sourcePath);
+            sys.io.File.saveBytes(destPath, bytes);
+            return true;
+        } catch(e:Dynamic) {
+            trace('Error copying portrait to skin: $e');
+            return false;
+        }
+        #else
+        return false;
+        #end
+    }
+
+    /**
+     * Crear una configuración de portrait con valores por defecto.
      */
     public static function createPortraitConfig(name:String, fileName:String):PortraitConfig {
         return {
             name: name,
             fileName: fileName,
-            x: 0,
-            y: 0,
+            x: 0.0,
+            y: 0.0,
             scaleX: 1.0,
             scaleY: 1.0,
             flipX: false,
-            animation: "idle"
+            animation: 'idle'
         };
     }
-    
+
     /**
-     * Crear configuración de caja
+     * Copiar un archivo de imagen al directorio boxes/ de una skin.
+     * Devuelve true si tuvo éxito.
+     */
+    public static function copyBoxToSkin(sourcePath:String, skinName:String, fileName:String):Bool {
+        #if sys
+        try {
+            createSkinDirectories(skinName);
+            var destPath = getSkinsWritePath() + '$skinName/boxes/$fileName';
+            var bytes = sys.io.File.getBytes(sourcePath);
+            sys.io.File.saveBytes(destPath, bytes);
+            return true;
+        } catch(e:Dynamic) {
+            trace('Error copying box to skin: $e');
+            return false;
+        }
+        #else
+        return false;
+        #end
+    }
+
+    /**
+     * Crear una configuración de caja con valores por defecto.
      */
     public static function createBoxConfig(name:String, fileName:String):BoxConfig {
         return {
             name: name,
             fileName: fileName,
-            x: 0,
-            y: 0,
-            width: 640,
-            height: 200,
+            x: 0.0,
+            y: 0.0,
+            width: null,
+            height: null,
             scaleX: 1.0,
             scaleY: 1.0,
-            animation: "normal"
+            animation: 'normal'
         };
-    }
-    
-    /**
-     * Obtener ruta completa de un portrait en una skin
-     */
-    public static function getPortraitAssetPath(skinName:String, fileName:String):String {
-        return getSkinPortraitsPath(skinName) + fileName;
-    }
-    
-    /**
-     * Obtener ruta completa de una caja en una skin
-     */
-    public static function getBoxAssetPath(skinName:String, fileName:String):String {
-        return getSkinBoxesPath(skinName) + fileName;
     }
 }

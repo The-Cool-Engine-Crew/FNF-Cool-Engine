@@ -62,8 +62,11 @@ class MemoryUtil {
 	 * Llamar entre canciones o al cambiar de estado.
 	 */
 	public static function collectMinor():Void {
-		#if (cpp || hl)
+		#if cpp
 		Gc.run(false);
+		#elseif hl
+		// hl.Gc has no run(); a major() cycle is the closest equivalent
+		Gc.major();
 		#end
 	}
 

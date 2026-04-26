@@ -1308,8 +1308,6 @@ class PlayState extends funkin.states.MusicBeatState {
 				}
 			};
 
-			// Función que revisa si hay diálogo de intro y lo muestra antes del countdown.
-			// Se llama después del video (o directamente si no hay video).
 			var runIntroDialogueThenCutscene:Void->Void = function() {
 				if (checkForDialogue('intro') && isStoryMode) {
 					inCutscene = true;
@@ -2723,7 +2721,7 @@ class PlayState extends funkin.states.MusicBeatState {
 		isCutscene = true;
 		var doof:DialogueBoxImproved = null;
 		try {
-			doof = new DialogueBoxImproved(songId);
+			doof = new DialogueBoxImproved(songId, type);
 		} catch (_:Dynamic) {
 			if (onFinish != null)
 				onFinish();
