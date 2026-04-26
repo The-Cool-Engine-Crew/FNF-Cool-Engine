@@ -69,6 +69,21 @@ typedef TextConfig = {
 }
 
 /**
+ * Configuración de un fondo o overlay de la skin.
+ * Reutilizada para fondos (backgrounds/) y overlays (overlays/).
+ */
+typedef BackgroundConfig = {
+    var name:String;              // Nombre identificador
+    var fileName:String;          // Nombre del archivo (sin ruta)
+    var ?x:Float;                 // Posición X
+    var ?y:Float;                 // Posición Y
+    var ?scaleX:Float;            // Escala X
+    var ?scaleY:Float;            // Escala Y
+    var ?alpha:Float;             // Transparencia (0.0–1.0); default 1.0 para bg, 0.8 para overlay
+    var ?blendMode:String;        // Blend mode ('normal', 'add', 'multiply', …)
+}
+
+/**
  * Configuración completa de una skin de diálogo.
  *
  * ─── scriptFile ───────────────────────────────────────────────────────────────
@@ -91,14 +106,16 @@ typedef TextConfig = {
  *    { "scriptFile": "myFormat.hx", ... }
  */
 typedef DialogueSkin = {
-    var name:String;                              // Nombre de la skin
-    var style:String;                             // 'pixel' o 'normal' o 'custom'
-    var ?backgroundColor:String;                  // Color de fondo (hex)
-    var ?fadeTime:Float;                          // Tiempo de fade (default: 0.83)
-    var ?scriptFile:String;                       // Archivo HScript opcional (relativo a la skin)
-    var portraits:Map<String, PortraitConfig>;    // Portraits de la skin
-    var boxes:Map<String, BoxConfig>;             // Cajas de la skin
-    var ?textConfig:TextConfig;                   // Configuración del texto
+    var name:String;                                      // Nombre de la skin
+    var style:String;                                     // 'pixel' o 'normal' o 'custom'
+    var ?backgroundColor:String;                          // Color de fondo (hex)
+    var ?fadeTime:Float;                                  // Tiempo de fade (default: 0.83)
+    var ?scriptFile:String;                               // Archivo HScript opcional (relativo a la skin)
+    var portraits:Map<String, PortraitConfig>;            // Portraits de la skin
+    var boxes:Map<String, BoxConfig>;                     // Cajas de la skin
+    var ?backgrounds:Map<String, BackgroundConfig>;       // Fondos de la skin (assets en backgrounds/)
+    var ?overlays:Map<String, BackgroundConfig>;          // Overlays de la skin  (assets en overlays/)
+    var ?textConfig:TextConfig;                           // Configuración del texto
 }
 
 /**
@@ -157,6 +174,20 @@ class DialogueData {
      */
     public static function getBoxAssetPath(skinName:String, fileName:String):String {
         return 'cutscenes/dialogue/$skinName/boxes/$fileName';
+    }
+
+    /**
+     * Ruta al asset de un fondo dentro de una skin.
+     */
+    public static function getBackgroundAssetPath(skinName:String, fileName:String):String {
+        return 'cutscenes/dialogue/$skinName/backgrounds/$fileName';
+    }
+
+    /**
+     * Ruta al asset de un overlay dentro de una skin.
+     */
+    public static function getOverlayAssetPath(skinName:String, fileName:String):String {
+        return 'cutscenes/dialogue/$skinName/overlays/$fileName';
     }
 
     /**
@@ -263,6 +294,22 @@ class DialogueData {
                 }
             }
 
+            var backgroundsMap = new Map<String, BackgroundConfig>();
+            if (jsonData.backgrounds != null) {
+                var bgsObj:Dynamic = jsonData.backgrounds;
+                for (key in Reflect.fields(bgsObj)) {
+                    backgroundsMap.set(key, cast Reflect.field(bgsObj, key));
+                }
+            }
+
+            var overlaysMap = new Map<String, BackgroundConfig>();
+            if (jsonData.overlays != null) {
+                var ovsObj:Dynamic = jsonData.overlays;
+                for (key in Reflect.fields(ovsObj)) {
+                    overlaysMap.set(key, cast Reflect.field(ovsObj, key));
+                }
+            }
+
             // Construir DialogueSkin con Maps convertidos
             var data:DialogueSkin = {
                 name: jsonData.name,
@@ -272,6 +319,8 @@ class DialogueData {
                 scriptFile: jsonData.scriptFile,   // ← nuevo campo
                 portraits: portraitsMap,
                 boxes: boxesMap,
+                backgrounds: backgroundsMap,
+                overlays: overlaysMap,
                 textConfig: jsonData.textConfig
             };
 
@@ -300,6 +349,16 @@ class DialogueData {
             for (key => val in skin.boxes)
                 Reflect.setField(boxesObj, key, val);
 
+            var backgroundsObj:Dynamic = {};
+            if (skin.backgrounds != null)
+                for (key => val in skin.backgrounds)
+                    Reflect.setField(backgroundsObj, key, val);
+
+            var overlaysObj:Dynamic = {};
+            if (skin.overlays != null)
+                for (key => val in skin.overlays)
+                    Reflect.setField(overlaysObj, key, val);
+
             var jsonData:Dynamic = {
                 name: skin.name,
                 style: skin.style,
@@ -308,6 +367,8 @@ class DialogueData {
                 scriptFile: skin.scriptFile,        // ← serializar scriptFile
                 portraits: portraitsObj,
                 boxes: boxesObj,
+                backgrounds: backgroundsObj,
+                overlays: overlaysObj,
                 textConfig: skin.textConfig
             };
 
@@ -328,7 +389,7 @@ class DialogueData {
     public static function createSkinDirectories(skinName:String):Void {
         #if sys
         var base = getSkinsWritePath() + '$skinName/';
-        for (sub in ['', 'portraits/', 'boxes/']) {
+        for (sub in ['', 'portraits/', 'boxes/', 'backgrounds/', 'overlays/', 'sounds/', 'music/']) {
             var dir = base + sub;
             if (!FileSystem.exists(dir))
                 FileSystem.createDirectory(dir);
@@ -348,6 +409,8 @@ class DialogueData {
             scriptFile: null,                        // sin script por defecto
             portraits: new Map<String, PortraitConfig>(),
             boxes: new Map<String, BoxConfig>(),
+            backgrounds: new Map<String, BackgroundConfig>(),
+            overlays: new Map<String, BackgroundConfig>(),
             textConfig: null
         };
     }
@@ -495,6 +558,115 @@ class DialogueData {
             scaleX: 1.0,
             scaleY: 1.0,
             animation: 'normal'
+        };
+    }
+
+    /**
+     * Copiar un archivo de imagen al directorio backgrounds/ de una skin.
+     */
+    public static function copyBackgroundToSkin(sourcePath:String, skinName:String, fileName:String):Bool {
+        #if sys
+        try {
+            createSkinDirectories(skinName);
+            var destPath = getSkinsWritePath() + '$skinName/backgrounds/$fileName';
+            var bytes = sys.io.File.getBytes(sourcePath);
+            sys.io.File.saveBytes(destPath, bytes);
+            return true;
+        } catch(e:Dynamic) {
+            trace('Error copying background to skin: $e');
+            return false;
+        }
+        #else
+        return false;
+        #end
+    }
+
+    /**
+     * Copiar un archivo de imagen al directorio overlays/ de una skin.
+     */
+    public static function copyOverlayToSkin(sourcePath:String, skinName:String, fileName:String):Bool {
+        #if sys
+        try {
+            createSkinDirectories(skinName);
+            var destPath = getSkinsWritePath() + '$skinName/overlays/$fileName';
+            var bytes = sys.io.File.getBytes(sourcePath);
+            sys.io.File.saveBytes(destPath, bytes);
+            return true;
+        } catch(e:Dynamic) {
+            trace('Error copying overlay to skin: $e');
+            return false;
+        }
+        #else
+        return false;
+        #end
+    }
+
+    /**
+     * Ruta lógica a un sound effect dentro de la skin (para Paths.resolve).
+     */
+    public static function getSoundAssetPath(skinName:String, fileName:String):String {
+        return 'cutscenes/dialogue/$skinName/sounds/$fileName';
+    }
+
+    /**
+     * Ruta lógica a un archivo de música dentro de la skin.
+     */
+    public static function getMusicAssetPath(skinName:String, fileName:String):String {
+        return 'cutscenes/dialogue/$skinName/music/$fileName';
+    }
+
+    /**
+     * Copiar un sound effect al directorio sounds/ de una skin.
+     */
+    public static function copySoundToSkin(sourcePath:String, skinName:String, fileName:String):Bool {
+        #if sys
+        try {
+            createSkinDirectories(skinName);
+            var destPath = getSkinsWritePath() + '$skinName/sounds/$fileName';
+            sys.io.File.saveBytes(destPath, sys.io.File.getBytes(sourcePath));
+            return true;
+        } catch(e:Dynamic) {
+            trace('Error copying sound to skin: $e');
+            return false;
+        }
+        #else
+        return false;
+        #end
+    }
+
+    /**
+     * Copiar un archivo de música al directorio music/ de una skin.
+     */
+    public static function copyMusicToSkin(sourcePath:String, skinName:String, fileName:String):Bool {
+        #if sys
+        try {
+            createSkinDirectories(skinName);
+            var destPath = getSkinsWritePath() + '$skinName/music/$fileName';
+            sys.io.File.saveBytes(destPath, sys.io.File.getBytes(sourcePath));
+            return true;
+        } catch(e:Dynamic) {
+            trace('Error copying music to skin: $e');
+            return false;
+        }
+        #else
+        return false;
+        #end
+    }
+
+    /**
+     * Crear una configuración de fondo/overlay con valores por defecto.
+     * alpha=1.0 para fondos, 0.8 para overlays (ajustar después si hace falta).
+     */
+    public static function createBackgroundConfig(name:String, fileName:String, ?alpha:Float = 1.0):BackgroundConfig {
+        return {
+            name: name,
+            fileName: fileName,
+            x: 0.0,
+            y: 0.0,
+            scaleX: 1.0,
+            scaleY: 1.0,
+            alpha: alpha,
+            blendMode: 'normal'
         };
     }
 }

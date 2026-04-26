@@ -1308,26 +1308,18 @@ class PlayState extends funkin.states.MusicBeatState {
 				}
 			};
 
-			var runIntroDialogueThenCutscene:Void->Void = function() {
-				if (checkForDialogue('intro') && isStoryMode) {
-					inCutscene = true;
-					showDialogue('intro', function() {
-						inCutscene = false;
-						runSpriteCutscene();
-					});
-				} else {
-					runSpriteCutscene();
-				}
-			};
-
+			// FIX: no mostrar el diálogo de intro cuando ya hay un video o sprite
+			// cutscene definido — son secuencias mutuamente excluyentes.
+			// Antes existía runIntroDialogueThenCutscene() que disparaba el diálogo
+			// incluso al tener una cinemática configurada.
 			if (vidKey != null && VideoManager._resolvePath(vidKey) != null) {
 				inCutscene = true;
 				VideoManager.playCutscene(vidKey, function() {
 					inCutscene = false;
-					runIntroDialogueThenCutscene();
+					runSpriteCutscene();
 				});
 			} else {
-				runIntroDialogueThenCutscene();
+				runSpriteCutscene();
 			}
 			return;
 		}
@@ -2194,14 +2186,17 @@ class PlayState extends funkin.states.MusicBeatState {
 					runOutroVideo();
 			};
 
-			if (showOutroDialogue() && isStoryMode) {
-				if (checkForDialogue('outro')) {
-					isCutscene = true;
-					showDialogue('outro', function() {
-						runSpriteCutscene();
-					});
-				} else
+			// FIX: antes se usaba showOutroDialogue() como condición, lo que disparaba el
+			// diálogo con continueAfterSong() como callback (incorrecto) Y ADEMÁS lo volvía
+			// a mostrar con checkForDialogue → dos diálogos seguidos y el orden roto.
+			// Ahora usamos checkForDialogue directamente y showDialogue con el callback
+			// correcto (runSpriteCutscene) para respetar la cadena: dialogue → cutscene → video.
+			if (checkForDialogue('outro') && isStoryMode) {
+				isCutscene = true;
+				showDialogue('outro', function() {
+					isCutscene = false;
 					runSpriteCutscene();
+				});
 			} else
 				runSpriteCutscene();
 			return;
@@ -2524,6 +2519,11 @@ class PlayState extends funkin.states.MusicBeatState {
 		} catch (_:Dynamic) {}
 
 		funkin.audio.CoreAudio.stopAll();
+
+		// FIX: detener silenciosamente cualquier video/cutscene activo al salir del PlayState.
+		// Sin esto, el MP4Handler sigue reproduciendo (y la capa de video permanece visible)
+		// aunque ya no haya un PlayState activo.
+		VideoManager.stopSilent();
 
 		FlxG.signals.focusLost.remove(_onGlobalFocusLost);
 
