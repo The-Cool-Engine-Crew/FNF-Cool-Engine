@@ -44,14 +44,14 @@ using StringTools;
  *  El fallback v6 (onAfterGenerate + Build.xml + header patching) se mantiene
  *  como cinturón + tirantes para entornos donde @:headerCode no aplique.
  */
-class WinMacroFix
-{
+class WinMacroFix {
 	// Versión del parche — cambiar para forzar re-parche en builds incrementales.
-	static final MARKER    = '// WinMacroFix-v6';
+	static final MARKER = '// WinMacroFix-v6';
 	static final MARKER_XML = '<!-- WinMacroFix-v6 -->';
 
 	// ── FlxColor undefs ────────────────────────────────────────────────────────
-	static final UNDEFS_COLOR = MARKER + '
+	static final UNDEFS_COLOR = MARKER
+		+ '
 #ifdef TRANSPARENT
 #undef TRANSPARENT
 #endif
@@ -109,7 +109,8 @@ class WinMacroFix
 ';
 
 	// ── FlxKey undefs ──────────────────────────────────────────────────────────
-	static final UNDEFS_KEY = MARKER + '
+	static final UNDEFS_KEY = MARKER
+		+ '
 #ifdef NONE
 #undef NONE
 #endif
@@ -467,52 +468,37 @@ class WinMacroFix
 	//  ENTRY POINT
 	// ══════════════════════════════════════════════════════════════════════════
 
-	public static function apply():Void
-	{
-		// ══════════════════════════════════════════════════════════════════════
-		//  PRIMARY FIX (v7) — @:headerCode injection en tiempo de compilación
-		// ══════════════════════════════════════════════════════════════════════
-		//  Las versiones anteriores parcheaban Build.xml con /FI o modificaban
-		//  headers post-generación.  El problema real: la ruta del proyecto
-		//  puede contener espacios (ej. "H:\MOD FNF\...") y HXCPP parte el
-		//  argumento /FI en dos al invocar cl.exe → el flag nunca llega a MSVC.
-		//
-		//  Solución v7: Context.addGlobalMetadata con @:headerCode añade
-		//  '#include "WinUndefs.h"' DIRECTAMENTE al header generado durante la
-		//  fase de generación de código de Haxe.  Ventajas:
-		//   • Ocurre ANTES de que HXCPP copie/cachee los headers.
-		//   • #include con comillas dobles admite rutas con espacios (C/C++ estándar).
-		//   • No depende de /FI, Build.xml ni del sistema de caché de HXCPP.
-		//   • Idempotente: si Haxe regenera el header, el include vuelve a estar.
-		{
-			var cwd = Sys.getCwd().split("\\").join("/");
-			if (cwd.endsWith("/")) cwd = cwd.substr(0, cwd.length - 1);
-			var undefsPath = cwd + '/source/macros/WinUndefs.h';
+	public static function apply():Void {
+		if (!Context.defined('cpp')) {
+			trace('[WinMacroFix] Target is not cpp — skipping (no C++ headers generated)');
+			return;
+		}
 
-			if (!FileSystem.exists(undefsPath))
-			{
-				trace('[WinMacroFix v7] WARNING: source/macros/WinUndefs.h not found — @:headerCode fix skipped');
-			}
-			else
-			{
-				// #include con comillas dobles soporta espacios en la ruta (ISO C/C++)
-				var meta = '@:headerCode(\'#include "$undefsPath"\')';
+		var cwd = Sys.getCwd().split("\\").join("/");
+		if (cwd.endsWith("/"))
+			cwd = cwd.substr(0, cwd.length - 1);
+		var undefsPath = cwd + '/source/macros/WinUndefs.h';
 
-				// FlxKey: abstract enum cuyos valores colisionan con macros de windows.h
-				// (DELETE, HOME, END, ESCAPE, etc.)
-				// FlxKey: abstract enum cuyos valores colisionan con macros de windows.h
-				// (DELETE, HOME, END, ESCAPE, etc.)
-				Compiler.addGlobalMetadata("flixel.input.keyboard.FlxKey",  meta, false, true, false);
-				Compiler.addGlobalMetadata("flixel.input.keyboard._FlxKey", meta, true,  true, false);
+		if (!FileSystem.exists(undefsPath)) {
+			trace('[WinMacroFix v7] WARNING: source/macros/WinUndefs.h not found — @:headerCode fix skipped');
+		} else {
+			// #include con comillas dobles soporta espacios en la ruta (ISO C/C++)
+			var meta = '@:headerCode(\'#include "$undefsPath"\')';
 
-				// FlxColor: abstract cuyos valores colisionan con wingdi.h / winbase.h
-				// (TRANSPARENT, BLACK, WHITE, RED, GREEN, BLUE, etc.)
-				Compiler.addGlobalMetadata("flixel.util.FlxColor",  meta, false, true, false);
-				Compiler.addGlobalMetadata("flixel.util._FlxColor", meta, true,  true, false);
+			// FlxKey: abstract enum cuyos valores colisionan con macros de windows.h
+			// (DELETE, HOME, END, ESCAPE, etc.)
+			// FlxKey: abstract enum cuyos valores colisionan con macros de windows.h
+			// (DELETE, HOME, END, ESCAPE, etc.)
+			Compiler.addGlobalMetadata("flixel.input.keyboard.FlxKey", meta, false, true, false);
+			Compiler.addGlobalMetadata("flixel.input.keyboard._FlxKey", meta, true, true, false);
 
-				trace('[WinMacroFix v7] @:headerCode injection registered for FlxKey + FlxColor');
-				trace('[WinMacroFix v7] WinUndefs.h path: $undefsPath');
-			}
+			// FlxColor: abstract cuyos valores colisionan con wingdi.h / winbase.h
+			// (TRANSPARENT, BLACK, WHITE, RED, GREEN, BLUE, etc.)
+			Compiler.addGlobalMetadata("flixel.util.FlxColor", meta, false, true, false);
+			Compiler.addGlobalMetadata("flixel.util._FlxColor", meta, true, true, false);
+
+			trace('[WinMacroFix v7] @:headerCode injection registered for FlxKey + FlxColor');
+			trace('[WinMacroFix v7] WinUndefs.h path: $undefsPath');
 		}
 
 		// ══════════════════════════════════════════════════════════════════════
@@ -539,18 +525,12 @@ class WinMacroFix
 		//     into Build.xml (GCC/Clang equivalent of MSVC /FI) so the undefs
 		//     fire before EVERY translation unit, including those that include
 		//     FlxKeyManager.h via the precompiled header path.
-		if (Context.defined('linux') || Context.defined('mac'))
-		{
+		if (Context.defined('linux') || Context.defined('mac')) {
 			// Real newlines inside the string are required so the C preprocessor
 			// sees each directive on its own line.  Use a Haxe string with \n.
-			var x11Undefs = '#ifdef Status\n#undef Status\n#endif\n'
-			              + '#ifdef Bool\n#undef Bool\n#endif\n'
-			              + '#ifdef True\n#undef True\n#endif\n'
-			              + '#ifdef False\n#undef False\n#endif\n'
-			              + '#ifdef None\n#undef None\n#endif\n'
-			              + '#ifdef Success\n#undef Success\n#endif\n'
-			              + '#ifdef Always\n#undef Always\n#endif\n'
-			              + '#ifdef Expose\n#undef Expose\n#endif';
+			var x11Undefs = '#ifdef Status\n#undef Status\n#endif\n' + '#ifdef Bool\n#undef Bool\n#endif\n' + '#ifdef True\n#undef True\n#endif\n'
+				+ '#ifdef False\n#undef False\n#endif\n' + '#ifdef None\n#undef None\n#endif\n' + '#ifdef Success\n#undef Success\n#endif\n'
+				+ '#ifdef Always\n#undef Always\n#endif\n' + '#ifdef Expose\n#undef Expose\n#endif';
 
 			// addGlobalMetadata takes the metadata as a Haxe source string.
 			// The inner double-quoted string is parsed by the Haxe compiler,
@@ -570,35 +550,31 @@ class WinMacroFix
 		// ══════════════════════════════════════════════════════════════════════
 		//  Se mantiene como cinturón + tirantes por si @:headerCode no aplica
 		//  en alguna configuración de HXCPP.
-		Context.onAfterGenerate(function()
-		{
+		Context.onAfterGenerate(function() {
 			var cwd = Sys.getCwd().split("\\").join("/");
-			if (cwd.endsWith("/")) cwd = cwd.substr(0, cwd.length - 1);
+			if (cwd.endsWith("/"))
+				cwd = cwd.substr(0, cwd.length - 1);
 
 			var buildType = Context.defined('debug') ? 'debug' : 'release';
-			if (Context.defined('32bit')) buildType = '32bit';
+			if (Context.defined('32bit'))
+				buildType = '32bit';
 
 			trace('[WinMacroFix v6 fallback] buildType=$buildType  cwd=$cwd');
 
 			// ── PRIMARY: patch Build.xml with /FI (Windows/MSVC) ─────────────
 			// Source/WinUndefs.h must exist alongside this file.
 			var winUndefsPath = cwd + '/source/macros/WinUndefs.h';
-			if (!FileSystem.exists(winUndefsPath))
-			{
+			if (!FileSystem.exists(winUndefsPath)) {
 				trace('[WinMacroFix] WARNING: source/macros/WinUndefs.h not found at $winUndefsPath');
 				trace('[WinMacroFix] Make sure WinUndefs.h is in your source/macros/ directory.');
-			}
-			else
-			{
+			} else {
 				var searchRoot = cwd + '/export/' + buildType;
-				if (FileSystem.exists(searchRoot))
-				{
+				if (FileSystem.exists(searchRoot)) {
 					var buildXmls = _findFiles(searchRoot, 'Build.xml');
 					trace('[WinMacroFix] Found ${buildXmls.length} Build.xml file(s)');
 					for (xmlPath in buildXmls)
 						_patchBuildXml(xmlPath, winUndefsPath);
-				}
-				else
+				} else
 					trace('[WinMacroFix] WARNING: export dir not found: $searchRoot');
 			}
 
@@ -607,25 +583,19 @@ class WinMacroFix
 			// of MSVC's /FI.  This fires before EVERY translation unit, including
 			// those that pull in X11 via the precompiled header, so the #undef
 			// Status (and friends) always lands before FlxKeyManager.h is parsed.
-			if (Context.defined('linux') || Context.defined('mac'))
-			{
+			if (Context.defined('linux') || Context.defined('mac')) {
 				var linuxUndefsPath = cwd + '/source/macros/LinuxUndefs.h';
-				if (!FileSystem.exists(linuxUndefsPath))
-				{
+				if (!FileSystem.exists(linuxUndefsPath)) {
 					trace('[WinMacroFix] WARNING: source/macros/LinuxUndefs.h not found at $linuxUndefsPath');
 					trace('[WinMacroFix] Make sure LinuxUndefs.h is in your source/macros/ directory.');
-				}
-				else
-				{
+				} else {
 					var searchRoot = cwd + '/export/' + buildType;
-					if (FileSystem.exists(searchRoot))
-					{
+					if (FileSystem.exists(searchRoot)) {
 						var buildXmls = _findFiles(searchRoot, 'Build.xml');
 						trace('[WinMacroFix] Found ${buildXmls.length} Build.xml file(s) for -include patch');
 						for (xmlPath in buildXmls)
 							_patchBuildXmlGcc(xmlPath, linuxUndefsPath);
-					}
-					else
+					} else
 						trace('[WinMacroFix] WARNING: export dir not found: $searchRoot');
 				}
 			}
@@ -635,24 +605,23 @@ class WinMacroFix
 			// will apply the undefs first. But patching headers is kept as a
 			// safety net for environments where /FI behaves unexpectedly.
 			var colorRel = 'flixel/util/_FlxColor/FlxColor_Impl_.h';
-			var keyRel   = 'flixel/input/keyboard/_FlxKey/FlxKey_Impl_.h';
+			var keyRel = 'flixel/input/keyboard/_FlxKey/FlxKey_Impl_.h';
 
 			var headerTargets:Array<{path:String, undefs:String, cls:String}> = [];
 
 			// 1. HXCPP_OUT env var
 			var envOut = Context.definedValue('HXCPP_OUT') ?? '';
-			if (envOut != '')
-			{
+			if (envOut != '') {
 				var base = envOut.split("\\").join("/");
 				_tryAdd(headerTargets, base + '/include/' + colorRel, UNDEFS_COLOR, 'FlxColor_Impl_');
-				_tryAdd(headerTargets, base + '/include/' + keyRel,   UNDEFS_KEY,   'FlxKey_Impl_');
+				_tryAdd(headerTargets, base + '/include/' + keyRel, UNDEFS_KEY, 'FlxKey_Impl_');
 			}
 
 			// 2. Recursive search under export/<buildType>/ — NO early exit (v5+)
 			{
 				var needles = [
-					{ rel: colorRel, undefs: UNDEFS_COLOR, cls: 'FlxColor_Impl_' },
-					{ rel: keyRel,   undefs: UNDEFS_KEY,   cls: 'FlxKey_Impl_'   },
+					{rel: colorRel, undefs: UNDEFS_COLOR, cls: 'FlxColor_Impl_'},
+					{rel: keyRel, undefs: UNDEFS_KEY, cls: 'FlxKey_Impl_'},
 				];
 				var searchRoot = cwd + '/export/' + buildType;
 				if (FileSystem.exists(searchRoot))
@@ -664,11 +633,10 @@ class WinMacroFix
 			// 3. HXCPP global cache
 			{
 				var cache = Sys.getEnv("HXCPP_CACHE") ?? '';
-				if (cache != '' && FileSystem.exists(cache))
-				{
+				if (cache != '' && FileSystem.exists(cache)) {
 					var needles = [
-						{ rel: colorRel, undefs: UNDEFS_COLOR, cls: 'FlxColor_Impl_' },
-						{ rel: keyRel,   undefs: UNDEFS_KEY,   cls: 'FlxKey_Impl_'   },
+						{rel: colorRel, undefs: UNDEFS_COLOR, cls: 'FlxColor_Impl_'},
+						{rel: keyRel, undefs: UNDEFS_KEY, cls: 'FlxKey_Impl_'},
 					];
 					for (t in _findHeaders(cache, needles))
 						if (!_alreadyHas(headerTargets, t.path))
@@ -677,7 +645,8 @@ class WinMacroFix
 			}
 
 			trace('[WinMacroFix] Header targets: ${headerTargets.length}');
-			for (t in headerTargets) trace('[WinMacroFix]   -> ${t.path}');
+			for (t in headerTargets)
+				trace('[WinMacroFix]   -> ${t.path}');
 
 			for (t in headerTargets)
 				_patchHeader(t.path, t.undefs, t.cls);
@@ -700,16 +669,18 @@ class WinMacroFix
 	 * El parche se inserta DESPUÉS de la apertura de <target id="default">,
 	 * que es donde HXCPP espera los flags de compilación.
 	 */
-	static function _patchBuildXml(xmlPath:String, winUndefsPath:String):Void
-	{
+	static function _patchBuildXml(xmlPath:String, winUndefsPath:String):Void {
 		var content:String;
-		try { content = File.getContent(xmlPath); }
-		catch(e) { trace('[WinMacroFix] Cannot read Build.xml: $xmlPath — $e'); return; }
+		try {
+			content = File.getContent(xmlPath);
+		} catch (e) {
+			trace('[WinMacroFix] Cannot read Build.xml: $xmlPath — $e');
+			return;
+		}
 
 		// Ya parcheado con esta versión — salir (útil en builds incrementales
 		// donde Haxe no regenera Build.xml si nada cambió).
-		if (content.indexOf(MARKER_XML) != -1)
-		{
+		if (content.indexOf(MARKER_XML) != -1) {
 			trace('[WinMacroFix] Build.xml already patched: $xmlPath');
 			return;
 		}
@@ -717,32 +688,33 @@ class WinMacroFix
 		// Buscar el tag de apertura del target principal
 		var needle = '<target id="default"';
 		var idx = content.indexOf(needle);
-		if (idx < 0)
-		{
+		if (idx < 0) {
 			trace('[WinMacroFix] No <target id="default"> found in $xmlPath — skipping');
 			return;
 		}
 
 		// Avanzar hasta el '>' de cierre del tag de apertura
 		var tagEnd = content.indexOf('>', idx);
-		if (tagEnd < 0) { trace('[WinMacroFix] Malformed <target> tag in $xmlPath'); return; }
+		if (tagEnd < 0) {
+			trace('[WinMacroFix] Malformed <target> tag in $xmlPath');
+			return;
+		}
 		tagEnd++; // incluir el '>'
 
 		// MSVC /FI flag: /FI"path" (sin espacio entre /FI y la ruta).
 		// &quot; es la entidad XML para las comillas dobles necesarias para
 		// manejar rutas con espacios (ej. "H:/MOD FNF/FNF-Cool-Engine/...").
 		var escapedPath = winUndefsPath; // ya está en formato forward-slash
-		var flag = '\n\t\t$MARKER_XML'
-		         + '\n\t\t<compilerflag value="/FI&quot;$escapedPath&quot;"/>';
+		var flag = '\n\t\t$MARKER_XML' + '\n\t\t<compilerflag value="/FI&quot;$escapedPath&quot;"/>';
 
 		content = content.substr(0, tagEnd) + flag + content.substr(tagEnd);
 
-		try
-		{
+		try {
 			File.saveContent(xmlPath, content);
 			trace('[WinMacroFix] Patched Build.xml with /FI flag: $xmlPath');
+		} catch (e) {
+			trace('[WinMacroFix] Cannot write Build.xml: $xmlPath — $e');
 		}
-		catch(e) { trace('[WinMacroFix] Cannot write Build.xml: $xmlPath — $e'); }
 	}
 
 	// ══════════════════════════════════════════════════════════════════════════
@@ -763,55 +735,58 @@ class WinMacroFix
 	 * that automatically.  If the path contains spaces, the Build.xml attribute
 	 * value itself carries them safely.
 	 */
-	static function _patchBuildXmlGcc(xmlPath:String, linuxUndefsPath:String):Void
-	{
+	static function _patchBuildXmlGcc(xmlPath:String, linuxUndefsPath:String):Void {
 		var content:String;
-		try { content = File.getContent(xmlPath); }
-		catch(e) { trace('[WinMacroFix] Cannot read Build.xml: $xmlPath — $e'); return; }
+		try {
+			content = File.getContent(xmlPath);
+		} catch (e) {
+			trace('[WinMacroFix] Cannot read Build.xml: $xmlPath — $e');
+			return;
+		}
 
 		// Already patched with this version — skip (safe for incremental builds).
-		if (content.indexOf(MARKER_XML) != -1)
-		{
+		if (content.indexOf(MARKER_XML) != -1) {
 			trace('[WinMacroFix] Build.xml already patched (gcc): $xmlPath');
 			return;
 		}
 
 		var needle = '<target id="default"';
 		var idx = content.indexOf(needle);
-		if (idx < 0)
-		{
+		if (idx < 0) {
 			trace('[WinMacroFix] No <target id="default"> found in $xmlPath — skipping');
 			return;
 		}
 
 		var tagEnd = content.indexOf('>', idx);
-		if (tagEnd < 0) { trace('[WinMacroFix] Malformed <target> tag in $xmlPath'); return; }
+		if (tagEnd < 0) {
+			trace('[WinMacroFix] Malformed <target> tag in $xmlPath');
+			return;
+		}
 		tagEnd++;
 
 		// GCC/Clang:  -include <path>  (no quoting needed in XML attribute).
-		var flag = '\n\t\t$MARKER_XML'
-		         + '\n\t\t<compilerflag value="-include $linuxUndefsPath"/>';
+		var flag = '\n\t\t$MARKER_XML' + '\n\t\t<compilerflag value="-include $linuxUndefsPath"/>';
 
 		content = content.substr(0, tagEnd) + flag + content.substr(tagEnd);
 
-		try
-		{
+		try {
 			File.saveContent(xmlPath, content);
 			trace('[WinMacroFix] Patched Build.xml with -include flag (gcc): $xmlPath');
+		} catch (e) {
+			trace('[WinMacroFix] Cannot write Build.xml: $xmlPath — $e');
 		}
-		catch(e) { trace('[WinMacroFix] Cannot write Build.xml: $xmlPath — $e'); }
 	}
 
-
-
-	static function _patchHeader(path:String, undefs:String, className:String):Void
-	{
+	static function _patchHeader(path:String, undefs:String, className:String):Void {
 		var content:String;
-		try { content = File.getContent(path); }
-		catch(e) { trace('[WinMacroFix] Cannot read header: $path — $e'); return; }
+		try {
+			content = File.getContent(path);
+		} catch (e) {
+			trace('[WinMacroFix] Cannot read header: $path — $e');
+			return;
+		}
 
-		if (content.indexOf(MARKER) != -1)
-		{
+		if (content.indexOf(MARKER) != -1) {
 			trace('[WinMacroFix] Header already patched: $path');
 			return;
 		}
@@ -822,40 +797,39 @@ class WinMacroFix
 		if (insertIdx < 0)
 			insertIdx = _findAfterLastInclude(content);
 
-		if (insertIdx < 0)
-		{
+		if (insertIdx < 0) {
 			trace('[WinMacroFix] WARNING: no insert point found in $path — skipping');
 			return;
 		}
 
 		content = content.substr(0, insertIdx) + '\n' + undefs + '\n' + content.substr(insertIdx);
 
-		try
-		{
+		try {
 			File.saveContent(path, content);
 			trace('[WinMacroFix] Patched header: $path');
+		} catch (e) {
+			trace('[WinMacroFix] Cannot write header: $path — $e');
 		}
-		catch(e) { trace('[WinMacroFix] Cannot write header: $path — $e'); }
 	}
 
-	static function _stripOldUndefs(content:String):String
-	{
-		var lines  = content.split('\n');
+	static function _stripOldUndefs(content:String):String {
+		var lines = content.split('\n');
 		var result = [];
 		var i = 0;
-		while (i < lines.length)
-		{
+		while (i < lines.length) {
 			var line = lines[i].trim();
-			if (line.startsWith('// WinMacroFix')) { i++; continue; }
-			if (line.startsWith('#ifdef ') && i + 2 < lines.length)
-			{
-				var sym   = line.substr(7).trim();
+			if (line.startsWith('// WinMacroFix')) {
+				i++;
+				continue;
+			}
+			if (line.startsWith('#ifdef ') && i + 2 < lines.length) {
+				var sym = line.substr(7).trim();
 				var next1 = lines[i + 1].trim();
 				var next2 = lines[i + 2].trim();
-				if (next1 == '#undef ' + sym && next2 == '#endif')
-				{
+				if (next1 == '#undef ' + sym && next2 == '#endif') {
 					i += 3;
-					while (i < lines.length && lines[i].trim() == '') i++;
+					while (i < lines.length && lines[i].trim() == '')
+						i++;
 					continue;
 				}
 			}
@@ -865,32 +839,35 @@ class WinMacroFix
 		return result.join('\n');
 	}
 
-	static function _findClassInsertPoint(content:String, className:String):Int
-	{
+	static function _findClassInsertPoint(content:String, className:String):Int {
 		var needle = 'class ' + className;
 		var pos = 0;
-		while (true)
-		{
+		while (true) {
 			var idx = content.indexOf(needle, pos);
-			if (idx < 0) return -1;
+			if (idx < 0)
+				return -1;
 			var after = idx + needle.length;
-			if (after >= content.length) return idx;
+			if (after >= content.length)
+				return idx;
 			var ch = content.charCodeAt(after);
-			if (ch == 32 || ch == 10 || ch == 13 || ch == 58 || ch == 123) return idx;
+			if (ch == 32 || ch == 10 || ch == 13 || ch == 58 || ch == 123)
+				return idx;
 			pos = idx + 1;
 		}
 	}
 
-	static function _findAfterLastInclude(content:String):Int
-	{
+	static function _findAfterLastInclude(content:String):Int {
 		var lastEnd = -1;
 		var pos = 0;
-		while (true)
-		{
+		while (true) {
 			var idx = content.indexOf('#include', pos);
-			if (idx < 0) break;
+			if (idx < 0)
+				break;
 			var lineEnd = content.indexOf('\n', idx);
-			if (lineEnd < 0) lineEnd = content.length; else lineEnd++;
+			if (lineEnd < 0)
+				lineEnd = content.length;
+			else
+				lineEnd++;
 			lastEnd = lineEnd;
 			pos = lineEnd;
 		}
@@ -902,26 +879,26 @@ class WinMacroFix
 	// ══════════════════════════════════════════════════════════════════════════
 
 	/** Encuentra TODOS los archivos con nombre exacto `filename` bajo `startDir`. */
-	static function _findFiles(startDir:String, filename:String):Array<String>
-	{
+	static function _findFiles(startDir:String, filename:String):Array<String> {
 		var out:Array<String> = [];
 		_walkForFile(startDir, filename, out);
 		return out;
 	}
 
-	static function _walkForFile(dir:String, filename:String, out:Array<String>):Void
-	{
+	static function _walkForFile(dir:String, filename:String, out:Array<String>):Void {
 		var entries:Array<String>;
-		try { entries = FileSystem.readDirectory(dir); } catch(_) { return; }
-		for (entry in entries)
-		{
+		try {
+			entries = FileSystem.readDirectory(dir);
+		} catch (_) {
+			return;
+		}
+		for (entry in entries) {
 			var full = dir + '/' + entry;
-			if (FileSystem.isDirectory(full))
-			{
-				if (entry == 'assets' || entry == 'backup') continue;
+			if (FileSystem.isDirectory(full)) {
+				if (entry == 'assets' || entry == 'backup')
+					continue;
 				_walkForFile(full, filename, out);
-			}
-			else if (entry == filename)
+			} else if (entry == filename)
 				out.push(full.split("\\").join("/"));
 		}
 	}
@@ -929,60 +906,46 @@ class WinMacroFix
 	/** Encuentra TODAS las copias de los headers especificados en `needles`.
 	 *  v6: sin early-exit — busca en TODO el árbol para cubrir tanto
 	 *  cpp/include/ como obj/include/ y cualquier otra ubicación. */
-	static function _findHeaders(
-		startDir : String,
-		needles  : Array<{rel:String, undefs:String, cls:String}>
-	) : Array<{path:String, undefs:String, cls:String}>
-	{
+	static function _findHeaders(startDir:String, needles:Array<{rel:String, undefs:String, cls:String}>):Array<{path:String, undefs:String, cls:String}> {
 		var out:Array<{path:String, undefs:String, cls:String}> = [];
 		_walk(startDir, needles, out);
 		return out;
 	}
 
-	static function _walk(
-		dir     : String,
-		needles : Array<{rel:String, undefs:String, cls:String}>,
-		out     : Array<{path:String, undefs:String, cls:String}>
-	) : Void
-	{
+	static function _walk(dir:String, needles:Array<{rel:String, undefs:String, cls:String}>, out:Array<{path:String, undefs:String, cls:String}>):Void {
 		// v6: SIN early-exit — encontrar TODAS las copias del header.
 		var entries:Array<String>;
-		try { entries = FileSystem.readDirectory(dir); } catch(_) { return; }
-		for (entry in entries)
-		{
+		try {
+			entries = FileSystem.readDirectory(dir);
+		} catch (_) {
+			return;
+		}
+		for (entry in entries) {
 			var full = dir + '/' + entry;
-			if (FileSystem.isDirectory(full))
-			{
-				if (entry == 'assets' || entry == 'backup') continue;
+			if (FileSystem.isDirectory(full)) {
+				if (entry == 'assets' || entry == 'backup')
+					continue;
 				_walk(full, needles, out);
-			}
-			else
-			{
+			} else {
 				var norm = full.split("\\").join("/");
 				for (n in needles)
-					if (norm.endsWith('/' + n.rel) && !_alreadyHas(out, norm))
-					{
-						out.push({ path: norm, undefs: n.undefs, cls: n.cls });
+					if (norm.endsWith('/' + n.rel) && !_alreadyHas(out, norm)) {
+						out.push({path: norm, undefs: n.undefs, cls: n.cls});
 						break;
 					}
 			}
 		}
 	}
 
-	static function _tryAdd(
-		arr    : Array<{path:String, undefs:String, cls:String}>,
-		path   : String,
-		undefs : String,
-		cls    : String
-	) : Void
-	{
+	static function _tryAdd(arr:Array<{path:String, undefs:String, cls:String}>, path:String, undefs:String, cls:String):Void {
 		if (FileSystem.exists(path) && !_alreadyHas(arr, path))
-			arr.push({ path: path, undefs: undefs, cls: cls });
+			arr.push({path: path, undefs: undefs, cls: cls});
 	}
 
-	static function _alreadyHas(arr:Array<{path:String, undefs:String, cls:String}>, path:String):Bool
-	{
-		for (t in arr) if (t.path == path) return true;
+	static function _alreadyHas(arr:Array<{path:String, undefs:String, cls:String}>, path:String):Bool {
+		for (t in arr)
+			if (t.path == path)
+				return true;
 		return false;
 	}
 }

@@ -553,7 +553,7 @@ class Project extends HXProject
     // con macros de windows.h (TRANSPARENT, DELETE, etc.).
     // Se aplica aquí, DESPUÉS de que el classpath "source" ya está registrado
     // (via sources.push(SOURCE_DIR) en configureApp) → no hay "Type not found".
-    if (isWindows() || isLinux() || isMac())
+    if ((isWindows() || isLinux() || isMac()) && isCPP())
       addHaxeFlag("--macro WinMacroFix.apply()");
   }
 

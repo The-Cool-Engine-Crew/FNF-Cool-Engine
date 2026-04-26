@@ -349,16 +349,13 @@ jobs:
             g++ gcc make
           sudo ldconfig
 
-      - name: Install HashLink ${{ env.HL_VERSION }} VM
+      - name: Build & install HashLink ${{ env.HL_VERSION }} VM from source
         run: |
-          wget -q \
-            "https://github.com/HaxeFoundation/hashlink/releases/download/${{ env.HL_VERSION }}/hashlink-${{ env.HL_VERSION }}-linux-amd64.tar.gz" \
-            -O hashlink.tar.gz
-          tar xzf hashlink.tar.gz
-          HL_DIR="hashlink-${{ env.HL_VERSION }}-linux-amd64"
-          sudo cp "$HL_DIR/hl"      /usr/local/bin/hl
-          # Copiar libhl.so + libs auxiliares de HL al linker path
-          sudo cp "$HL_DIR/"*.so    /usr/local/lib/ 2>/dev/null || true
+          git clone --depth 1 --branch ${{ env.HL_VERSION }} \
+            https://github.com/HaxeFoundation/hashlink.git hashlink-src
+          cd hashlink-src
+          make
+          sudo make install
           sudo ldconfig
           hl --version
 
