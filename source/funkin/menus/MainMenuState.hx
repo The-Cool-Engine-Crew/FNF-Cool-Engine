@@ -98,7 +98,7 @@ class MainMenuState extends funkin.states.MusicBeatState
 
 		#if desktop
 		// Updating Discord Rich Presence
-		DiscordClient.changePresence("In the Menu", null);
+		data.Discord.DiscordClient.changePresence("In the Main Menu", null);
 		#end
 
 		#if !MAINMENU

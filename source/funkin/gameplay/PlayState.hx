@@ -1535,7 +1535,7 @@ class PlayState extends funkin.states.MusicBeatState {
 				pauseMenu();
 		}
 
-		if (FlxG.keys.justPressed.SEVEN) {
+		if (FlxG.keys.justPressed.SEVEN && mods.ModManager.developerMode) {
 			funkin.system.CursorManager.show();
 			StateTransition.switchState(new ChartingState());
 		}
@@ -1548,7 +1548,7 @@ class PlayState extends funkin.states.MusicBeatState {
 				playbackRate += 0.25;
 		}
 
-		if (FlxG.keys.justPressed.F8 && startedCountdown && canPause) {
+		if (FlxG.keys.justPressed.F8 && startedCountdown && canPause && mods.ModManager.developerMode) {
 			ModChartEditorState.pendingManager = modChartManager;
 			ModChartEditorState.pendingStrumsData = strumsGroups.map(function(g) return g.data);
 			modChartManager = null;

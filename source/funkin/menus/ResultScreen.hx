@@ -166,6 +166,11 @@ class ResultScreen extends funkin.states.MusicBeatSubstate {
 		StateScriptHandler.loadStateScripts('ResultScreen', this);
 		StateScriptHandler.callOnScripts('onCreate', []);
 
+		#if desktop
+		// Updating Discord Rich Presence
+		data.Discord.DiscordClient.changePresence("In the Result Screen", null);
+		#end
+
 		super.create();
 
 		#if mobileC

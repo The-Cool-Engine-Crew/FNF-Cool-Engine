@@ -95,6 +95,10 @@ class TitleState extends funkin.states.MusicBeatState
 		StateScriptHandler.loadStateScripts('TitleState', this);
 		#end
 
+		#if desktop
+		data.Discord.DiscordClient.changePresence("In the Title Screen", null);
+		#end
+
 		bg = new FlxSprite().loadGraphic(Paths.getGraphic('menu/menuBGtitle'));
 		var bgScale:Float = Math.max(FlxG.width / bg.width, FlxG.height / bg.height);
 		bg.scale.set(bgScale, bgScale);

@@ -247,7 +247,7 @@ class OptionsMenuState extends MusicBeatSubstate
 		#end
 
 		#if desktop
-		DiscordClient.changePresence("Options Menu", null);
+		DiscordClient.changePresence("In the Options Menu", null);
 		#end
 
 		if (!OptionsMenuState.fromPause)

@@ -456,7 +456,7 @@ class ChartingState extends funkin.states.MusicBeatState
 		funkin.system.CursorManager.show();
 
 		#if desktop
-		DiscordClient.changePresence("Chart Editor", null, null, true);
+		DiscordClient.changePresence("In the Chart Editor", null, null, true);
 		#end
 
 		curSection = lastSection;

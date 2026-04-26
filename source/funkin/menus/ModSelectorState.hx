@@ -121,6 +121,11 @@ class ModSelectorState extends MusicBeatState {
 		ModManager.init();
 		_mods = ModManager.installedMods.copy();
 
+		#if desktop
+		// Updating Discord Rich Presence
+		data.Discord.DiscordClient.changePresence("In the Mods Menu", null);
+		#end
+
 		funkin.system.CursorManager.show();
 		_setupCameras();
 		_buildBG();

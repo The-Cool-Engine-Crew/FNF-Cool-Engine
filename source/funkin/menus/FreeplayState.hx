@@ -236,7 +236,7 @@ class FreeplayState extends funkin.states.MusicBeatState
 			songsSystem();
 
 		#if desktop
-		DiscordClient.changePresence("In the FreePlay", null);
+		DiscordClient.changePresence("In the Freeplay", null);
 		#end
 
 		// ── Background ────────────────────────────────────────────────────────
