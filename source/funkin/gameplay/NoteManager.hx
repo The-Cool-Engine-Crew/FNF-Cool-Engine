@@ -219,7 +219,6 @@ class NoteManager {
 	private static inline final _FRAME_CACHE_SIZE:Int = 128;
 
 	private var _frameCenterYCache:Array<Float> = [for (_ in 0..._FRAME_CACHE_SIZE) Math.NaN];
-	private var _frameVisualCenterCache:Array<Float> = [for (_ in 0..._FRAME_CACHE_SIZE) Math.NaN];
 	private var _frameModEnabled:Bool = false;
 	private var _frameGroupCount:Int = 0;
 
@@ -575,7 +574,6 @@ class NoteManager {
 
 		for (ci in 0..._FRAME_CACHE_SIZE) {
 			_frameCenterYCache[ci] = Math.NaN;
-			_frameVisualCenterCache[ci] = Math.NaN;
 		}
 		_missedHoldDir[0] = _missedHoldDir[1] = _missedHoldDir[2] = _missedHoldDir[3] = false;
 
@@ -827,12 +825,6 @@ class NoteManager {
 			_frameCenterYCache[cKey] = strumCY;
 		}
 
-		var visualCenter:Float = _frameVisualCenterCache[cKey];
-		if (Math.isNaN(visualCenter)) {
-			visualCenter = strumCY - strum.offset.y + strum.height / 2;
-			_frameVisualCenterCache[cKey] = visualCenter;
-		}
-
 		// Mod state
 		var ms:funkin.gameplay.modchart.StrumState = null;
 		var ngid:String = note.mustPress ? "player" : "cpu";
@@ -945,7 +937,7 @@ class NoteManager {
 
 			if (note.isSustainNote) {
 				note.flipX = false;
-				note.flipY = note.isTailCap && effDown;
+				note.flipY = false; // angle already orients the tail cap; Y-flip breaks the connection
 
 				// Snake angle + Euclidean scale: evaluate next-piece position
 				final nextST:Float = note.strumTime + Conductor.stepCrochet;
@@ -1048,7 +1040,6 @@ class NoteManager {
 			} else if (note.wasGoodHit) {
 				final halfStrum = funkin.gameplay.notes.Note.swagWidth * 0.5;
 				final thresh = effDown ? strumCY - halfStrum : strumCY + halfStrum;
-
 				if (effDown) {
 					if (note.y + note.height >= thresh) {
 						final clipH = (thresh - note.y) / note.scale.y;
@@ -1057,7 +1048,9 @@ class NoteManager {
 							note.visible = false;
 							removeNote(note);
 						} else {
-							_sustainClipRect.set(0, note.frameHeight - clipH, note.width * 2, clipH);
+							// In downscroll the sprite's top (row 0) is the far end of
+						// the sustain (above the strum); show only that visible top slice.
+							_sustainClipRect.set(0, 0, note.width * 2, clipH);
 							if (note.clipRect == null)
 								note.clipRect = new flixel.math.FlxRect();
 							note.clipRect.copyFrom(_sustainClipRect);

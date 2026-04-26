@@ -64,6 +64,7 @@ class GlobalConfig
 		_instance     = _load(curMod);
 		_loadedForMod = curMod;
 		_applyToSkinSystem(_instance);
+		applyDiscord();
 	}
 
 	// ─── Propiedades ────────────────────────────────────────────────────────────
@@ -483,7 +484,7 @@ class GlobalConfig
 		if (cfg.discordLargeImageKey  != null) dc.activeLargeImageKey  = cfg.discordLargeImageKey;
 		if (cfg.discordLargeImageText != null) dc.activeLargeImageText = cfg.discordLargeImageText;
 		if (cfg.discordMenuDetails    != null) dc.activeMenuDetails    = cfg.discordMenuDetails;
-		trace('[GlobalConfig] Discord aplicado');
+		trace('[GlobalConfig] Discord applied');
 		#end
 	}
 }
