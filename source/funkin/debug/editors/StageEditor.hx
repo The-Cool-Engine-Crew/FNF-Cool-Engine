@@ -15,7 +15,7 @@ import flixel.group.FlxGroup.FlxTypedGroup;
 import flixel.math.FlxMath;
 import flixel.math.FlxPoint;
 import flixel.text.FlxText;
-import flixel.ui.FlxButton;
+import coolui.CoolButton;
 import flixel.util.FlxColor;
 import funkin.gameplay.objects.character.Character;
 import funkin.gameplay.objects.stages.Stage;
@@ -1956,7 +1956,7 @@ class StageEditor extends funkin.states.MusicBeatState
 		tab.add(elemAssetInput);
 		_assetWidgets.push(elemAssetInput);
 
-		var browseBtn = new FlxButton(W - 36, y + 11, 'Browse', browseAsset);
+		var browseBtn = new CoolButton(W - 36, y + 11, 'Browse', browseAsset);
 		tab.add(browseBtn);
 		_assetWidgets.push(browseBtn);
 		y += 32;
@@ -2076,7 +2076,7 @@ class StageEditor extends funkin.states.MusicBeatState
 
 		// Apply button
 		thinSep(y); y += 6;
-		var applyBtn = new FlxButton(8, y, 'Apply Changes  \u21B5', applyElementProps);
+		var applyBtn = new CoolButton(8, y, 'Apply Changes  \u21B5', applyElementProps);
 		tab.add(applyBtn);
 		y += 30;
 
@@ -2158,8 +2158,8 @@ class StageEditor extends funkin.states.MusicBeatState
 		animListText = new FlxTypedGroup<FlxText>();
 		// Groups are added to the state directly in buildRightPanel (coolui.CoolUIGroup only accepts FlxSprite)
 
-		track(new FlxButton(4,            y + 144, '+ Add Anim', addAnimation));
-		track(new FlxButton(RIGHT_W - 86, y + 144, 'Remove',     removeAnimation));
+		track(new CoolButton(4,            y + 144, '+ Add Anim', addAnimation));
+		track(new CoolButton(RIGHT_W - 86, y + 144, 'Remove',     removeAnimation));
 
 		y += 172;
 		var sep = new FlxSprite(4, y).makeGraphic(RIGHT_W - 16, 1, T.borderColor);
@@ -2201,7 +2201,7 @@ class StageEditor extends funkin.states.MusicBeatState
 		animFirstInput = cast track(new CoolInputText(8, y + 12, 180, 'idle', 10));
 
 		y += 32;
-		track(new FlxButton(8, y, 'Save Anim Data', saveAnimData));
+		track(new CoolButton(8, y, 'Save Anim Data', saveAnimData));
 
 		_contextPanel.addGroup(tab);
 	}
@@ -2240,7 +2240,7 @@ class StageEditor extends funkin.states.MusicBeatState
 		tab.add(stageHideGFCheck);
 
 		y += 52;
-		var applyStageBtn = new FlxButton(8, y, 'Apply Stage Props', applyStageProps);
+		var applyStageBtn = new CoolButton(8, y, 'Apply Stage Props', applyStageProps);
 		tab.add(applyStageBtn);
 
 		y += 30;
@@ -2257,11 +2257,11 @@ class StageEditor extends funkin.states.MusicBeatState
 		tab.add(scriptsInfo);
 
 		y += Std.int(scriptsInfo.textField.textHeight) + 8;
-		var addScriptBtn = new FlxButton(8, y, '+ Add Script Path', addScript);
+		var addScriptBtn = new CoolButton(8, y, '+ Add Script Path', addScript);
 		tab.add(addScriptBtn);
 
 		y += 30;
-		var reloadBtn = new FlxButton(8, y, 'Reload Stage View', reloadStageView);
+		var reloadBtn = new CoolButton(8, y, 'Reload Stage View', reloadStageView);
 		tab.add(reloadBtn);
 
 		rightPanel.addGroup(tab);
@@ -2346,7 +2346,7 @@ class StageEditor extends funkin.states.MusicBeatState
 		tab.add(camDadYStepper);
 
 		y += 36;
-		var applyBtn = new FlxButton(8, y, 'Apply + Reload Chars', applyCharProps);
+		var applyBtn = new CoolButton(8, y, 'Apply + Reload Chars', applyCharProps);
 		tab.add(applyBtn);
 
 		rightPanel.addGroup(tab);
@@ -2370,7 +2370,7 @@ class StageEditor extends funkin.states.MusicBeatState
 		y += 26;
 
 		// Row 1: Refresh + Import
-		var refreshBtn = new FlxButton(8, y, 'Refresh', function()
+		var refreshBtn = new CoolButton(8, y, 'Refresh', function()
 		{
 			ShaderManager.scanShaders();
 			_shaderList = ['(none)'].concat(ShaderManager.getAvailableShaders());
@@ -2381,15 +2381,15 @@ class StageEditor extends funkin.states.MusicBeatState
 		});
 		tab.add(refreshBtn);
 
-		var importBtn = new FlxButton(RIGHT_W - 136, y, '+ Import .frag', _importShader);
+		var importBtn = new CoolButton(RIGHT_W - 136, y, '+ Import .frag', _importShader);
 		tab.add(importBtn);
 		y += 28;
 
 		// Row 2: New shader + Edit current
-		var newBtn = new FlxButton(8, y, 'New Shader', function() _openShaderEditor(null));
+		var newBtn = new CoolButton(8, y, 'New Shader', function() _openShaderEditor(null));
 		tab.add(newBtn);
 
-		var editBtn = new FlxButton(RIGHT_W - 136, y, 'Edit Selected .frag', function()
+		var editBtn = new CoolButton(RIGHT_W - 136, y, 'Edit Selected .frag', function()
 		{
 			// Find which shader is currently shown in the element dropdown
 			var shName:String = null;
@@ -2481,7 +2481,7 @@ class StageEditor extends funkin.states.MusicBeatState
 		y += 36;
 
 		// Remove shader + Params substate buttons
-		var removeBtn = new FlxButton(8, y, 'x Remove', function()
+		var removeBtn = new CoolButton(8, y, 'x Remove', function()
 		{
 			if (selectedIdx < 0 || selectedIdx >= stageData.elements.length) return;
 			var elem = stageData.elements[selectedIdx];
@@ -2495,7 +2495,7 @@ class StageEditor extends funkin.states.MusicBeatState
 		});
 		tab.add(removeBtn);
 
-		var paramsBtn = new FlxButton(RIGHT_W - 132, y, '* Shader Params', _openShaderParams);
+		var paramsBtn = new CoolButton(RIGHT_W - 132, y, '* Shader Params', _openShaderParams);
 		tab.add(paramsBtn);
 		y += 28;
 
@@ -5330,7 +5330,7 @@ class NewStageSubState extends flixel.FlxSubState
 		note.color = T.textDim;
 		note.scrollFactor.set(); note.cameras = [_camSub]; add(note);
 
-		var confirmBtn = new FlxButton(panX + 14, panY + H - 34, 'Create Stage', function()
+		var confirmBtn = new CoolButton(panX + 14, panY + H - 34, 'Create Stage', function()
 		{
 			var n = _nameInput.text.trim();
 			if (n == '') n = 'my_stage';
@@ -5341,7 +5341,7 @@ class NewStageSubState extends flixel.FlxSubState
 		});
 		confirmBtn.cameras = [_camSub]; add(confirmBtn);
 
-		var cancelBtn = new FlxButton(panX + W - 100, panY + H - 34, 'Cancel', close);
+		var cancelBtn = new CoolButton(panX + W - 100, panY + H - 34, 'Cancel', close);
 		cancelBtn.cameras = [_camSub]; add(cancelBtn);
 
 		var hint = new FlxText(panX + 14, panY + H - 16, W - 28, 'ESC to cancel', 9);
@@ -5498,7 +5498,7 @@ class StageListSubState extends flixel.FlxSubState
 		_countTxt.setFormat(Paths.font('vcr.ttf'), 10, T.textSecondary, LEFT);
 		_countTxt.scrollFactor.set(); _countTxt.cameras = [_camSub]; add(_countTxt);
 
-		var cancelBtn = new FlxButton(_panX + W - 100, ctrlY, 'Cancel', close);
+		var cancelBtn = new CoolButton(_panX + W - 100, ctrlY, 'Cancel', close);
 		cancelBtn.cameras = [_camSub]; add(cancelBtn);
 
 		var hint = new FlxText(_panX + 14, _panY + H - 16, W - 28, 'Click a row to load  •  ESC to cancel  •  ↑↓ to scroll', 9);
@@ -5612,12 +5612,12 @@ class StageListSubState extends flixel.FlxSubState
 			add(pathTxt); _textGroup.add(pathTxt);
 
 			// LOAD button on the right
-			var btn = new FlxButton(_panX + W - 60, ry + 4, 'LOAD', function()
+			var btn = new CoolButton(_panX + W - 60, ry + 4, 'LOAD', function()
 			{
 				_onSelect(entry.name, entry.path);
 				close();
 			});
-			//btn.resize(56, ROW_H - 8);
+			btn.resize(56, ROW_H - 8);
 			btn.cameras = [_camSub]; add(btn); _rowGroup.add(cast btn);
 		}
 
@@ -5829,7 +5829,7 @@ class AddElementSubState extends flixel.FlxSubState
 		// ── Browse button ──────────────────────────────────────────────────────
 		// Opens a native file picker. The selected PNG/JPG/XML is copied to the
 		// engine's asset folder (mod or base) and the asset path is filled in.
-		var browseBtn = new FlxButton(panX + W - 96, y + 13, 'Browse...', _browseAsset);
+		var browseBtn = new CoolButton(panX + W - 96, y + 13, 'Browse...', _browseAsset);
 		browseBtn.cameras = [_camSub];
 		add(browseBtn);
 
@@ -5845,7 +5845,7 @@ class AddElementSubState extends flixel.FlxSubState
 		y += 56;
 
 		// Confirm / Cancel
-		var confirmBtn = new FlxButton(panX + 12, y, 'Add Element', function()
+		var confirmBtn = new CoolButton(panX + 12, y, 'Add Element', function()
 		{
 			var types2 = ['sprite', 'animated', 'atlas', 'graphic', 'backdrop', 'group', 'custom_class', 'sound', 'character'];
 			var typeIdx = Std.parseInt(typeDropdown.selectedId);
@@ -5913,7 +5913,7 @@ class AddElementSubState extends flixel.FlxSubState
 		confirmBtn.cameras = [_camSub];
 		add(confirmBtn);
 
-		var cancelBtn = new FlxButton(panX + W - 102, y, 'Cancel', close);
+		var cancelBtn = new CoolButton(panX + W - 102, y, 'Cancel', close);
 		cancelBtn.cameras = [_camSub];
 		add(cancelBtn);
 

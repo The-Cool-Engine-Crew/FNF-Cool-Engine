@@ -16,7 +16,6 @@ import coolui.CoolButton;
 import flixel.util.FlxColor;
 import funkin.data.WeekFile;
 import funkin.data.WeekFile.WeekData;
-import flixel.ui.FlxButton;
 import funkin.gameplay.objects.character.CharacterList;
 import funkin.menus.substate.MenuCharacter;
 import funkin.states.MusicBeatState;
@@ -381,8 +380,8 @@ class StoryMenuEditor extends MusicBeatState {
 		hLbl.font = Paths.font("vcr.ttf");
 		_addHUDTxt(hLbl);
 
-		add(_mkBtn(LIST_W - 52, TOP_H + 3, 22, 22, "+", C_GREEN, _onNewWeek));
-		add(_mkBtn(LIST_W - 26, TOP_H + 3, 22, 22, "−", C_RED, _onDelWeek));
+		add(_mkBtn(LIST_W - 52, TOP_H + 3, 22, 22, "+", CoolButton.STYLE_ACCENT, _onNewWeek));
+		add(_mkBtn(LIST_W - 26, TOP_H + 3, 22, 22, "−", CoolButton.STYLE_DANGER, _onDelWeek));
 
 		var hSep = _addHUD(new FlxSprite(0, TOP_H + 28));
 		hSep.makeGraphic(LIST_W, 1, C_ACCENT);
@@ -490,7 +489,7 @@ class StoryMenuEditor extends MusicBeatState {
 		_wSongIn = new CoolInputText(xL, addY, lW - 32, '', 11);
 		tab.add(_wSongIn);
 
-		var btnAdd = _mkBtn(xL + lW - 28, addY, 26, 20, "+", C_GREEN, function() {
+		var btnAdd = _mkBtn(xL + lW - 28, addY, 26, 20, "+", CoolButton.STYLE_ACCENT, function() {
 			var n = _wSongIn.text.trim();
 			if (n.length == 0)
 				return;
@@ -508,12 +507,10 @@ class StoryMenuEditor extends MusicBeatState {
 
 		// Botones al fondo
 		var btnH = FlxG.height - TOP_H - BOT_H;
-		var btnSave = new FlxButton(xL, btnH - 58, "SAVE (CTRL+S)", _onSave);
-		btnSave.color = C_ACCENT;
+		var btnSave = new CoolButton(xL, btnH - 58, "SAVE (CTRL+S)", _onSave, 80, 20, CoolButton.STYLE_ACCENT);
 		tab.add(btnSave);
 
-		var btnExp = new FlxButton(xL, btnH - 30, "EXPORT JSON", _onExport);
-		btnExp.color = C_GREEN;
+		var btnExp = new CoolButton(xL, btnH - 30, "EXPORT JSON", _onExport, 80, 20, CoolButton.STYLE_ACCENT);
 		tab.add(btnExp);
 
 		_tabMenu.addGroup(tab);
@@ -622,14 +619,13 @@ class StoryMenuEditor extends MusicBeatState {
 		sep.alpha = 0.15;
 		tab.add(sep);
 
-		var btnAp = new FlxButton(xL, sepY + 8, "APPLY AND SAVE", function() {
+		var btnAp = new CoolButton(xL, sepY + 8, "APPLY AND SAVE", function() {
 			_applyAllCharEdits();
 			_onSave();
-		});
-		btnAp.color = C_ACCENT;
+		}, 80, 20, CoolButton.STYLE_ACCENT);
 		tab.add(btnAp);
 
-		var btnRs = new FlxButton(xL, sepY + 36, "RESET OFFSETS", function() {
+		var btnRs = new CoolButton(xL, sepY + 36, "RESET OFFSETS", function() {
 			for (i in 0...3) {
 				_cOffX[i].value = 0;
 				_cOffY[i].value = 0;
@@ -641,8 +637,7 @@ class StoryMenuEditor extends MusicBeatState {
 				_editFlip[i] = false;
 			}
 			_rebuildChars();
-		});
-		btnRs.color = C_RED;
+		}, 80, 20, CoolButton.STYLE_DANGER);
 		tab.add(btnRs);
 
 		_tabMenu.addGroup(tab);
@@ -956,11 +951,8 @@ class StoryMenuEditor extends MusicBeatState {
 		return false;
 	}
 
-	function _mkBtn(bx:Float, by:Float, bw:Int, bh:Int, lbl:String, col:Int, cb:Void->Void):FlxButton {
-		var b = new FlxButton(bx, by, lbl, cb);
-		b.setGraphicSize(bw, bh);
-		b.updateHitbox();
-		b.color = col;
+	function _mkBtn(bx:Float, by:Float, bw:Int, bh:Int, lbl:String, style:Int, cb:Void->Void):CoolButton {
+		var b = new CoolButton(bx, by, lbl, cb, bw, bh, style);
 		b.scrollFactor.set();
 		return b;
 	}
@@ -1048,13 +1040,10 @@ class SongRow extends flixel.group.FlxSpriteGroup {
 		lbl.color = 0xFFCCCCDD;
 		lbl.font = Paths.font("vcr.ttf");
 		add(lbl);
-		var del = new FlxButton(rw - 20, 1, "×", function() {
+		var del = new CoolButton(rw - 20, 1, "×", function() {
 			if (onDelete != null)
 				onDelete(_idx);
-		});
-		del.setGraphicSize(18, 18);
-		del.updateHitbox();
-		del.color = 0xFFFF3355;
+		}, 18, 18, CoolButton.STYLE_DANGER);
 		add(del);
 		var sep = new FlxSprite(0, 21);
 		sep.makeGraphic(rw, 1, 0x08FFFFFF);
