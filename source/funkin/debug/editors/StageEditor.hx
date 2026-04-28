@@ -1830,12 +1830,12 @@ class StageEditor extends funkin.states.MusicBeatState
 		_contextPanel.x = RIGHT_PANEL_HIDE_X;
 
 		// ── Anims tab header mask ────────────────────────────────────────────────
-		// CoolTabMenu sorts tabs alphabetically: Anims=left half, Element=right half.
-		// This sprite covers the "Anims" tab header with the panel background colour
-		// so it appears absent for types that don't support animations.
+		// Tabs are in insertion order: Element=left half, Anims=right half.
+		// This sprite covers the "Anims" tab header (right half) with the panel
+		// background colour so it appears absent for types that don't support animations.
 		var tabHeaderH = 22;
 		var tabW = Std.int((RIGHT_W - 2) / 2);
-		_animTabMask = new FlxSprite(panelX + 2, TOP_H + SEL_INFO_H)
+		_animTabMask = new FlxSprite(panelX + 2 + tabW, TOP_H + SEL_INFO_H)
 			.makeGraphic(tabW, tabHeaderH, T.bgPanel);
 		_animTabMask.cameras = [camHUD];
 		_animTabMask.scrollFactor.set();
@@ -2529,8 +2529,8 @@ class StageEditor extends funkin.states.MusicBeatState
 		updateStatusBar();
 
 		// Track which context-panel tab is selected to show/hide the animation list overlay.
-		// _contextPanel has 2 tabs (Element, Anims) sorted alphabetically → Anims=0, Element=1.
-		// Tab header sits at y ≈ TOP_H + SEL_INFO_H, height ≈ 20px. 2 tabs share RIGHT_W-2 px.
+		// Tabs are in insertion order: Element=left (index 0), Anims=right (index 1).
+		// Tab header sits at y ≈ TOP_H + SEL_INFO_H, height ≈ 22px. 2 tabs share RIGHT_W-2 px.
 		if (FlxG.mouse.justPressed && _contextPanel != null && _contextPanel.visible)
 		{
 			var mx = FlxG.mouse.gameX;
@@ -2540,8 +2540,8 @@ class StageEditor extends funkin.states.MusicBeatState
 			{
 				var tabW:Float = (RIGHT_W - 2) / 2;
 				var ti = Std.int((mx - (FlxG.width - RIGHT_W + 2)) / tabW);
-				// CoolTabMenu sorts tabs alphabetically: [Anims=0, Element=1]
-				_animTabVisible = (ti == 0);
+				// Element=0 (left), Anims=1 (right) — tabs keep insertion order
+				_animTabVisible = (ti == 1);
 			}
 		}
 		// CoolTabMenu restores visible=true on all widgets of the active tab every time
@@ -3298,7 +3298,7 @@ class StageEditor extends funkin.states.MusicBeatState
 		var worldY = worldPos.y;
 		worldPos.put();
 
-		if (FlxG.mouse.justPressed)
+		if (FlxG.mouse.justPressed && !isMouseOverUI())
 		{
 			// Try to select element under cursor
 			var clickedIdx = -1;
@@ -3405,6 +3405,7 @@ class StageEditor extends funkin.states.MusicBeatState
 						selectedCharId = null;
 						selectedIndices = [];
 						_updateSelectionInfoBar();
+						_updatePanelVisibility();
 						refreshLayerPanel();
 					}
 				}
